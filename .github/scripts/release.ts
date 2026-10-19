@@ -182,10 +182,10 @@ async function crateCommit(crate: Crate) {
   return publishedCommit(name, info.exitCode === 0 ? vcsInfoCommit(info.stdout.toString()) : undefined, "the crate's .cargo_vcs_info.json")
 }
 
-/** tags the commit the version was published from, with a GitHub release when given notes */
-async function tag(name: string, commit: string, version: string, notes?: string) {
+/** tags the commit the version was published from (looked up only when the tag is missing), with a GitHub release when given notes */
+async function tag(name: string, commit: () => Promise<string>, version: string, notes?: string) {
   if (!(await tagged(name))) {
-    await $`git tag ${name} ${commit}`
+    await $`git tag ${name} ${await commit()}`
     await $`git push origin ${`refs/tags/${name}`}`
   }
   if (notes === undefined || (await released(name))) return
@@ -201,17 +201,20 @@ async function npmPublish() {
   const commit = await head()
   const tarballs = new Map<string, string>()
   for (const pkg of toPublish) tarballs.set(pkg.name, await pack(pkg, commit))
+  // published by this run's npm publish, so from this commit; anything else is looked up on npm
+  const ours = new Set<string>()
   for (const pkg of toPublish) {
     await retry(`publish ${pkg.name}`, async () => {
       const publish = await $`npm publish ${tarballs.get(pkg.name)!} --access public --provenance --tag ${distTag(pkg.version)}`.nothrow()
-      if (publish.exitCode !== 0 && (await npmState(pkg.name, pkg.version)) !== "published") throw new Error(`npm publish exited ${publish.exitCode}`)
+      if (publish.exitCode === 0) ours.add(pkg.name)
+      else if ((await npmState(pkg.name, pkg.version)) !== "published") throw new Error(`npm publish exited ${publish.exitCode}`)
     })
     await retry(`confirm ${pkg.name}`, async () => {
       if ((await npmState(pkg.name, pkg.version)) !== "published") throw new Error(`${pkg.name}@${pkg.version} is not visible on npm yet`)
     }, 6)
     await summary(`- npm: published ${pkg.name}@${pkg.version}`)
   }
-  for (const pkg of pending) await tag(`${pkg.name}@${pkg.version}`, pkg.published ? await npmCommit(pkg) : commit, pkg.version, await changelogSection(pkg))
+  for (const pkg of pending) await tag(`${pkg.name}@${pkg.version}`, async () => (ours.has(pkg.name) ? commit : npmCommit(pkg)), pkg.version, await changelogSection(pkg))
   if (!pending.length) await summary("- npm: nothing to publish")
 }
 
@@ -260,14 +263,17 @@ async function cratesPublish() {
   const toPublish = pending.filter(crate => !crate.published)
   if (toPublish.length && !Bun.env.CARGO_REGISTRY_TOKEN) throw new Error("CARGO_REGISTRY_TOKEN is unset")
   const commit = await head()
+  // when cargo succeeds it published every crate it was given from this commit; anything else is looked up on crates.io
+  let ours = false
   try {
     // cargo publishes them in dependency order and waits for each to be available before the next
     if (toPublish.length) await $`cargo publish --locked ${packageArgs(toPublish)}`
+    ours = true
   } finally {
     // tag whatever reached crates.io, also when cargo stopped part way
     for (const crate of pending) {
       if (!crate.published && !(await crateVersionPublished(crate))) continue
-      await tag(`${crate.name}@${crate.version}`, crate.published ? await crateCommit(crate) : commit, crate.version)
+      await tag(`${crate.name}@${crate.version}`, async () => (ours && !crate.published ? commit : crateCommit(crate)), crate.version)
       await summary(`- crates: published ${crate.name}@${crate.version}`)
     }
   }
