@@ -60,11 +60,11 @@ and credential in a private temporary file.
 Requires [Bun](https://bun.sh) ≥ 1.2.19 on your PATH (≥ 1.3.14 for `kyora run` and `kyora tui`). `npx` will not work.
 
 ```bash
-bun add -g @kyora-sh/vms
+bun add -g kyora
 kyora vms login
 ```
 
-Or without installing: `bunx @kyora-sh/vms health`. From a checkout: `bun --no-env-file --config=/dev/null packages/vms/cli/src/index.ts`.
+Or without installing: `bunx --package kyora kyora-vms health`. From a checkout: `bun --no-env-file --config=/dev/null packages/vms/cli/src/index.ts`.
 
 ## Configure
 

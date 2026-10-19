@@ -1,6 +1,7 @@
 {
   "name": "@kyora-sh/usage",
   "version": "0.1.0",
+  "private": true,
   "type": "module",
   "description": "Engine quota state and live usage probing shared by kyora review, council and switch",
   "license": "Apache-2.0",
@@ -16,9 +17,6 @@
     "LICENSE",
     "NOTICE"
   ],
-  "publishConfig": {
-    "access": "public"
-  },
   "scripts": {
     "check-types": "tsc --noEmit",
     "test": "bun test"

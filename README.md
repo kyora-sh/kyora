@@ -9,7 +9,7 @@ Status: early development.
 Requires Bun 1.2.19 or later on your PATH, and 1.3.14 or later for `kyora run` and `kyora tui` (`npx` will not work).
 
 ```sh
-bun add -g @kyora-sh/vms
+bun add -g kyora
 kyora login
 ```
 
@@ -18,7 +18,7 @@ This installs `kyora`:
 - `kyora vms`: disposable VMs. `kyora vms run -- cargo build` uploads your worktree, runs the command, streams its output and exits with its code; `new`, `ls`, `shell`, `exec`, `push`, `pull` and `images` cover the rest. See [packages/vms/cli](packages/vms/cli/README.md).
 - `kyora detach` moves this repo's coding-agent conversation to a kyora VM and `kyora back` brings its commits and conversation home.
 - `kyora image`, `kyora deploy` and `kyora top` manage images, deploys and live usage; `kyora login` signs in to kyora cloud.
-- `kyora switch` (also `kyora-switch` on its own: `bun add -g kyora-switch`) hot-swaps coding-agent logins between accounts. See [packages/switch/cli](packages/switch/cli/README.md).
+- `kyora switch` hot-swaps coding-agent logins between accounts. See [packages/switch/cli](packages/switch/cli/README.md).
 - `kyora run` and `kyora tui` start the kyora agent harness (below).
 
 `kyora --help` lists them all. `kyora-vms`, the earlier name, is deprecated and still works: `kyora-vms <args>` is `kyora vms <args>`.
