@@ -1,0 +1,280 @@
+import { afterEach, beforeEach, expect, test } from "bun:test"
+import { chmod, mkdtemp, rm, stat } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { keychainSupported } from "../keychain"
+import { accountSlice, claudeConfigPath, claudeProvider, mergeAccountIntoConfig, refreshCredentials } from "./claude"
+
+test("mergeAccountIntoConfig swaps identity and keeps unrelated machine state", () => {
+  const config = {
+    oauthAccount: { emailAddress: "old@work.dev" },
+    projects: { "/repo": { history: [1] } },
+    numStartups: 42,
+  }
+  const merged = mergeAccountIntoConfig(config, { oauthAccount: { emailAddress: "new@home.dev" } })
+
+  expect(merged.oauthAccount).toEqual({ emailAddress: "new@home.dev" })
+  expect(merged.projects).toEqual({ "/repo": { history: [1] } })
+  expect(merged.numStartups).toBe(42)
+})
+
+test("mergeAccountIntoConfig leaves userID and machineID alone, they identify the install", () => {
+  const merged = mergeAccountIntoConfig(
+    { userID: "install-id", machineID: "machine-id" },
+    { oauthAccount: {}, userID: "other-install" },
+  )
+  expect(merged.userID).toBe("install-id")
+  expect(merged.machineID).toBe("machine-id")
+})
+
+test("mergeAccountIntoConfig leaves the caches the CLI refetches for itself", () => {
+  const merged = mergeAccountIntoConfig(
+    { modelAccessCache: { a: 1 }, hasAvailableSubscription: true, subscriptionNoticeCount: 3, autoUpdates: true },
+    { oauthAccount: {} },
+  )
+  expect(merged.modelAccessCache).toEqual({ a: 1 })
+  expect(merged.hasAvailableSubscription).toBe(true)
+  expect(merged.subscriptionNoticeCount).toBe(3)
+  expect(merged.autoUpdates).toBe(true)
+})
+
+test("mergeAccountIntoConfig removes the account when a slot does not carry one", () => {
+  expect(mergeAccountIntoConfig({ oauthAccount: { a: 1 } }, {})).toEqual({})
+})
+
+test("mergeAccountIntoConfig does not mutate its input", () => {
+  const config = { oauthAccount: { emailAddress: "old@work.dev" }, modelAccessCache: {} }
+  mergeAccountIntoConfig(config, { oauthAccount: { emailAddress: "new@home.dev" } })
+  expect(config.oauthAccount).toEqual({ emailAddress: "old@work.dev" })
+  expect(config).toHaveProperty("modelAccessCache")
+})
+
+test("accountSlice takes only the account", () => {
+  expect(accountSlice({ oauthAccount: { a: 1 }, userID: "u", projects: {} })).toEqual({ oauthAccount: { a: 1 } })
+  expect(accountSlice(null)).toEqual({})
+})
+
+let dir: string
+const previous = process.env.CLAUDE_CONFIG_DIR
+const previousKeychain = process.env.KYORA_SWITCH_NO_KEYCHAIN
+
+beforeEach(async () => {
+  dir = await mkdtemp(join(tmpdir(), "kyora-switch-claude-"))
+  process.env.CLAUDE_CONFIG_DIR = dir
+  process.env.KYORA_SWITCH_NO_KEYCHAIN = "1"
+})
+
+afterEach(async () => {
+  if (previous === undefined) delete process.env.CLAUDE_CONFIG_DIR
+  else process.env.CLAUDE_CONFIG_DIR = previous
+  if (previousKeychain === undefined) delete process.env.KYORA_SWITCH_NO_KEYCHAIN
+  else process.env.KYORA_SWITCH_NO_KEYCHAIN = previousKeychain
+  await rm(dir, { recursive: true, force: true })
+})
+
+async function seed(email: string, credentials: string): Promise<void> {
+  await Bun.write(join(dir, ".credentials.json"), credentials)
+  await Bun.write(
+    claudeConfigPath(),
+    JSON.stringify({ oauthAccount: { emailAddress: email, organizationName: "Acme" }, userID: "install-id", numStartups: 7 }),
+  )
+  await Bun.write(join(dir, "policy-limits.json"), `{"for":"${email}"}`)
+}
+
+test("the keychain is unreachable from tests, whatever directory they run in", () => {
+  expect(keychainSupported()).toBe(false)
+})
+
+test("capture returns null when nothing is logged in", async () => {
+  expect(await claudeProvider.capture()).toBeNull()
+})
+
+test("capture then restore round-trips the account", async () => {
+  await seed("work@acme.dev", '{"claudeAiOauth":{"accessToken":"work-token"}}')
+  const work = (await claudeProvider.capture())!
+  expect(work.identity).toEqual({ account: "work@acme.dev", org: "Acme", plan: undefined })
+
+  await seed("home@me.dev", '{"claudeAiOauth":{"accessToken":"home-token"}}')
+  await claudeProvider.restore(work)
+
+  const config = JSON.parse(await Bun.file(claudeConfigPath()).text())
+  expect(config.oauthAccount.emailAddress).toBe("work@acme.dev")
+  expect(config.userID).toBe("install-id")
+  expect(config.numStartups).toBe(7)
+  expect(await Bun.file(join(dir, ".credentials.json")).text()).toBe('{"claudeAiOauth":{"accessToken":"work-token"}}')
+})
+
+test("restore leaves the CLI's own files alone", async () => {
+  await seed("work@acme.dev", '{"claudeAiOauth":{"accessToken":"work-token"}}')
+  const work = (await claudeProvider.capture())!
+  await Bun.write(join(dir, "remote-settings.json"), '{"enabledPlugins":{"team-tools":true}}')
+
+  await claudeProvider.restore(work)
+
+  expect(await Bun.file(join(dir, "policy-limits.json")).text()).toBe('{"for":"work@acme.dev"}')
+  expect(await Bun.file(join(dir, "remote-settings.json")).text()).toBe('{"enabledPlugins":{"team-tools":true}}')
+  expect(Object.keys(work.files).sort()).toEqual(["account.json", "credentials.json"])
+})
+
+test("restore refuses a slot with no credentials", async () => {
+  await expect(claudeProvider.restore({ provider: "claude", identity: {}, files: {}, capturedAt: 0 })).rejects.toThrow(
+    /no Claude credentials/,
+  )
+})
+
+test("restore tightens a world-readable credentials file to 0600", async () => {
+  await seed("work@acme.dev", "{}")
+  const work = (await claudeProvider.capture())!
+  await chmod(join(dir, ".credentials.json"), 0o644)
+
+  await claudeProvider.restore(work)
+  expect((await stat(join(dir, ".credentials.json"))).mode & 0o777).toBe(0o600)
+})
+
+test("restore leaves the mode of .claude.json alone", async () => {
+  await seed("work@acme.dev", "{}")
+  const work = (await claudeProvider.capture())!
+  await chmod(claudeConfigPath(), 0o644)
+
+  await claudeProvider.restore(work)
+  expect((await stat(claudeConfigPath())).mode & 0o777).toBe(0o644)
+})
+
+test("forget drops the credentials and the account, keeping machine state", async () => {
+  await seed("work@acme.dev", "{}")
+  await claudeProvider.forget()
+
+  expect(await Bun.file(join(dir, ".credentials.json")).exists()).toBe(false)
+  expect(await claudeProvider.capture()).toBeNull()
+
+  const config = JSON.parse(await Bun.file(claudeConfigPath()).text())
+  expect(config).not.toHaveProperty("oauthAccount")
+  expect(config.userID).toBe("install-id")
+  expect(config.numStartups).toBe(7)
+})
+
+test("a slot saved before forget still restores afterwards", async () => {
+  await seed("work@acme.dev", '{"claudeAiOauth":{"accessToken":"work-token"}}')
+  const saved = (await claudeProvider.capture())!
+
+  await claudeProvider.forget()
+  await claudeProvider.restore(saved)
+
+  expect(await Bun.file(join(dir, ".credentials.json")).text()).toBe('{"claudeAiOauth":{"accessToken":"work-token"}}')
+  expect(JSON.parse(await Bun.file(claudeConfigPath()).text()).oauthAccount.emailAddress).toBe("work@acme.dev")
+})
+
+test("credentialExpiry reads the OAuth expiry, and copes with a blob without one", async () => {
+  await seed("work@acme.dev", JSON.stringify({ claudeAiOauth: { accessToken: "t", expiresAt: 1788849727085 } }))
+  expect(claudeProvider.credentialExpiry!((await claudeProvider.capture())!)).toBe(1788849727085)
+
+  await seed("work@acme.dev", JSON.stringify({ claudeAiOauth: { accessToken: "t" } }))
+  expect(claudeProvider.credentialExpiry!((await claudeProvider.capture())!)).toBeUndefined()
+
+  await seed("work@acme.dev", "{not json")
+  expect(claudeProvider.credentialExpiry!((await claudeProvider.capture())!)).toBeUndefined()
+})
+
+test("refreshCredentials rejects a blob it cannot use, and says why", async () => {
+  expect(await refreshCredentials("{not json")).toEqual({ failure: "the stored login is unreadable: log in again and save" })
+  expect(await refreshCredentials(JSON.stringify({ claudeAiOauth: { accessToken: "a" } }))).toEqual({ failure: "no refresh token is stored: log in again and save" })
+})
+
+test("refreshCredentials rotates the tokens and keeps everything else in the blob", async () => {
+  const server = Bun.serve({
+    port: 0,
+    fetch: async (request) => {
+      const body = (await request.json()) as Record<string, unknown>
+      if (body.grant_type !== "refresh_token" || body.refresh_token !== "old-refresh") {
+        return new Response("bad", { status: 400 })
+      }
+      return Response.json({
+        access_token: "new-access",
+        refresh_token: "new-refresh",
+        expires_in: 28800,
+        refresh_token_expires_in: 2_332_800,
+        scope: "user:inference user:profile",
+      })
+    },
+  })
+  process.env.KYORA_CLAUDE_TOKEN_URL = server.url.href
+
+  const before = Date.now()
+  const refreshed = await refreshCredentials(
+    JSON.stringify({
+      mcpOAuth: { linear: { accessToken: "keep-me" } },
+      claudeAiOauth: {
+        accessToken: "old-access",
+        refreshToken: "old-refresh",
+        expiresAt: 1,
+        subscriptionType: "max",
+        scopes: ["user:inference"],
+      },
+    }),
+  )
+  server.stop(true)
+  delete process.env.KYORA_CLAUDE_TOKEN_URL
+
+  if (!("text" in refreshed)) throw new Error(refreshed.failure)
+  const blob = JSON.parse(refreshed.text)
+  expect(blob.claudeAiOauth.accessToken).toBe("new-access")
+  expect(blob.claudeAiOauth.refreshToken).toBe("new-refresh")
+  expect(blob.claudeAiOauth.expiresAt).toBeGreaterThanOrEqual(before + 28_800_000)
+  expect(blob.claudeAiOauth.scopes).toEqual(["user:inference", "user:profile"])
+  expect(blob.claudeAiOauth.subscriptionType).toBe("max")
+  expect(blob.mcpOAuth).toEqual({ linear: { accessToken: "keep-me" } })
+  expect(refreshed.text).toBe(JSON.stringify(blob))
+})
+
+test("refreshCredentials keeps the sent refresh token when the response omits one", async () => {
+  const server = Bun.serve({
+    port: 0,
+    fetch: () => Response.json({ access_token: "new-access", expires_in: 100 }),
+  })
+  process.env.KYORA_CLAUDE_TOKEN_URL = server.url.href
+
+  const refreshed = await refreshCredentials(
+    JSON.stringify({ claudeAiOauth: { accessToken: "old", refreshToken: "old-refresh", refreshTokenExpiresAt: 42 } }),
+  )
+  server.stop(true)
+  delete process.env.KYORA_CLAUDE_TOKEN_URL
+
+  if (!("text" in refreshed)) throw new Error(refreshed.failure)
+  const oauth = JSON.parse(refreshed.text).claudeAiOauth
+  expect(oauth.refreshToken).toBe("old-refresh")
+  expect(oauth.refreshTokenExpiresAt).toBe(42)
+})
+
+test("refreshCredentials says why the endpoint refused, without the token or the body", async () => {
+  const answers = [
+    Response.json({ error: "invalid_grant", error_description: "fake-secret-detail" }, { status: 400 }),
+    Response.json({ error: "rate_limited" }, { status: 429, headers: { "retry-after": "90" } }),
+    new Response("fake-secret-detail", { status: 503 }),
+    Response.json({ error: "invalid_grant" }, { status: 502 }),
+    new Response("fake-secret-detail", { status: 400 }),
+    Response.json({ token_type: "bearer" }),
+  ]
+  const server = Bun.serve({ port: 0, fetch: () => answers.shift()! })
+  process.env.KYORA_CLAUDE_TOKEN_URL = server.url.href
+  const failures: string[] = []
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const refreshed = await refreshCredentials(JSON.stringify({ claudeAiOauth: { refreshToken: "fake-spent" } }))
+    if ("text" in refreshed) throw new Error("renewed")
+    failures.push(refreshed.failure)
+  }
+  server.stop(true)
+  process.env.KYORA_CLAUDE_TOKEN_URL = "http://127.0.0.1:9/token"
+  const offline = await refreshCredentials(JSON.stringify({ claudeAiOauth: { refreshToken: "fake-spent" } }))
+  delete process.env.KYORA_CLAUDE_TOKEN_URL
+
+  expect(failures).toEqual([
+    "the stored refresh token was already used or revoked: log in again and save",
+    "rate limited, try again in 2m",
+    "server error (HTTP 503), try again later",
+    "server error (HTTP 502), try again later",
+    "the token server refused it (HTTP 400)",
+    "the token server's answer had no access token",
+  ])
+  expect(offline).toEqual({ failure: "network error: could not reach the token server" })
+  expect(JSON.stringify(failures)).not.toContain("fake-")
+})

@@ -1,0 +1,1 @@
+{"id": "msg-go", "role": "assistant", "providerID": "opencode-go", "time": {"created": 1767225602000}, "tokens": {"input": 100, "output": 10, "reasoning": 2, "cache": {"read": 20, "write": 30}}}
