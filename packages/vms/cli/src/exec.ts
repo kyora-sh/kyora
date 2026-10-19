@@ -249,7 +249,7 @@ class Relay {
     /**
      * The machine got somewhere on this response: its own keepalive (relayed), a gap, any event of the
      * command's. Not kyora cloud's keepalives or anyone else's (`fromMachine`), nor a relay's opening or
-     * its `detached`, which kyora cloud also sends (its machine-silence check, the Worker's watchdog).
+     * its `detached`, which kyora cloud also sends when the machine has gone silent.
      */
     let moved = false
     const started = Date.now()

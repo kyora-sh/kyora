@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The chunk format images move in, shared by the Worker, kyora-node and the
+ * The chunk format images move in, shared by kyora cloud, its machines and the
  * CLI. An image is a flat ext4 file cut into 4 MiB chunks; an all-zero chunk is a hole and is never
  * stored. Each stored chunk is zstd'd and named by the sha256 of the stored bytes (its key); a
  * manifest lists `[index, sha256 of the plaintext, key, stored bytes]` in index order. Pure: no Bun,
- * no node builtins (the Worker imports it too). The Bun side (cutting a file, opening a chunk with
+ * no node builtins (the server side imports it too). The Bun side (cutting a file, opening a chunk with
  * bounded zstd) is image-chunks-bun.ts.
  */
 
@@ -13,7 +13,7 @@ export const CHUNK_SIZE = 4 * 1024 * 1024
 export const MAX_STORED_CHUNK = CHUNK_SIZE + 64 * 1024
 export const SHA256_HEX = /^[0-9a-f]{64}$/
 
-/** `img_<random>`: an account image's id (the Worker's newId("img")) */
+/** `img_<random>`: an account image's id */
 export const ACCOUNT_IMAGE_ID = /^img_[A-Za-z0-9_-]{8,64}$/
 /** `ai-<32 hex>`: an account image's name on a machine; never one a person may name */
 export const ACCOUNT_IMAGE_LOCAL = /^ai-[0-9a-f]{32}$/

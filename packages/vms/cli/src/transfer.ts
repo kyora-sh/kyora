@@ -249,9 +249,8 @@ async function pushInParts(
   let pool: PartPool | null = null
 
   /**
-   * Parts retry on their own (sendParts). A start or a complete cut off on the way (the Worker
-   * redeployed, or the machine's kyora-node or kyora-vmd restarted while the complete waited for
-   * the unpack) is not repeated as such: kyora cloud refuses a second complete of one upload
+   * Parts retry on their own (sendParts). A start or a complete cut off on the way (a restart on
+   * the server's side while the complete waited for the unpack) is not repeated as such: kyora cloud refuses a second complete of one upload
    * (409 upload_closed), and one whose push failed has dropped its object already. The shard
    * goes up again as a new upload instead, packed afresh; unpacking the same files again over
    * what did land is harmless.
