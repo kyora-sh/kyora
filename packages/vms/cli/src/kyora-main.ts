@@ -6,14 +6,13 @@ import { topCommand } from "./top"
 import { supportCommand } from "./support"
 import { deployCommand } from "./deploys"
 import { exitFlushed, FAILED, note } from "./output"
-import { HARNESS_COMMANDS, runHarness } from "./harness"
 import { SESSION_HELP, sessionMain, SessionUsage } from "./sessions/cli"
 
 /**
  * `kyora`, for the commands that span kyora's tools: `kyora session …` and `kyora image …`, the
  * same commands as `kyora-vms session …` and `kyora-vms image …`, with `kyora detach` and `kyora back`
  * as the session's short pair, `kyora switch …`, which is kyora-switch, and `kyora run …` and `kyora tui …`,
- * which hand off to the agent harness (`kyora-harness`). Sandboxes themselves stay `kyora-vms`.
+ * which kyora.ts hands to the agent harness (`kyora-harness`). Sandboxes themselves stay `kyora-vms`.
  */
 const HELP = `kyora: kyora's cross-tool commands
 
@@ -39,7 +38,6 @@ sandboxes: kyora-vms --help`
 
 async function main(argv: string[]): Promise<number> {
   const [group, ...rest] = argv
-  if (group && HARNESS_COMMANDS.has(group)) return runHarness(group, rest)
   if (group === "projects" || group === "link" || group === "deploy" || group === "deployments") return deployCommand(new VmsClient(await loadConfig()), group, rest)
   if (group === "support") return supportCommand(new VmsClient(await loadConfig()), rest)
   if (group === "top") return topCommand(rest)
