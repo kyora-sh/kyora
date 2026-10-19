@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { needsRelease, publishOutcome, publishedCommit, vcsInfoCommit, withGitHead } from "./release"
+import { needsRelease, npmPublished, publishOutcome, publishedCommit, vcsInfoCommit, withGitHead } from "./release"
 
 const sha = "0123456789abcdef0123456789abcdef01234567"
 
@@ -34,4 +34,12 @@ test("npm publish exiting 0 is a finished publish from this run, whatever the re
   for (const state of [undefined, "published", "free", "new"]) expect(publishOutcome(0, state)).toBe("ours")
   expect(publishOutcome(1, "published")).toBe("theirs")
   for (const state of [undefined, "free", "new"]) expect(publishOutcome(1, state)).toBe("failed")
+})
+
+test("a tagged version counts as published while npm does not show it yet", () => {
+  expect(npmPublished("published", false)).toBe(true)
+  for (const state of ["free", "new"]) {
+    expect(npmPublished(state, true)).toBe(true)
+    expect(npmPublished(state, false)).toBe(false)
+  }
 })

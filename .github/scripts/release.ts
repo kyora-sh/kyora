@@ -19,6 +19,9 @@ type Pkg = { dir: string; name: string; version: string; isNew: boolean; publish
 /** a version still has release work: unpublished, or published without its tag or (npm only) its GitHub release */
 export const needsRelease = (state: { published: boolean; tagged: boolean; released: boolean }) => !state.published || !state.tagged || !state.released
 
+/** a tag goes on only after a publish, so a tagged version npm does not show yet is registry lag, not a version to publish again */
+export const npmPublished = (state: string, tagged: boolean) => state === "published" || tagged
+
 /** npm publish exiting 0 means npm took the version from this run; after a failure only a registry that already shows it counts */
 export function publishOutcome(exitCode: number, state?: string): "ours" | "theirs" | "failed" {
   if (exitCode === 0) return "ours"
@@ -91,9 +94,10 @@ async function pendingPackages(): Promise<Pkg[]> {
     const pkg = await Bun.file(join(root, file)).json()
     if (pkg.private) continue
     const state = await npmState(pkg.name, pkg.version)
-    const entry = { dir: join(root, dirname(file)), name: pkg.name, version: pkg.version, isNew: state === "new", published: state === "published" }
     const name = `${pkg.name}@${pkg.version}`
-    const isTagged = entry.published && (await tagged(name))
+    const isTagged = await tagged(name)
+    const published = npmPublished(state, isTagged)
+    const entry = { dir: join(root, dirname(file)), name: pkg.name, version: pkg.version, isNew: state === "new" && !published, published }
     const isReleased = isTagged && (await released(name))
     if (needsRelease({ published: entry.published, tagged: isTagged, released: isReleased })) pending.push(entry)
   }
