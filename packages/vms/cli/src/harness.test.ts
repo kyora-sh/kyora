@@ -81,8 +81,9 @@ test("without kyora-harness on PATH, kyora run says how to install it", async ()
   const result = await kyora(["run", "task"], without)
   expect(result.code).toBe(FAILED)
   expect(result.stdout).toBe("")
-  expect(result.stderr).toContain("kyora-harness")
+  expect(result.stderr).toStartWith("[kyora] kyora run runs the kyora agent harness (kyora-harness)")
   expect(result.stderr).toContain("cargo install --locked --git https://github.com/kyora-sh/kyora kyora-cli")
+  expect(await kyora(["run", "--help"], without)).toEqual(result)
 })
 
 test("kyora --help lists the harness commands, kyora vms and the account commands", async () => {
@@ -100,9 +101,11 @@ test("kyora-vms <args> is kyora vms <args>, with nothing added to its output", a
   expect(help.stderr).toBe("")
   // run is the sandbox run here: no command after -- is a usage error, not the harness
   const run = await kyora(["run"], dir, alias)
-  expect(run).toEqual(await kyora(["vms", "run"], dir))
+  const direct = await kyora(["vms", "run"], dir)
+  expect(run).toEqual({ ...direct, stderr: direct.stderr.replaceAll("[kyora] ", "[kyora-vms] ") })
   expect(run.stdout).not.toContain("harness")
-  expect(run.stderr).toContain("no command: put it after --")
+  expect(run.stderr).toContain("[kyora-vms] no command: put it after --")
+  expect(direct.stderr).toContain("[kyora] no command: put it after --")
   expect(run.code).toBe(FAILED)
 })
 

@@ -2,7 +2,7 @@ import { ApiError, type TtySession, type VmsClient } from "./api"
 import { sandboxArgument } from "./names"
 import { reattachable, reattachPolicy } from "./exec"
 import { pause } from "./multipart"
-import { FAILED, printJson } from "./output"
+import { FAILED, notePrefix, printJson } from "./output"
 import { formatMs } from "./units"
 
 /**
@@ -227,7 +227,7 @@ export function processIo(): TerminalIo {
           resolve()
         }
       }),
-    status: (text) => process.stderr.write(`\r\n[kyora-vms] ${text}\r\n`),
+    status: (text) => process.stderr.write(`\r\n${notePrefix()} ${text}\r\n`),
     onSignal(listener) {
       // raw mode sends no signal from the keys: these come from outside (kill, a closed terminal)
       const handlers = (Object.keys(SIGNAL_EXIT) as TerminalSignal[]).map((signal) => [signal, () => listener(signal)] as const)

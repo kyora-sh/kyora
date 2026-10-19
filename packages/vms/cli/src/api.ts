@@ -2,6 +2,7 @@ import { friendlyName, resolveDestructiveTarget, validName } from "./names.js"
 import { version } from "../package.json"
 import { DEFAULT_URL, originOf, PLATFORM_TOKEN_PREFIX, VMD_KEY_PREFIX, type Config } from "./client-config.js"
 import { formatMs } from "./units.js"
+import { notePrefix } from "./note-name.js"
 import type { SandboxStatsResponse } from "./stats-types.js"
 import type { Deployment, DeploymentCreate, DeploymentList, DeploymentView, ProjectCreate, ProjectList, ProjectView } from "../../shared/deploys.js"
 export type { SandboxSample, SandboxStats, SandboxStatsResponse } from "./stats-types.js"
@@ -796,7 +797,7 @@ export class VmsClient {
     for (let attempt = 0; ; attempt++) {
       try {
         const sandbox = await this.createOnce({ ...spec, name: spec.name === undefined ? friendlyName() : validName(spec.name) }, options)
-        for (const warning of sandbox.warnings ?? []) process.stderr.write(`[kyora-vms] warning: ${warning}\n`)
+        for (const warning of sandbox.warnings ?? []) process.stderr.write(`${notePrefix()} warning: ${warning}\n`)
         if (spec.shareable === false && sandbox.shareable !== false) return await this.unconfirmedNoShare(sandbox)
         return sandbox
       } catch (error) {
