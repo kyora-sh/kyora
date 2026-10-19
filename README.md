@@ -4,7 +4,15 @@ kyora is a recursive agent runtime: a Rust harness whose Python REPL lets the mo
 
 Status: early development. Design: docs/design.md.
 
+This repository also holds the kyora CLIs, in TypeScript on Bun:
+
+- `packages/vms/cli`: `kyora-vms` (disposable VMs: run, exec, push, pull, shell, images) and `kyora` (move a coding-agent session to a VM and back, images, deploys, `kyora switch`);
+- `packages/switch/cli`: `kyora-switch`, which hot-swaps coding-agent logins between accounts;
+- `packages/shared/usage` and `packages/shared/hostnames`: libraries the CLIs bundle.
+
 ## Build and test
+
+The Rust workspace:
 
 ```sh
 cargo build
@@ -18,4 +26,13 @@ Run the TUI demo: `CARGO_BUILD_JOBS=4 cargo run -p kyora-cli -- tui --demo` (see
 
 Connect MCP servers through `[mcp.servers.<name>]` in `$KYORA_HOME/config.toml` (see docs/mcp.md).
 
-License: Apache-2.0, see LICENSE.
+The CLIs (Bun 1.4 or later):
+
+```sh
+bun install --frozen-lockfile
+bunx turbo run build
+bunx turbo run check-types
+bunx turbo run test
+```
+
+License: Apache-2.0, see LICENSE. A package's own LICENSE or NOTICE takes precedence for its files: `packages/vms/shared` is under the Elastic License 2.0, and `packages/vms/cli/NOTICE` names what the CLI bundles from it.

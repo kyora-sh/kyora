@@ -16,7 +16,7 @@ No em dashes or en dashes anywhere: docs, comments, commit messages and PR text.
 
 ## Titles
 
-PR and commit titles use scoped conventional commits: `type(scope): summary`. Scope is the affected crate or area: `core`, `providers`, `tools`, `mcp`, `protocol`, `cli`, `tui`, or an area (`docs`, `ci`, `deps`). Keep the summary concise.
+PR and commit titles use scoped conventional commits: `type(scope): summary`. Scope is the affected crate, package or area: a crate (`core`, `providers`, `tools`, `mcp`, `protocol`, `cli`, `tui`), a TypeScript package (`vms` for packages/vms, `switch`, `usage`, `hostnames`), or an area (`docs`, `ci`, `deps`). Keep the summary concise.
 
 Examples: `feat(core): child agents with ownership, limits and ordered shutdown`, `fix(tools): accept trusted spellings of the workspace root`, `ci(deps): bump actions/checkout`.
 
