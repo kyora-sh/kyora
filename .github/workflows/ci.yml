@@ -68,6 +68,7 @@ jobs:
       - run: bunx turbo run build --concurrency=2
       - run: bunx turbo run check-types --concurrency=2
       - run: bunx turbo run test --concurrency=1 --continue=dependencies-successful
+      - run: bun test ./.github/scripts/
 
   ci-ok:
     if: ${{ always() }}

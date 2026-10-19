@@ -63,6 +63,9 @@ jobs:
       - run: bun install --frozen-lockfile
       - id: npm
         run: bun .github/scripts/release.ts npm-preflight
+        env:
+          # reads GitHub releases, to finish a published version that has none
+          GH_TOKEN: ${{ github.token }}
       - id: crates
         if: vars.KYORA_PUBLISH_CRATES == 'true'
         run: |

@@ -2,7 +2,7 @@ import { posix } from "node:path"
 import { ApiError, type MultipartUpload, type UploadResult, type VmsClient } from "./api"
 import { extractTar, type ExtractResult } from "./extract"
 import { PartPool, partsInFlight, pause, sendParts, type PartProgress, type SentParts } from "./multipart"
-import { note } from "./output"
+import { note, notePrefix } from "./output"
 import { listFiles, uploadBody, type Listing, type PackEntry, type UploadBody } from "./pack"
 import { rangedSize, rangedStream } from "./ranged"
 import { autoShards, planShards } from "./shard"
@@ -204,7 +204,7 @@ function uploadProgress(shards: number) {
   let shown = false
   const show = (line: string) => {
     shown = true
-    if (tty) process.stderr.write(`\r\x1b[K[kyora-vms] ${line}`)
+    if (tty) process.stderr.write(`\r\x1b[K${notePrefix()} ${line}`)
     else note(line)
   }
   const rate = (sent: number) => `${formatBytes(Math.round(sent / Math.max((Date.now() - started) / 1000, 0.001)))}/s`
