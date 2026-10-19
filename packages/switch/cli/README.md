@@ -323,7 +323,7 @@ bun run check-types
 
 Tests never touch the real keychain or your real logins: they run against temp directories, and a preload (`src/test-setup.ts`) disables keychain access and points `HOME` and every login location at an empty sandbox before any test starts.
 
-`bun test` also checks that every existing command still prints what the merge base with `origin/main` prints, byte for byte, and leaves the same files behind (bytes and permissions; the new history files, the token cache and timestamps aside), on the same fixture slots, through saves, loads and every provider's clear. It runs whenever `origin/main` is there. CI requires it (`KYORA_SWITCH_DIFF_REQUIRED=1`). Another base:
+`bun test` also checks that every existing command still prints what the merge base with `origin/main` prints, byte for byte, and leaves the same files behind (bytes and permissions; the new history files, the token cache and timestamps aside), on the same fixture slots, through saves, loads and every provider's clear. It runs whenever `origin/main` is there; `KYORA_SWITCH_DIFF_REQUIRED=1` makes a missing base a failure. Another base:
 
 ```bash
 KYORA_SWITCH_DIFF_BASE=origin/main bun test src/differential.test.ts
