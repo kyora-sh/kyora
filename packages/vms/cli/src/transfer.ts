@@ -111,8 +111,8 @@ export class BrokenStream extends Error {}
 
 /**
  * Cut off on the way, not refused: the network (no answer, a reset), a body that broke off, or
- * a gateway saying what is behind it is away for a moment (502/503/504: cloudflared or the
- * Worker while kyora-vmd or kyora-node restarts). A 4xx or a 500 is an answer, not asked again.
+ * a gateway saying what is behind it is away for a moment (502/503/504, during a
+ * restart). A 4xx or a 500 is an answer, not asked again.
  */
 export function transient(error: unknown): boolean {
   if (error instanceof BrokenStream) return true

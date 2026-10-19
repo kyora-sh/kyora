@@ -39,7 +39,7 @@ export const isReservedAccountImageName = (name: string): boolean => FLEET_IMAGE
 /** One chunk of a manifest: [index, sha256 of its plaintext, key (sha256 of the stored zstd bytes), stored bytes]. */
 export type ManifestChunk = [number, string, string, number]
 
-/** The manifest an account image's commit stores (`acct/<owner>/m/<digest>.json`); D1 keeps its digest. */
+/** The manifest an account image's commit stores, named by its digest. */
 export interface AccountImageManifest {
   format: 1
   kind: "kyora-account-image"
@@ -113,7 +113,7 @@ export function parseAccountManifest(value: unknown, expect: { id: string; sha25
 }
 
 /**
- * What a create message tells a machine about an account image (the Worker's D1 row): the bytes to
+ * What a create message tells a machine about an account image: the bytes to
  * pull, the manifest digest to trust, and the machine-local name to boot.
  */
 export interface AccountImageRef {

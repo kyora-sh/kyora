@@ -15,7 +15,7 @@ and deploy types from kyora's packages/vms/shared, each Copyright 2025 or
 Third-party software
 --------------------
 
-It bundles tldts and tldts-core 7.4.16 (https://github.com/remusao/tldts),
+It bundles tldts and tldts-core 7.4.18 (https://github.com/remusao/tldts),
 under the MIT License:
 
 Copyright (c) 2017 Thomas Parisot, 2018 Rémi Berson
