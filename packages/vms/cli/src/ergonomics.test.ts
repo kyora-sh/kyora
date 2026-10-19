@@ -53,7 +53,7 @@ test("new creates with interactive defaults before attaching main, carrying a co
 
 test("attach without an argument: none, one, several and a TTY picker", async () => {
   const api = await setup()
-  await expect(selectSandbox(api, undefined, false)).rejects.toThrow("kyora-vms new")
+  await expect(selectSandbox(api, undefined, false)).rejects.toThrow("kyora vms new")
   const first = await api.create({ name: "brisk-otter" })
   expect((await selectSandbox(api, undefined, false)).id).toBe(first.id)
   const second = await api.create({ name: "calm-fox" })
@@ -109,7 +109,7 @@ test("new -- command works without a TTY, defaults and overrides; bare new doesn
   const result = await cli(["new", "brisk-otter", "--network", "none", "--ttl", "2h", "--", "echo", "hello"], { env })
   expect(result.code).toBe(0)
   expect(result.stdout).toBe("hello\n")
-  expect(result.stderr).toContain("back in: kyora-vms attach brisk-otter · gone: kyora-vms rm brisk-otter")
+  expect(result.stderr).toContain("back in: kyora vms attach brisk-otter · gone: kyora vms rm brisk-otter")
   expect(vmd!.created[0]).toMatchObject({ network: "none", ttlSeconds: 7200, idleSeconds: 3600 })
 })
 
@@ -175,14 +175,14 @@ finally:
   }
   const before = vmd!.requests.length
   const fresh = await terminal([], { KYORA_VMS_KEY: "", KYORA_TOKEN: "" })
-  expect(fresh).toContain("kyora-vms login")
+  expect(fresh).toContain("kyora vms login")
   expect(fresh).not.toContain("no API key")
   expect(vmd!.requests).toHaveLength(before)
-  expect(await terminal([])).toContain("start a fresh VM: kyora-vms new")
-  expect(await terminal(["new", "brisk-otter"])).toContain("back in: kyora-vms attach brisk-otter · gone: kyora-vms rm brisk-otter")
+  expect(await terminal([])).toContain("start a fresh VM: kyora vms new")
+  expect(await terminal(["new", "brisk-otter"])).toContain("back in: kyora vms attach brisk-otter · gone: kyora vms rm brisk-otter")
   expect(vmd!.created).toHaveLength(1)
-  expect(await terminal([])).toContain("back in: kyora-vms attach <name>")
-  expect(await terminal(["attach"])).toContain("back in: kyora-vms attach brisk-otter")
+  expect(await terminal([])).toContain("back in: kyora vms attach <name>")
+  expect(await terminal(["attach"])).toContain("back in: kyora vms attach brisk-otter")
 }, 40_000)
 
 test("names use authoritative get before list; an old full id remains idempotent", async () => {
@@ -200,7 +200,7 @@ test("leading-dash names work after --, including remote command separators", as
   expect((await cli(["create", "--", "-box"], { env })).code).toBe(0)
   const fresh = await cli(["new", "--name=-fresh", "--", "echo", "fresh"], { env })
   expect(fresh.code).toBe(0)
-  expect(fresh.stderr).toContain("back in: kyora-vms attach -- -fresh · gone: kyora-vms rm -- -fresh")
+  expect(fresh.stderr).toContain("back in: kyora vms attach -- -fresh · gone: kyora vms rm -- -fresh")
   expect(JSON.parse((await cli(["ls", "--json", "--", "-box"], { env })).stdout)).toMatchObject({ name: "-box" })
   expect((await cli(["exec", "--", "-box", "--", "echo", "escaped"], { env })).stdout).toBe("escaped\n")
   expect(sandboxArgs("shell", [], ["-box"])).toEqual({ positionals: ["-box"], tail: null })

@@ -9,7 +9,7 @@ import { startFakePlatform, TOKEN, type FakeVmd } from "./testing/fake-vmd"
 import { cli, platformEnv, tempDir, transcripts } from "./testing/fixtures"
 
 /**
- * `kyora-vms image push|ls|rm|usage` (account-images.ts) against the fake kyora cloud's account
+ * `kyora vms image push|ls|rm|usage` (account-images.ts) against the fake kyora cloud's account
  * image routes: only the chunks the account lacks go up, holes never do, a chunk repeated inside an
  * image goes once, and a second image sharing chunks uploads only its new ones.
  */

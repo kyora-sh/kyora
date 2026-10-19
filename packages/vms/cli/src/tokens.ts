@@ -7,9 +7,9 @@ import { printTable } from "./session"
 import { memoryMb, parseSeconds, positiveInt } from "./units"
 
 const HELP = `usage:
-  kyora-vms tokens create <name> --scope CAPABILITY... [options]
-  kyora-vms tokens ls [--org ORG] [--json]
-  kyora-vms tokens revoke <id> [--org ORG] [--json]
+  kyora vms tokens create <name> --scope CAPABILITY... [options]
+  kyora vms tokens ls [--org ORG] [--json]
+  kyora vms tokens revoke <id> [--org ORG] [--json]
 
 Capabilities: vms:read, vms:write, vms:exec, vms:share, public-urls, images, storage, storage:presign, projects:read, deploys
 
@@ -63,7 +63,7 @@ export async function tokensMain(args: string[]): Promise<number> {
   const config = await loadConfig()
   if (values.org && config.keySource === config.credentials) {
     const personal = (await readCredentials(config.credentials))[originOf(config.url)]?.token
-    if (!personal) throw new Error(`there is no personal login for ${config.url} here; run kyora-vms login`)
+    if (!personal) throw new Error(`there is no personal login for ${config.url} here; run kyora vms login`)
     config.key = personal
   }
   const api = new VmsClient(config)

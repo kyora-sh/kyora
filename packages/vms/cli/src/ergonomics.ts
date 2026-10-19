@@ -31,9 +31,9 @@ export async function selectSandbox(api: Pick<VmsClient, "list" | "get">, input?
   }
   const sandboxes = await api.list()
   if (input !== undefined) return resolveSandbox(sandboxes, input)
-  if (!sandboxes.length) throw new Error("no sandboxes running; start one with kyora-vms new")
+  if (!sandboxes.length) throw new Error("no sandboxes running; start one with kyora vms new")
   if (sandboxes.length === 1) return sandboxes[0]!
-  if (!tty) throw new Error("several sandboxes running; give a name from kyora-vms ls")
+  if (!tty) throw new Error("several sandboxes running; give a name from kyora vms ls")
   sandboxes.forEach((s, i) => note(`${i + 1}) ${sandboxLabel(s)}  ${s.id}  ${s.vcpus}/${s.memoryMb / 1024}G`))
   const answer = (await ask("attach to [1]: ")).trim() || "1"
   if (/^\d+$/.test(answer)) {
@@ -70,7 +70,7 @@ export async function newSandbox(api: VmsClient, spec: CreateSpec, wait: number,
     const request: ExecRequest = { cmd: options.cmd, cwd: options.cwd, env: options.env }
     const code = await exec(api, sandbox.id, request, false)
     const argument = sandboxArgument(sandboxLabel(sandbox))
-    note(`back in: kyora-vms attach ${argument} · gone: kyora-vms rm ${argument}`)
+    note(`back in: kyora vms attach ${argument} · gone: kyora vms rm ${argument}`)
     return code
   }
   return attachSandbox(api, sandbox, options, open)
@@ -103,7 +103,7 @@ export async function ergonomicCommand(api: VmsClient, context: CommandContext):
       return attachSandbox(api, await selectSandbox(api, positionals[0]), { control: !values.view, clipboard })
     }
     case "new": {
-      if (positionals.length > 1 || (positionals.length > 0 && values.name !== undefined) || json) usage("usage: kyora-vms new [name] [options] [-- cmd…]")
+      if (positionals.length > 1 || (positionals.length > 0 && values.name !== undefined) || json) usage("usage: kyora vms new [name] [options] [-- cmd…]")
       if (tail !== null && !tail.length) usage("nothing after --; give a command")
       if ((values.env || values.cwd) && tail === null) usage("--env and --cwd need a command after --")
       const spec = context.spec()
@@ -112,7 +112,7 @@ export async function ergonomicCommand(api: VmsClient, context: CommandContext):
     }
     case "rename":
     case "ttl": {
-      if (positionals.length !== 2) usage(`usage: kyora-vms ${verb} <x> <${verb === "rename" ? "name" : "duration"}>`)
+      if (positionals.length !== 2) usage(`usage: kyora vms ${verb} <x> <${verb === "rename" ? "name" : "duration"}>`)
       const change = verb === "rename" ? { name: validName(positionals[1]!) } : { ttlSeconds: positionals[1] === "none" ? 0 : parseSeconds(positionals[1]!, "duration") }
       const sandbox = await api.update(await resolveDestructiveTarget(api, positionals[0]!), change)
       if (json) printJson(sandbox)

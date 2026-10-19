@@ -7,7 +7,7 @@ setDefaultTimeout(30_000)
 
 /**
  * kyora cloud's regions from the CLI: --region (and KYORA_VMS_REGION) on
- * run and create, strict by naming one, `global` for the nearest; `kyora-vms regions` to see them and
+ * run and create, strict by naming one, `global` for the nearest; `kyora vms regions` to see them and
  * pick a default; a note when a global create ran in another region than the nearest. --strict is a
  * deprecated no-op.
  */
@@ -111,7 +111,7 @@ describe("--region", () => {
   })
 })
 
-describe("kyora-vms regions", () => {
+describe("kyora vms regions", () => {
   test("lists the regions, what is free in each, and where your creates go", async () => {
     const cloud = regionsCloud()
     const result = await cli(["regions"], { env: platformEnv(cloud.url) })

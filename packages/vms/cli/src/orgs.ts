@@ -5,7 +5,7 @@ import { readCredentials, saveLogin, type StoredLogin } from "./credentials"
 import { note, printJson } from "./output"
 
 /**
- * `kyora-vms org ls` and `org use`: which account the stored kyora cloud login acts as, the person
+ * `kyora vms org ls` and `org use`: which account the stored kyora cloud login acts as, the person
  * or one of their orgs. An org's token is kept per org
  * beside the personal one in credentials.json; `use` picks which one commands send.
  */
@@ -53,7 +53,7 @@ export async function orgUse(config: Config, ref: string, asJson: boolean, now =
   const origin = originOf(config.url)
   const stored = await storedLogin(config)
   if (PERSONAL.has(ref)) {
-    if (!stored?.token) throw new Error(`there is no personal login for ${config.url} here; run kyora-vms login`)
+    if (!stored?.token) throw new Error(`there is no personal login for ${config.url} here; run kyora vms login`)
     const { use: _use, ...rest } = stored
     await saveLogin(config.credentials, origin, rest)
     if (asJson) printJson({ using: null, login: stored.login })
@@ -66,14 +66,14 @@ export async function orgUse(config: Config, ref: string, asJson: boolean, now =
   const live = kept && (!kept.expiresAt || Date.parse(kept.expiresAt) > now + 60_000)
   let entry = live ? kept : null
   if (!entry) {
-    if (!stored?.token) throw new Error(`no token for the org ${handle} here; run kyora-vms login --org ${handle}`)
+    if (!stored?.token) throw new Error(`no token for the org ${handle} here; run kyora vms login --org ${handle}`)
     const personal = new VmsClient({ ...config, key: stored.token, keySource: config.credentials })
     try {
-      const minted = await personal.orgToken(handle, `kyora-vms on ${hostname()}`)
+      const minted = await personal.orgToken(handle, `kyora vms on ${hostname()}`)
       entry = { token: minted.token, id: minted.org.id, login: minted.org.login, actor: minted.actor, expiresAt: minted.expiresAt }
     } catch (error) {
-      if (error instanceof ApiError && error.status === 404) throw new Error(`you aren't in an org called ${handle} (kyora-vms org ls lists yours)`)
-      if (error instanceof ApiError && error.status === 401) throw new Error(`the personal login for ${config.url} expired; run kyora-vms login, or kyora-vms login --org ${handle}`)
+      if (error instanceof ApiError && error.status === 404) throw new Error(`you aren't in an org called ${handle} (kyora vms org ls lists yours)`)
+      if (error instanceof ApiError && error.status === 401) throw new Error(`the personal login for ${config.url} expired; run kyora vms login, or kyora vms login --org ${handle}`)
       throw error
     }
   }

@@ -40,7 +40,7 @@ up:
   --image NAME            the guest image, e.g. desktop (default $KYORA_VMS_IMAGE, else the machine's)
   --ttl DURATION          how long the session may run (default 12h; kyora cloud caps it, 8h unless raised)
   --network MODE          registries (default) or open
-  --cpus N  --memory SIZE  --disk SIZE   the sandbox's size, as for kyora-vms create
+  --cpus N  --memory SIZE  --disk SIZE   the sandbox's size, as for kyora vms create
   --wait DURATION | --no-wait   waiting for capacity (default 15m)
   --prompt TEXT           what the agent is told when it resumes (default: carry on, commit to the branch)
   --permission-mode MODE  the agent's permission mode in the VM (default ${DEFAULT_PERMISSION_MODE})

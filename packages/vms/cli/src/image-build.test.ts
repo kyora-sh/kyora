@@ -9,7 +9,7 @@ import { contentKey, loadSpec, pnpmStep, SpecError } from "./image-spec"
 import { tempDir, write } from "./testing/fixtures"
 
 /**
- * `kyora-vms image build`'s orchestration (image-build.ts) against a fake kyora cloud and a fake
+ * `kyora vms image build`'s orchestration (image-build.ts) against a fake kyora cloud and a fake
  * builder sandbox: what the builder is created with, what goes up, the streamed log, the push with
  * the content key, the cache, and the builder destroyed whatever happens.
  */

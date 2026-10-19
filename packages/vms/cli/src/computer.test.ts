@@ -28,7 +28,7 @@ async function sandbox(extra: string[] = []): Promise<string> {
   return created.stdout.trim()
 }
 
-describe("kyora-vms create --display", () => {
+describe("kyora vms create --display", () => {
   test("sends the size with the spec, and refuses what isn't WxH", async () => {
     await sandbox(["--display", "1024x768"])
     expect(vmd.created.at(-1)).toMatchObject({ image: "desktop", display: { width: 1024, height: 768 } })
@@ -38,7 +38,7 @@ describe("kyora-vms create --display", () => {
   })
 })
 
-describe("kyora-vms screenshot", () => {
+describe("kyora vms screenshot", () => {
   test("saves the PNG, prints its path, says its size", async () => {
     const id = await sandbox()
     const result = await cli(["screenshot", id, "-o", "shot.png"], { cwd: root, env: env() })
@@ -80,7 +80,7 @@ describe("kyora-vms screenshot", () => {
   })
 })
 
-describe("kyora-vms computer", () => {
+describe("kyora vms computer", () => {
   test("each action goes out as the tool says it", async () => {
     const id = await sandbox()
     const cases: Array<[string[], Record<string, unknown>]> = [

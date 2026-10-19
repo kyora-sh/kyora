@@ -17,7 +17,7 @@ export async function runHarness(command: string, args: string[]): Promise<never
   if (bin && typeof execve === "function") execve.call(process, bin, [bin, command, ...args], process.env)
   const { exitFlushed, FAILED, note } = await import("./output")
   note(bin
-    ? `kyora ${command} needs a Bun that has process.execve; run \`bun upgrade\``
+    ? `kyora ${command} needs Bun 1.3.14 or later (process.execve); run \`bun upgrade\``
     : `kyora ${command} runs the kyora agent harness (${HARNESS}), which is not on your PATH; install it with: ${HARNESS_INSTALL}`)
   return exitFlushed(FAILED)
 }

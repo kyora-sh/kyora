@@ -30,17 +30,25 @@ test("bash completion treats substitutions literally and matches the user's pref
   const marker = join(root, "executed")
   try {
     const script = `${completion("bash")}
-kyora-vms() { printf '%s\n' "$CANDIDATES"; }
-COMP_WORDS=(kyora-vms attach "")
-COMP_CWORD=2
-_kyora_vms
+kyora() { printf '%s\n' "$CANDIDATES"; }
+COMP_WORDS=(kyora vms attach "")
+COMP_CWORD=3
+_kyora
+COMP_WORDS=(kyora vms attach "we")
+_kyora
+printf '%s\n' "\${COMPREPLY[@]}"
 COMP_WORDS=(kyora-vms attach "we")
-_kyora_vms
+COMP_CWORD=2
+_kyora
+printf '%s\n' "\${COMPREPLY[@]}"
+COMP_WORDS=(kyora sw)
+COMP_CWORD=1
+_kyora
 printf '%s\n' "\${COMPREPLY[@]}"
 `
     const proc = Bun.spawn(["bash", "-c", script], { env: { ...process.env, CANDIDATES: `$(touch ${marker})\nweb\nworker` }, stdout: "pipe", stderr: "pipe" })
     const [out, err, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited])
-    expect([out, err, code]).toEqual(["web\n", "", 0])
+    expect([out, err, code]).toEqual(["web\nweb\nswitch\n", "", 0])
     expect(await stat(marker).then(() => true, () => false)).toBe(false)
   } finally {
     await rm(root, { recursive: true, force: true })

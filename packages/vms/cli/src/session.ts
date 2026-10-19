@@ -23,7 +23,7 @@ export function printTable(rows: string[][]): void {
 }
 
 /**
- * Prints only the id on stdout, so `id=$(kyora-vms create)` works. With no room on kyora cloud it
+ * Prints only the id on stdout, so `id=$(kyora vms create)` works. With no room on kyora cloud it
  * waits in line up to `wait` seconds; Ctrl-C meanwhile takes it out of line, and a sandbox that
  * arrives after a Ctrl-C is destroyed rather than printed.
  */
@@ -235,7 +235,7 @@ async function cloudHealth(api: VmsClient, config: Config, status: Health, asJso
   const capacity = status.capacity
   console.log(`${status.ok ? "ok" : "not ok"} · ${config.url} · kyora cloud`)
   if (capacity) console.log(`capacity: ${capacity.vcpusFree ?? "?"} vCPU, ${capacity.memoryMbFree !== undefined ? memory(capacity.memoryMbFree) : "?"} RAM free`)
-  if (!config.key) console.log("token: not logged in (`kyora-vms login`)")
+  if (!config.key) console.log("token: not logged in (`kyora vms login`)")
   else if (token.accepted) console.log(`token: accepted (from ${token.source}) as ${token.login}, ${token.sandboxes} sandbox${token.sandboxes === 1 ? "" : "es"} running`)
   else console.log(`token: rejected (from ${token.source}): ${token.error}`)
   return ready ? 0 : FAILED
@@ -258,7 +258,7 @@ function machineStatus(node: NodeInfo, now = Date.now()): string {
 /** kyora cloud's machines and what is free on them; admins also see sizes, versions and load */
 export async function nodes(api: VmsClient, asJson: boolean): Promise<number> {
   if ((await api.kind()) !== "platform") {
-    throw new Error(`${api.url} does not support nodes. Run \`kyora-vms health\` to check capacity`)
+    throw new Error(`${api.url} does not support nodes. Run \`kyora vms health\` to check capacity`)
   }
   const machines = await api.nodes()
   if (asJson) {

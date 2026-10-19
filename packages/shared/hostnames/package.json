@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Egress hostname rules shared by the kyora-vms CLI, kyora-vmd and kyora cloud",
+  "description": "Egress hostname rules shared by the kyora CLI, kyora-vmd and kyora cloud",
   "license": "Apache-2.0",
   "author": "Elia Hilse",
   "repository": {

@@ -3,7 +3,7 @@ import { printJson } from "./output"
 import { memory, printTable } from "./session"
 
 /**
- * `kyora-vms regions`: kyora cloud's regions, their machines and what is free on the connected
+ * `kyora vms regions`: kyora cloud's regions, their machines and what is free on the connected
  * ones, and where a create from here goes; `regions default <id>` makes one yours, `auto` goes
  * back to where you are.
  */
@@ -39,7 +39,7 @@ export async function regions(api: VmsClient, args: string[], asJson: boolean): 
   ]
   printTable(rows)
   const you = found.you
-  if (you.by === "your default") console.log(`creates go to ${you.region} and only there: your default (\`kyora-vms regions default global\` to undo; --region global for one create).`)
+  if (you.by === "your default") console.log(`creates go to ${you.region} and only there: your default (\`kyora vms regions default global\` to undo; --region global for one create).`)
   else {
     console.log("regions are selected automatically. --region <id> keeps a create in one region.")
   }

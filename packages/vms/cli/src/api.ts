@@ -452,15 +452,15 @@ const HINTS: Record<Kind, Record<number, string>> = {
     403: "this key is not allowed to do that (--network open needs a key with allowOpenNetwork)",
     409: "the sandbox is already running a command; it takes one exec at a time",
     413: "that is over this key's upload limit; keep build output and caches out of the upload (.gitignore them) or push less",
-    429: "this key is at its limit of concurrent sandboxes; `kyora-vms ls`, then `kyora-vms rm <id>`",
+    429: "this key is at its limit of concurrent sandboxes; `kyora vms ls`, then `kyora vms rm <id>`",
     503: "the host is out of capacity or restarting; retry in a minute",
   },
   platform: {
     401: "a KYORA_TOKEN or KYORA_VMS_KEY that is set comes before a stored login",
     403: "this account may not do that (--network open is for admins; an admin grants vms access)",
     409: "the sandbox is busy with an exclusive operation or still starting; older sandboxes take one exec at a time",
-    429: "you are at your limit of concurrent sandboxes; `kyora-vms ls`, then `kyora-vms rm <id>`",
-    503: "no capacity is available for that right now; `kyora-vms nodes` shows available capacity; ask for less or retry later",
+    429: "you are at your limit of concurrent sandboxes; `kyora vms ls`, then `kyora vms rm <id>`",
+    503: "no capacity is available for that right now; `kyora vms nodes` shows available capacity; ask for less or retry later",
   },
 }
 
@@ -469,8 +469,8 @@ const CODE_HINTS: Record<string, string> = {
   unschedulable: "the requested size exceeds available capacity, so waiting would not help; ask for less (--cpus, --memory, --disk)",
   queue_limit: "you already have that many creates waiting for capacity; let them finish or stop some",
   queue_full: "the queue for capacity is full; retry in a minute",
-  region_unavailable: "capacity is unavailable in that region; `kyora-vms regions` lists the regions; --region global uses capacity in any region",
-  unknown_region: "`kyora-vms regions` lists the regions there are",
+  region_unavailable: "capacity is unavailable in that region; `kyora vms regions` lists the regions; --region global uses capacity in any region",
+  unknown_region: "`kyora vms regions` lists the regions there are",
   region_conflict: "a create pinned to a machine runs in that machine's region; leave out --region",
 }
 
@@ -551,7 +551,7 @@ async function apiError(action: string, response: Response, kind: Kind, hints = 
   message ??= `the server request failed (HTTP ${response.status})`
   const hint = hints
     ? code === "image_unavailable"
-      ? kind === "platform" ? "`kyora-vms images` shows availability; choose an available region or ask an admin to build the profile" : "build this profile on the host before retrying"
+      ? kind === "platform" ? "`kyora vms images` shows availability; choose an available region or ask an admin to build the profile" : "build this profile on the host before retrying"
       : ((kind === "platform" && code ? CODE_HINTS[code] : undefined) ?? (code ? SHARED_CODE_HINTS[code] : undefined) ?? HINTS[kind][response.status])
     : undefined
   return new ApiError(`${action}: ${message}${hint ? `; ${hint}` : ""}`, response.status, code, retryAfterMs(response.headers.get("retry-after")))
@@ -767,8 +767,8 @@ export class VmsClient {
   private async missingKey(): Promise<string> {
     const kind = await this.kind().catch(() => null)
     if (kind === "vmd") return "no API key; set KYORA_VMS_KEY, or put KYORA_VMS_KEY=kvms_… in ~/.config/kyora-vms/env"
-    if (kind === "platform") return `not logged in to ${this.url}; run \`kyora-vms login\`, or set KYORA_TOKEN`
-    return `no credentials for ${this.url}: \`kyora-vms login\` for kyora cloud, or KYORA_VMS_KEY=kvms_… for a machine you manage`
+    if (kind === "platform") return `not logged in to ${this.url}; run \`kyora vms login\`, or set KYORA_TOKEN`
+    return `no credentials for ${this.url}: \`kyora vms login\` for kyora cloud, or KYORA_VMS_KEY=kvms_… for a machine you manage`
   }
 
   images(): Promise<Response> {
@@ -882,7 +882,7 @@ export class VmsClient {
         const left = until.at - Date.now()
         if (left <= 0) {
           await this.cancelQueued(path)
-          throw new ApiError(`create sandbox: still in line for room well past --wait (${formatMs(until.wait * 1000)}), with no answer from kyora cloud; kyora-vms took the create out of line`, 503, "queue_timeout")
+          throw new ApiError(`create sandbox: still in line for room well past --wait (${formatMs(until.wait * 1000)}), with no answer from kyora cloud; kyora took the create out of line`, 503, "queue_timeout")
         }
         let response: Response
         try {
@@ -1187,7 +1187,7 @@ export class VmsClient {
     }
   }
 
-  /** the orgs the person behind this token is in (`kyora-vms org ls`); works without vms access of their own */
+  /** the orgs the person behind this token is in (`kyora vms org ls`); works without vms access of their own */
   async orgs(): Promise<OrgInfo[]> {
     const response = await this.send("list orgs", "GET", "/v1/orgs", { timeout: TIMEOUTS.short })
     return ((await response.json()) as { orgs?: OrgInfo[] }).orgs ?? []
@@ -1199,7 +1199,7 @@ export class VmsClient {
     return await response.json() as { tickets: import("./support.js").SupportTicket[] } | { ticket: import("./support.js").SupportTicket }
   }
 
-  /** an org token for the person behind this personal token (`kyora-vms org use`) */
+  /** an org token for the person behind this personal token (`kyora vms org use`) */
   async orgToken(org: string, name: string): Promise<OrgToken> {
     const response = await this.send(`get a token for the org ${org}`, "POST", `/v1/orgs/${encodeURIComponent(org)}/tokens`, { json: { name }, timeout: TIMEOUTS.short })
     return (await response.json()) as OrgToken
@@ -1265,7 +1265,7 @@ export class VmsClient {
     return ((await response.json()) as { nodes?: NodeInfo[] }).nodes ?? []
   }
 
-  /** `org`: the token is to act as that org (kyora-vms login --org); the approver must be in it */
+  /** `org`: the token is to act as that org (kyora vms login --org); the approver must be in it */
   async deviceStart(hostname: string, org?: string): Promise<DeviceStart> {
     const response = await this.send("login", "POST", "/v1/auth/device", { auth: false, json: { client: "kyora-vms", hostname, ...(org ? { org } : {}) }, timeout: TIMEOUTS.short })
     const start = (await response.json().catch(() => null)) as Partial<DeviceStart> | null

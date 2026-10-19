@@ -12,7 +12,7 @@ import { pull, push } from "./transfer"
 import { formatBytes, formatMs } from "./units"
 
 /**
- * `kyora-vms image build [kyora.image.json]`: one command from a spec in a
+ * `kyora vms image build [kyora.image.json]`: one command from a spec in a
  * repo to a pinned account image, `name@N`. Orchestrated by the CLI with what kyora cloud has today:
  *
  *   1. the spec is checked and compiled here, and its files hashed: a mistake costs no sandbox;
@@ -53,7 +53,7 @@ export interface BuildResult {
   base: string
 }
 
-/** what a failed build exits with: 2 a spec the builder refused, 1 a build that failed, 125 kyora-vms itself */
+/** what a failed build exits with: 2 a spec the builder refused, 1 a build that failed, 125 kyora itself */
 export class BuildFailure extends Error {
   constructor(message: string, readonly code: number, readonly reason: string) {
     super(message)
@@ -132,7 +132,7 @@ function lines(each: (line: string) => void): { push: (text: string) => void; en
 export function driverScript(spec: ImageSpec, options: { timeoutSeconds: number; maxRootGb: number }): string {
   const q = (text: string) => `'${text.replace(/'/g, `'\\''`)}'`
   return `#!/bin/bash
-# kyora-vms image build, in the builder sandbox, as root (packages/vms/cli/src/image-build.ts)
+# kyora vms image build, in the builder sandbox, as root (packages/vms/cli/src/image-build.ts)
 set -euo pipefail
 B=${REMOTE_DIR}
 S=/mnt/scratch/kyora-image-build
@@ -314,7 +314,7 @@ export async function buildImage(backend: BuildBackend, options: BuildOptions): 
         await backend.destroy(sandbox.id)
         log(`builder ${sandbox.id} destroyed`)
       } catch (error) {
-        log(`could not destroy the builder ${sandbox.id} (${error instanceof Error ? error.message : String(error)}): kyora-vms rm ${sandbox.id}`)
+        log(`could not destroy the builder ${sandbox.id} (${error instanceof Error ? error.message : String(error)}): kyora vms rm ${sandbox.id}`)
       }
     }
     if (!options.scratch) await rm(scratch, { recursive: true, force: true }).catch(() => {})

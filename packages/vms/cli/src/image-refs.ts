@@ -75,11 +75,11 @@ export function readLock(dir: string): Lock | null {
   try {
     raw = JSON.parse(readFileSync(path, "utf8"))
   } catch {
-    throw new Error(`${join(dir, LOCK_FILE)} is not JSON: fix it, or run kyora-vms image lock again`)
+    throw new Error(`${join(dir, LOCK_FILE)} is not JSON: fix it, or run kyora vms image lock again`)
   }
   const images = typeof raw === "object" && raw !== null ? (raw as { images?: unknown }).images : undefined
   if (typeof images !== "object" || images === null || !Object.values(images).every(isEntry)) {
-    throw new Error(`${join(dir, LOCK_FILE)} is not an image lock ({"lockVersion": 1, "images": {name: {ref, …}}}): run kyora-vms image lock again`)
+    throw new Error(`${join(dir, LOCK_FILE)} is not an image lock ({"lockVersion": 1, "images": {name: {ref, …}}}): run kyora vms image lock again`)
   }
   return { lockVersion: 1, images: images as Record<string, LockEntry> }
 }

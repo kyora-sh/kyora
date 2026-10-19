@@ -10,7 +10,7 @@ let missing: Array<{ type: string; name: string; value: string }> | undefined
 const calls: Array<{ method: string; path: string; body: unknown }> = []
 const PROOF = "kyora-domain-verification=v1:0123456789abcdef0123456789abcdef01234567"
 const domain = () => ({
-  hostname: "shop.example.com", label: "my-app", status, reason: status === "pending" ? "waiting for shop.example.com to resolve through its CNAME to custom.kyora.run" : status === "unverified" ? "waiting for the TXT record _kyora-verify.shop.example.com; add it, then run kyora-vms domain status shop.example.com" : null,
+  hostname: "shop.example.com", label: "my-app", status, reason: status === "pending" ? "waiting for shop.example.com to resolve through its CNAME to custom.kyora.run" : status === "unverified" ? "waiting for the TXT record _kyora-verify.shop.example.com; add it, then run kyora vms domain status shop.example.com" : null,
   attached: true, dcv: "http", url: "https://shop.example.com", createdAt: "2026-10-05T00:00:00.000Z", checkedAt: "2026-10-05T00:00:00.000Z",
   records: [
     { type: "TXT", name: "_kyora-verify.shop.example.com", value: PROOF, purpose: "ownership", required: true, note: "proves the hostname is yours, for this kyora account; keep it" },
@@ -48,7 +48,7 @@ test("domain add sends the hostname and label and prints the DNS records to add"
   expect(result.stdout).toMatch(/CNAME\s+shop\.example\.com\s+custom\.kyora\.run\s+required/)
   expect(result.stdout.indexOf("_kyora-verify")).toBeLessThan(result.stdout.indexOf("custom.kyora.run"))
   expect(result.stdout).toMatch(/TXT\s+_cf-custom-hostname\.shop\.example\.com\s+owner-1\s+optional/)
-  expect(result.stdout).toContain("kyora-vms domain status shop.example.com")
+  expect(result.stdout).toContain("kyora vms domain status shop.example.com")
   expect((await run(["domain", "add", "shop.example.com", "--to", "my-app", "--dcv", "txt"])).code).toBe(0)
   expect(calls.at(-1)!.body).toEqual({ hostname: "shop.example.com", label: "my-app", dcv: "txt" })
   const json = await run(["domain", "add", "shop.example.com", "--to", "my-app", "--json"])

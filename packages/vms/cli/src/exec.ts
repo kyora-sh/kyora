@@ -29,7 +29,7 @@ function signalNumber(signal: string | number | null | undefined): number | null
   return LINUX_SIGNALS[name.startsWith("SIG") ? name : `SIG${name}`] ?? null
 }
 
-/** --timeout's exit code (GNU timeout's), whether the sandbox or kyora-vms called it */
+/** --timeout's exit code (GNU timeout's), whether the sandbox or kyora called it */
 const TIMED_OUT = 124
 
 /**
@@ -49,7 +49,7 @@ export interface ExecOutcome {
   exit: ExitEvent | null
   /** an infrastructure failure the server reported, or a stream that ended early; the caller prints it */
   error: string | null
-  /** kyora-vms gave up on the command at its deadline (--timeout and the grace) */
+  /** kyora gave up on the command at its deadline (--timeout and the grace) */
   expired?: boolean
 }
 
@@ -122,12 +122,12 @@ function positiveEnv(name: string, fallback: number): number {
   return Number.isFinite(value) && value > 0 ? value : fallback
 }
 
-/** how long after --timeout kyora-vms waits for the command's exit before it gives up on it */
+/** how long after --timeout kyora waits for the command's exit before it gives up on it */
 export function timeoutGraceMs(): number {
   return positiveEnv("KYORA_VMS_TIMEOUT_GRACE_MS", 60_000)
 }
 
-/** when kyora-vms stops waiting for a command, whatever its stream is doing */
+/** when kyora stops waiting for a command, whatever its stream is doing */
 export interface Deadline {
   /** epoch ms */
   at: number
@@ -556,7 +556,7 @@ async function readEvents(response: Response, handle: (event: ExecEvent, line: s
   return { code: FAILED, exit: null, error: error ?? "the exec stream ended without an exit status (connection lost?)" }
 }
 
-/** the same events kept instead of shown: for the commands kyora-vms runs in the sandbox for itself */
+/** the same events kept instead of shown: for the commands kyora runs in the sandbox for itself */
 export async function collectExec(response: Response): Promise<ExecOutcome & { stdout: string; stderr: string }> {
   const out = { stdout: [] as Uint8Array[], stderr: [] as Uint8Array[] }
   const encoder = new TextEncoder()

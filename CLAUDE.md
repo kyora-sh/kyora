@@ -38,7 +38,7 @@ cd packages/switch/cli && bun test src/store.test.ts
 cd packages/vms/cli && bun test src/config.test.ts -t "login"
 ```
 
-Full builds and test runs are heavy. Run them in CI or a kyora VM (`kyora-vms run -- cargo test --workspace --locked`) rather than on a laptop.
+Full builds and test runs are heavy. Run them in CI or a kyora VM (`kyora vms run -- cargo test --workspace --locked`) rather than on a laptop.
 
 ## Bun
 
@@ -54,9 +54,9 @@ crates/core        the runtime loop, tools and toolsets, ledger and budgets, ses
 crates/cli         the harness binary `kyora-harness` (`kyora run` and `kyora tui` hand off to it) and its config
 crates/tui         the event-driven TUI with a live recursion tree
 
-packages/vms/cli          `kyora-vms` and `kyora` (bins), plus a library export of the API client
+packages/vms/cli          `kyora` (bin; `kyora-vms` is its deprecated alias for `kyora vms`), plus a library export of the API client
 packages/vms/shared       wire formats the CLI shares with kyora cloud: image chunks, deploy types, meter counters
-packages/vms/image        the image builder the CLI uploads into a builder VM (`kyora-vms image build`)
+packages/vms/image        the image builder the CLI uploads into a builder VM (`kyora vms image build`, also `kyora image build`)
 packages/switch/cli       `kyora-switch`, also `kyora switch`
 packages/shared/usage     engine quota state and live usage probing
 packages/shared/hostnames egress hostname rules

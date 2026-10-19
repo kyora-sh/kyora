@@ -1,22 +1,25 @@
 import { parseArgs } from "node:util"
 import { imageCommand } from "./account-images"
-import { VmsClient } from "./api"
+import { VERSION, VmsClient } from "./api"
 import { loadConfig } from "./config"
 import { topCommand } from "./top"
 import { supportCommand } from "./support"
 import { deployCommand } from "./deploys"
-import { exitFlushed, FAILED, note } from "./output"
-import { SESSION_HELP, sessionMain, SessionUsage } from "./sessions/cli"
+import { exitFlushed, failureCode, note } from "./output"
+import { SESSION_HELP, sessionMain } from "./sessions/cli"
+import { usageHint, vmsMain } from "./vms"
 
 /**
- * `kyora`, for the commands that span kyora's tools: `kyora session …` and `kyora image …`, the
- * same commands as `kyora-vms session …` and `kyora-vms image …`, with `kyora detach` and `kyora back`
- * as the session's short pair, `kyora switch …`, which is kyora-switch, and `kyora run …` and `kyora tui …`,
- * which kyora.ts hands to the agent harness (`kyora-harness`). Sandboxes themselves stay `kyora-vms`.
+ * `kyora`: the sandboxes as `kyora vms …` (vms.ts), with `kyora session …`, `kyora image …` and
+ * `kyora top` also at the top level, `kyora detach` and `kyora back` as the session's short pair,
+ * the account commands (`kyora login` is `kyora vms login`), deploys, support, and `kyora switch …`,
+ * which is kyora-switch. `kyora run …` and `kyora tui …` never get here: kyora.ts hands them to the
+ * agent harness (`kyora-harness`) first. `kyora-vms …` is `kyora vms …`.
  */
-const HELP = `kyora: kyora's cross-tool commands
+const HELP = `kyora: the kyora CLI
 
 usage:
+  kyora vms …         disposable VMs: run, new, ls, shell, exec, push, pull… (kyora vms --help)
   kyora run …         run a task with the kyora agent harness (kyora run --help)
   kyora tui …         the harness's terminal UI (kyora tui --help)
   kyora detach        this repo's coding-agent conversation into a kyora VM; it carries on there
@@ -34,10 +37,17 @@ usage:
                                                        pin it, list, delete
   kyora image push <file.ext4> --name N [--region R]   store an ext4 you built yourself
 
-sandboxes: kyora-vms --help`
+  kyora login [--url URL] [--org ORG] | logout | whoami | org ls | org use <org>|personal
+                                                       your kyora cloud account (the same as kyora vms login…)
+
+kyora-vms is deprecated: kyora-vms <args> is kyora vms <args>.`
+
+const ACCOUNT: ReadonlySet<string> = new Set(["login", "logout", "whoami", "org"])
 
 async function main(argv: string[]): Promise<number> {
   const [group, ...rest] = argv
+  if (group === "vms") return vmsMain(rest)
+  if (group && ACCOUNT.has(group)) return vmsMain(argv)
   if (group === "projects" || group === "link" || group === "deploy" || group === "deployments") return deployCommand(new VmsClient(await loadConfig()), group, rest)
   if (group === "support") return supportCommand(new VmsClient(await loadConfig()), rest)
   if (group === "top") return topCommand(rest)
@@ -57,10 +67,15 @@ async function main(argv: string[]): Promise<number> {
     console.log(group === "help" && rest[0] === "session" ? SESSION_HELP : HELP)
     return 0
   }
-  throw new SessionUsage(`unknown command "${group}"; run \`kyora --help\``)
+  if (group === "--version" || group === "-v") {
+    console.log(VERSION)
+    return 0
+  }
+  throw new KyoraUsage(`unknown command "${group}"`)
 }
 
-class ImageUsage extends Error {}
+class KyoraUsage extends Error {}
+class ImageUsage extends KyoraUsage {}
 
 const parseImageArgs = (args: string[]) => parseArgs({ args, options: { name: { type: "string" }, region: { type: "string" }, json: { type: "boolean" } }, allowPositionals: true, strict: true })
 
@@ -68,18 +83,20 @@ function exit(code: number): Promise<never> {
   return exitFlushed(code)
 }
 
-const argv = Bun.argv.slice(2)
-// kyora-switch sets its own exit code and ends the process the way it does standalone
-if (argv[0] === "switch") {
-  import("kyora-switch/src/index").then(({ run }) => run(argv.slice(1), "kyora switch")).catch((error: unknown) => {
-    console.error(`[kyora-switch] ${error instanceof Error ? error.message : String(error)}`)
-    process.exit(2)
-  })
-} else {
+/** runs `kyora <argv…>` and ends the process with its exit code */
+export function runKyora(argv: string[]): void {
+  // kyora-switch sets its own exit code and ends the process the way it does standalone
+  if (argv[0] === "switch") {
+    import("kyora-switch/src/index").then(({ run }) => run(argv.slice(1), "kyora switch")).catch((error: unknown) => {
+      console.error(`[kyora-switch] ${error instanceof Error ? error.message : String(error)}`)
+      process.exit(2)
+    })
+    return
+  }
   main(argv).then(exit, async (error: unknown) => {
     note(error instanceof Error ? error.message : String(error))
-    if (error instanceof SessionUsage) note("run `kyora session --help` for usage")
-    if (error instanceof ImageUsage) note("run `kyora --help` for usage")
-    await exit(FAILED)
+    const hint = error instanceof KyoraUsage ? "run `kyora --help` for usage" : usageHint(error)
+    if (hint) note(hint)
+    await exit(failureCode(error))
   })
 }

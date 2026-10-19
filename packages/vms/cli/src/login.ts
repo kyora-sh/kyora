@@ -36,11 +36,11 @@ const transient = (error: unknown) => error instanceof ApiError && (error.status
 /**
  * `org` (`--org`): the token acts as that org, which the person approving it must be in (an org's
  * member with no vms access of their own signs in this way). It is kept beside the personal one
- * and put in use; `kyora-vms org use` switches.
+ * and put in use; `kyora vms org use` switches.
  */
 export async function login(api: VmsClient, config: Config, asJson: boolean, org?: string): Promise<number> {
   if ((await api.kind()) !== "platform") {
-    throw new Error(`${api.url} requires an API key (KYORA_VMS_KEY). To sign in to kyora cloud: kyora-vms login --url ${DEFAULT_URL}`)
+    throw new Error(`${api.url} requires an API key (KYORA_VMS_KEY). To sign in to kyora cloud: kyora vms login --url ${DEFAULT_URL}`)
   }
   const start = await api.deviceStart(hostname(), org)
   const expires = Date.now() + start.expiresIn * 1000
@@ -48,7 +48,7 @@ export async function login(api: VmsClient, config: Config, asJson: boolean, org
   note(`and check that it shows the code ${start.userCode} (good for ${Math.max(1, Math.round(start.expiresIn / 60))} min)`)
   note(openBrowser(start.verifyUrl) ? "opened it in your browser; waiting for you to approve…" : "waiting for you to approve…")
 
-  const expired = (why: string) => new Error(`the code ${start.userCode} ran out before it was approved${why}; run \`kyora-vms login\` again`)
+  const expired = (why: string) => new Error(`the code ${start.userCode} ran out before it was approved${why}; run \`kyora vms login\` again`)
   let interval = Math.max(1, start.interval) * 1000
   let lastError = ""
   let approved: Extract<DevicePoll, { status: "approved" }> | null = null
@@ -116,7 +116,7 @@ export async function logout(url: string, config: Config, asJson: boolean): Prom
 
 export async function whoami(api: VmsClient, config: Config, asJson: boolean): Promise<number> {
   if ((await api.kind()) !== "platform") {
-    throw new Error(`${api.url} requires an API key. Run \`kyora-vms health\` to check the key`)
+    throw new Error(`${api.url} requires an API key. Run \`kyora vms health\` to check the key`)
   }
   const me = await api.me()
   if (asJson) {

@@ -1,7 +1,7 @@
 import { ApiError } from "./api"
 import { formatMs } from "./units"
 
-/** exit code for kyora-vms' own failures, kept apart from the remote command's codes (like `docker run`) */
+/** exit code for kyora's own failures, kept apart from the remote command's codes (like `docker run`) */
 export const FAILED = 125
 /** The requested image is unavailable on the reachable fleet. */
 export const IMAGE_UNAVAILABLE = 123
@@ -29,7 +29,7 @@ export function regionNote(sandbox: { id: string; region?: string; requestedRegi
   }
 }
 
-// a closed pipe (`kyora-vms run … | head`) must not kill us before the sandbox is destroyed
+// a closed pipe (`kyora vms run … | head`) must not kill us before the sandbox is destroyed
 process.stdout.on("error", () => {})
 process.stderr.on("error", () => {})
 

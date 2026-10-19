@@ -38,7 +38,7 @@ import { REMOTE_WORK } from "./paths"
  *
  * TODO(feat/vms-shell): once sandboxes have persistent tmux terminals, the supervisor runs in a
  * tmux window instead (the agent then interactive, `claude --resume <id>` with the prompt), and
- * `attach` joins that window through `kyora-vms shell`; the file protocol stays as it is.
+ * `attach` joins that window through `kyora vms shell`; the file protocol stays as it is.
  */
 
 export const SESSION_DIR = "/tmp/kyora-session"
@@ -458,7 +458,7 @@ export function supervisorRequest(args: SupervisorArgs): ExecRequest {
   if (args.api && args.token) {
     env.KYORA_SESSION_API = args.api
     env.KYORA_SESSION_TOKEN = args.token
-    // the child token: kyora-vms in the VM creates sandboxes of the session's own
+    // the child token: kyora in the VM creates sandboxes of the session's own
     env.KYORA_VMS_URL = new URL(args.api).origin
     env.KYORA_TOKEN = args.token
   }

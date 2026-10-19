@@ -90,6 +90,6 @@ test("build keeps both Bun CLI binaries and their startup behavior", async () =>
     expect((await Bun.file(path).text()).split("\n")[0]).toBe("#!/usr/bin/env -S bun --no-env-file --config=/dev/null")
     const result = await run([process.execPath, "--no-env-file", path, "--help"])
     expect(result.code, result.stderr).toBe(0)
-    expect(result.stdout).toContain(bin === "index.js" ? "kyora-vms" : "kyora")
+    expect(result.stdout).toContain(bin === "index.js" ? "kyora vms: run commands in disposable VMs" : "kyora vms …")
   }
 })

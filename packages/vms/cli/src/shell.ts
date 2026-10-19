@@ -6,7 +6,7 @@ import { FAILED, printJson } from "./output"
 import { formatMs } from "./units"
 
 /**
- * `kyora-vms shell <id>`: a terminal in the sandbox, a tmux session that lives
+ * `kyora vms shell <id>`: a terminal in the sandbox, a tmux session that lives
  * in the guest. The local terminal goes raw and talks to it over a WebSocket (kyora-vmd's terminal
  * framing: binary messages, the first byte 0 for the terminal's bytes and 1 for JSON control), its
  * size follows SIGWINCH, and the session outlives the connection: a dropped one is attached again,
@@ -35,7 +35,7 @@ export interface TerminalIo {
   onResize(listener: () => void): () => void
   /** resolves once the terminal took it: output is acked only then */
   write(data: Uint8Array | string): Promise<void>
-  /** a line of kyora-vms' own, on stderr */
+  /** a line of kyora's own, on stderr */
   status(text: string): void
   onSignal(listener: (signal: TerminalSignal) => void): () => void
 }
@@ -548,12 +548,12 @@ class Shell {
     const label = this.options.sandboxName ?? this.id
     const session = this.options.name === "main" ? "" : ` --name ${this.options.name}`
     const target = label.startsWith("-") ? `${session} ${sandboxArgument(label)}` : ` ${label}${session}`
-    return `kyora-vms ${this.options.sandboxName && this.options.name === "main" ? "attach" : "shell"}${target}`
+    return `kyora vms ${this.options.sandboxName && this.options.name === "main" ? "attach" : "shell"}${target}`
   }
 
   private detachHint(): void {
     this.io.status(this.options.sandboxName && this.options.name === "main"
-      ? `back in: kyora-vms attach ${sandboxArgument(this.options.sandboxName!)} · gone: kyora-vms rm ${sandboxArgument(this.options.sandboxName!)}`
+      ? `back in: kyora vms attach ${sandboxArgument(this.options.sandboxName!)} · gone: kyora vms rm ${sandboxArgument(this.options.sandboxName!)}`
       : `detached from ${this.options.name}; it keeps running: ${this.again()}`)
   }
 
@@ -565,11 +565,11 @@ class Shell {
   }
 }
 
-/** `kyora-vms shell <id> [--name main] [--view] [-- cmd…]` */
+/** `kyora vms shell <id> [--name main] [--view] [-- cmd…]` */
 export async function shell(api: VmsClient, id: string, options: ShellOptions): Promise<number> {
   const io = options.io ?? processIo()
   if (!io.isTTY) {
-    io.status("shell needs a terminal: stdin and stdout aren't one (for a command, use kyora-vms exec)")
+    io.status("shell needs a terminal: stdin and stdout aren't one (for a command, use kyora vms exec)")
     return FAILED
   }
   // the sandbox is there and has terminals: real answers, before the terminal goes raw
@@ -593,7 +593,7 @@ export async function shell(api: VmsClient, id: string, options: ShellOptions): 
   }
 }
 
-/** `kyora-vms shell <id> --list` */
+/** `kyora vms shell <id> --list` */
 export async function listSessions(api: VmsClient, id: string, json: boolean): Promise<number> {
   const sessions = await api.ttySessions(id)
   if (json) {
@@ -601,7 +601,7 @@ export async function listSessions(api: VmsClient, id: string, json: boolean): P
     return 0
   }
   if (sessions.length === 0) {
-    console.log(`no terminal sessions in ${id}; kyora-vms shell ${id} starts one`)
+    console.log(`no terminal sessions in ${id}; kyora vms shell ${id} starts one`)
     return 0
   }
   const rows = sessions.map((session) => [
@@ -617,7 +617,7 @@ export async function listSessions(api: VmsClient, id: string, json: boolean): P
   return 0
 }
 
-/** `kyora-vms shell <id> --kill <name>` */
+/** `kyora vms shell <id> --kill <name>` */
 export async function killSession(api: VmsClient, id: string, name: string, json: boolean): Promise<number> {
   await api.ttyKill(id, name)
   if (json) printJson({ killed: name })

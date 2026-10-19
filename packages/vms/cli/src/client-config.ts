@@ -16,7 +16,7 @@ export interface Config {
   urlSource: string
   /** ~/.config/kyora/credentials.json, where `login` keeps its tokens */
   credentials: string
-  /** the org (handle) the stored login acts as (`kyora-vms org use`); null: personal, or the key isn't a stored login */
+  /** the org (handle) the stored login acts as (`kyora vms org use`); null: personal, or the key isn't a stored login */
   org?: string | null
 }
 

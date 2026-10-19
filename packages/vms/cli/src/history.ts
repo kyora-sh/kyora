@@ -581,7 +581,7 @@ git -c advice.defaultBranchName=false init --quiet --template= "$@" .
 if [ -s "$import/shallow" ]; then cp "$import/shallow" .git/shallow; fi
 git bundle unbundle "$import/history.bundle" >/dev/null
 while read -r commit ref; do git update-ref "$ref" "$commit"; done <"$import/refs"
-if [ -n "$branch" ]; then git symbolic-ref HEAD "$branch"; else git update-ref -m "checkout: moving from kyora-vms to $head" --no-deref HEAD "$head"; fi
+if [ -n "$branch" ]; then git symbolic-ref HEAD "$branch"; else git update-ref -m "checkout: moving from kyora vms to $head" --no-deref HEAD "$head"; fi
 if [ -n "$origin" ]; then git remote add origin "$origin"; fi
 git read-tree HEAD
 if [ -s "$import/index" ]; then git update-index -z --index-info <"$import/index"; fi

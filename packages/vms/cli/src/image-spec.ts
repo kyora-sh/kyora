@@ -6,7 +6,7 @@ import { SIZES } from "./ergonomics"
 import { diskGb, parseSeconds } from "./units"
 
 /**
- * `kyora.image.json`: the image spec `kyora-vms image build` reads from a repo. It is
+ * `kyora.image.json`: the image spec `kyora vms image build` reads from a repo. It is
  * the in-VM builder's spec (packages/vms/image/tools/imagespec.py)
  * with a few things a repo wants: a built-in `base` by its plain name, `pnpm` through corepack, `files`
  * as local paths next to the spec, and `build` options for the builder sandbox. `compileSpec` turns it
@@ -156,7 +156,7 @@ export async function checkSpec(raw: unknown, path: string, overrides: { name?: 
   const baseMatch = typeof raw.base === "string" ? BASE.exec(raw.base) : null
   if (!baseMatch) problem("base", `must name a built-in image, e.g. "default", "full" or "desktop": ${JSON.stringify(raw.base ?? null)}`)
   // a kyora image only: the builder boots the base, and the content key trusts the build id it reports
-  else if (!FLEET_IMAGE_NAMES.has(baseMatch[1]!)) problem("base", `must be one of kyora's images (\`kyora-vms images\` lists them), not ${JSON.stringify(raw.base)}; building on your own images comes later`)
+  else if (!FLEET_IMAGE_NAMES.has(baseMatch[1]!)) problem("base", `must be one of kyora's images (\`kyora vms images\` lists them), not ${JSON.stringify(raw.base)}; building on your own images comes later`)
 
   const list = (key: string, pattern: RegExp, what: string) => {
     const value = raw[key]

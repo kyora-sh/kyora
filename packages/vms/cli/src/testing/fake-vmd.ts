@@ -1311,7 +1311,7 @@ async function startFake(kind: FakeVmd["kind"], initial: FakeOptions): Promise<F
     const device = vmd.devices.find((d) => d.deviceCode === deviceCode)
     if (device) device.polls++
     const gone = (status: "expired" | "denied", message: string) => Response.json({ error: status, status, message }, { status: 410 })
-    if (!device || device.status === "claimed" || device.expiresAt <= Date.now()) return gone("expired", "this login expired; run kyora-vms login again")
+    if (!device || device.status === "claimed" || device.expiresAt <= Date.now()) return gone("expired", "this login expired; run kyora vms login again")
     if (device.status === "denied") return gone("denied", "the login was denied in the browser")
     if (device.status === "pending") return Response.json({ error: "authorization_pending", status: "pending", message: "waiting for approval in the browser" }, { status: 428 })
     device.status = "claimed"
@@ -1330,7 +1330,7 @@ async function startFake(kind: FakeVmd["kind"], initial: FakeOptions): Promise<F
       role: "member",
       vmsAccess: true,
       limits: { maxSandboxes: 8 },
-      token: { id: "tok_1", name: token === TOKEN ? "ci" : "kyora-vms on test", scopes: ["vms"], expiresAt: new Date(Date.now() + 30 * 86_400_000).toISOString() },
+      token: { id: "tok_1", name: token === TOKEN ? "ci" : "kyora vms on test", scopes: ["vms"], expiresAt: new Date(Date.now() + 30 * 86_400_000).toISOString() },
     })
 
   const platform = kind === "platform"
@@ -1354,7 +1354,7 @@ async function startFake(kind: FakeVmd["kind"], initial: FakeOptions): Promise<F
       const presented = request.headers.get("authorization")?.replace(/^Bearer /, "") ?? ""
       if (platform ? !vmd.tokens.has(presented) : presented !== KEY) {
         vmd.unauthorized++
-        if (platform) return error(401, "unauthorized", "missing, invalid or expired token; run kyora-vms login")
+        if (platform) return error(401, "unauthorized", "missing, invalid or expired token; run kyora vms login")
         return error(401, "unauthorized", "missing or unknown API key")
       }
       if (platform && request.method === "GET" && url.pathname === "/v1/me") return me(presented)
