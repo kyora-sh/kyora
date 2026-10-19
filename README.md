@@ -6,7 +6,7 @@ Status: early development.
 
 ## Install
 
-Requires Bun 1.2.19 or later on your PATH (`npx` will not work).
+Requires Bun 1.2.19 or later on your PATH, and 1.3.14 or later for `kyora run` and `kyora tui` (`npx` will not work).
 
 ```sh
 bun add -g @kyora-sh/vms

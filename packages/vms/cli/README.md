@@ -57,7 +57,7 @@ and credential in a private temporary file.
 
 ## Install
 
-Requires [Bun](https://bun.sh) ≥ 1.2.19 on your PATH. `npx` will not work.
+Requires [Bun](https://bun.sh) ≥ 1.2.19 on your PATH (≥ 1.3.14 for `kyora run` and `kyora tui`). `npx` will not work.
 
 ```bash
 bun add -g @kyora-sh/vms

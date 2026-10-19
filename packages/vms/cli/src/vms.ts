@@ -443,7 +443,7 @@ async function execRequest(values: Values, cmd: string[]): Promise<ExecRequest> 
   return request
 }
 
-/** `kyora vms …`, which `kyora vms …` also is */
+/** `kyora vms …`, which `kyora-vms …` also is */
 export async function vmsMain(argv: string[]): Promise<number> {
   if (argv[0] === "top") return topCommand(argv.slice(1))
   // kyora session …: a command group of its own
