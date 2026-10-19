@@ -1,0 +1,31 @@
+{
+  "name": "@kyora-sh/usage",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Engine quota state and live usage probing shared by kyora review, council and switch",
+  "license": "Apache-2.0",
+  "homepage": "https://kyora.sh",
+  "exports": {
+    ".": "./src/index.ts",
+    "./state": "./src/state.ts",
+    "./quota": "./src/quota.ts"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "check-types": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@repo/typescript-config": "workspace:*",
+    "@types/bun": "1.4.2",
+    "typescript": "^5.9.2"
+  }
+}
