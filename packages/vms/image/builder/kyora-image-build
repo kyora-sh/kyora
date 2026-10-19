@@ -1,0 +1,1003 @@
+#!/usr/bin/env python3
+"""kyora-image-build: build one version of a user image from its spec, in a builder VM.
+
+  kyora-image-build --spec FILE [--base-digest sha256:...] [--digest sha256:...] [--name NAME]
+                    [--base-ref REF] [--built-at ISO] [--base DEV|FILE|DIR] [--output DEV|FILE]
+                    [--work DIR] [--timeout S] [--max-root-gb N] [--keep]
+
+The builder VM boots kyora's `default` image with the base image attached read-only as
+/dev/vdc and a blank sparse output drive as /dev/vdd (kernel command line
+`kyora.build=base:<sectors>,output:<sectors>`, checked against both). The Worker runs this
+as a root exec. It:
+
+  1. mounts the base read-only (ro,noload) and an overlay on it, the upper on the scratch disk;
+  2. runs rootfs/chroot-install.sh's delta phases in a chroot of the overlay: apt, the
+     toolchains, cargo, npm, pip, uvTools, files, the run steps, /etc/kyora, the manifest,
+     the strip. /tmp, /run, /work and /mnt are scratch, so nothing there reaches the image;
+  3. checks that kyora-init, the agent and the /etc/kyora files it did not write are the base's;
+  4. packs the flattened tree onto the output with `mkfs.ext4 -d`, deterministically: UUID
+     and hash seed from the digest, the base's build time for every timestamp it wrote;
+  5. checks it with `e2fsck -fn` and hashes it as vmd will (4 MiB chunks).
+
+--base and --output also take an ext4 file or a directory, and a file, so it runs in an
+ordinary sandbox too. stdout is NDJSON: log records {t, phase, step, stream, data} as the
+build goes, then one result line, {"fsBytes": n, ...} or {"error": {"code", "message"}}.
+Exit 0 (built), 1 (the build failed) or 2 (bad input: spec, digest, base or drives).
+"""
+
+from __future__ import annotations
+
+import argparse
+import collections
+import contextlib
+import ctypes
+import datetime
+import hashlib
+import json
+import os
+import shutil
+import signal
+import stat
+import struct
+import subprocess
+import sys
+import threading
+import time
+import uuid
+from typing import Any, Callable, Iterator
+
+VERSION = "1"  # the fleet manifest's `builder`
+
+
+def _lib_dir() -> str:
+    here = os.path.dirname(os.path.realpath(__file__))
+    for d in (os.environ.get("KYORA_IMAGE_LIB"), "/usr/local/lib/kyora/image-build", os.path.join(here, "..", "tools")):
+        if d and os.path.isfile(os.path.join(d, "imagespec.py")):
+            return os.path.realpath(d)
+    raise SystemExit("kyora-image-build: imagespec.py not found (set KYORA_IMAGE_LIB)")
+
+
+LIB = _lib_dir()
+sys.path.insert(0, LIB)
+
+import imagespec  # noqa: E402
+
+# installed: next to imagespec.py; in the repository: rootfs/, next to tools/
+CHROOT_INSTALL = next(
+    (os.path.realpath(p) for p in (os.path.join(LIB, "chroot-install.sh"), os.path.join(LIB, "..", "rootfs", "chroot-install.sh"))
+     if os.path.isfile(p)),
+    os.path.join(LIB, "chroot-install.sh"),
+)
+# the stage files chroot-install.sh sources (rootfs/stages/; delta.sh drives a spec's phases)
+STAGES_DIR = os.path.join(os.path.dirname(CHROOT_INSTALL), "stages")
+
+MIB = 1 << 20
+CHUNK = imagespec.CHUNK_SIZE
+HEADROOM_MB = 512
+DEFAULT_BASE = "/dev/vdc"
+DEFAULT_OUTPUT = "/dev/vdd"
+DEFAULT_WORK = "/mnt/scratch/build"
+BASE_MOUNT = "/run/build/base"
+DEFAULT_TIMEOUT = 3600
+LABEL = "kyora-rootfs"
+PLAN = "tmp/kyora-build"  # in the root: /tmp/kyora-build, where chroot-install.sh reads its plan
+# never part of the image: scratch binds and tmpfs during the build, emptied after it
+SCRATCH_DIRS = ("tmp", "run", "work", "mnt")
+SYSTEM_DIRS = ("proc", "sys", "dev")
+# what boots the guest, and what the build writes into /etc/kyora itself
+KYORA_FILES = ("sbin/kyora-init", "usr/local/bin/kyora-vm-agent")
+KYORA_DIR = "etc/kyora"
+CHROOT_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+PROXY_VARS = ("HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "no_proxy", "all_proxy")
+APT_PROXY_FILE = "/etc/apt/apt.conf.d/90kyora-proxy"
+POLICY_RC = "usr/sbin/policy-rc.d"
+MAX_LINE = 16 * 1024
+INPUT_ERRORS = {"invalid_spec", "digest_mismatch", "base_invalid", "drive_mismatch"}
+UMOUNT_NOFOLLOW = 8
+MNT_DETACH = 2
+
+
+class BuildError(Exception):
+    def __init__(self, code: str, message: str, field: str | None = None, bad_input: bool = False) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.field = field
+        self.bad_input = bad_input or code in INPUT_ERRORS
+
+
+class StepTimeout(Exception):
+    pass
+
+
+class Cancelled(Exception):
+    pass
+
+
+# --------------------------------------------------------------------------- logs
+
+
+def now_iso() -> str:
+    return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+class Log:
+    """The build log on stdout, one JSON object per line, flushed as it goes: what the Worker
+    stores and streams to followers."""
+
+    def __init__(self, out: Any, clock: Callable[[], str] = now_iso) -> None:
+        self.out = out
+        self.clock = clock
+        self.lock = threading.Lock()
+        self.phase: str | None = None
+        self.step: int | None = None
+        self.tail: collections.deque[str] = collections.deque(maxlen=8)
+
+    def record(self, stream: str, data: str, **extra: Any) -> None:
+        if len(data) > MAX_LINE:
+            data = data[:MAX_LINE] + f"... ({len(data) - MAX_LINE} more characters)"
+        rec = {"t": self.clock(), "phase": self.phase, "step": self.step, "stream": stream, "data": data, **extra}
+        self.write(rec)
+        if stream != "sys":
+            self.tail.append(data)
+
+    def line(self, stream: str, text: str) -> None:
+        """A line of a command's output (stream "out" or "err")."""
+        self.record(stream, text)
+
+    def sys(self, text: str, **extra: Any) -> None:
+        self.record("sys", text, **extra)
+
+    def write(self, obj: dict[str, Any]) -> None:
+        with self.lock:
+            self.out.write(json.dumps(obj, ensure_ascii=False) + "\n")
+            self.out.flush()
+
+    @contextlib.contextmanager
+    def phase_of(self, phase: str, text: str, step: int | None = None, **extra: Any) -> Iterator[None]:
+        """One progress line when a phase (or run step) starts, one when it is done."""
+        self.phase, self.step = phase, step
+        self.tail.clear()
+        started = time.monotonic()
+        self.sys(text, **extra)
+        yield
+        self.sys(f"{phase} done in {time.monotonic() - started:.1f}s")
+
+
+# --------------------------------------------------------------------------- the system
+
+
+class Sys:
+    """Every command, mount and unmount goes through here, so the tests can see and fake them."""
+
+    def run(
+        self,
+        argv: list[str],
+        *,
+        env: dict[str, str] | None = None,
+        timeout: float | None = None,
+        on_line: Callable[[str, str], None] | None = None,
+    ) -> int:
+        """Run argv in its own session, its output line by line to on_line(stream, text).
+        Raises StepTimeout (after killing the session) when it outlives `timeout`."""
+        proc = subprocess.Popen(
+            argv, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+        sink = on_line or (lambda stream, text: None)
+        pumps = [
+            threading.Thread(target=_pump, args=(proc.stdout, "out", sink), daemon=True),
+            threading.Thread(target=_pump, args=(proc.stderr, "err", sink), daemon=True),
+        ]
+        for pump in pumps:
+            pump.start()
+        try:
+            rc = proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            raise StepTimeout() from None
+        finally:
+            if proc.poll() is None:
+                _kill_session(proc)
+            # a daemon a step started may hold the pipes: reap() kills it, so don't wait forever
+            for pump in pumps:
+                pump.join(timeout=5)
+        return rc
+
+    def mount(self, args: list[str]) -> None:
+        out = subprocess.run(["mount", *args], capture_output=True, text=True)
+        if out.returncode != 0:
+            raise BuildError("internal", f"mount {' '.join(args)}: {out.stderr.strip() or out.returncode}")
+
+    def umount(self, path: str, detach: bool = False) -> None:
+        """umount2 with UMOUNT_NOFOLLOW: a symlink a step left where a mount point was is never followed."""
+        libc = ctypes.CDLL(None, use_errno=True)
+        if libc.umount2(os.fsencode(path), UMOUNT_NOFOLLOW | (MNT_DETACH if detach else 0)) != 0:
+            err = ctypes.get_errno()
+            raise OSError(err, os.strerror(err), path)
+
+    def mountpoints(self) -> list[str]:
+        with open("/proc/self/mountinfo") as f:
+            return [_unescape(line.split()[4]) for line in f if line.strip()]
+
+    def chroot_pids(self, root: str) -> list[int]:
+        """Processes whose root is `root`: what a step left running."""
+        pids = []
+        for name in os.listdir("/proc"):
+            if name.isdigit():
+                try:
+                    if os.readlink(f"/proc/{name}/root") == root:
+                        pids.append(int(name))
+                except OSError:
+                    continue
+        return pids
+
+    def kill(self, pid: int) -> None:
+        with contextlib.suppress(OSError):
+            os.kill(pid, signal.SIGKILL)
+
+    def cmdline(self) -> str:
+        with open("/proc/cmdline") as f:
+            return f.read()
+
+
+def _pump(stream: Any, name: str, sink: Callable[[str, str], None]) -> None:
+    for raw in iter(lambda: stream.readline(MAX_LINE), b""):
+        sink(name, raw.decode("utf-8", "replace").rstrip("\r\n"))
+    stream.close()
+
+
+def _kill_session(proc: subprocess.Popen[bytes]) -> None:
+    for sig, wait in ((signal.SIGTERM, 5.0), (signal.SIGKILL, 5.0)):
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(proc.pid, sig)
+        try:
+            proc.wait(timeout=wait)
+            return
+        except subprocess.TimeoutExpired:
+            continue
+
+
+def _unescape(field: str) -> str:
+    """A mountinfo path: spaces, tabs, newlines and backslashes come octal-escaped."""
+    out, i = [], 0
+    while i < len(field):
+        if field[i] == "\\" and len(field[i + 1:i + 4]) == 3 and field[i + 1:i + 4].isdigit():
+            out.append(chr(int(field[i + 1:i + 4], 8)))
+            i += 4
+        else:
+            out.append(field[i])
+            i += 1
+    return "".join(out)
+
+
+# --------------------------------------------------------------------------- pure helpers
+
+
+def build_drives(cmdline: str) -> dict[str, int] | None:
+    """kyora.build=base:<sectors>,output:<sectors> from the kernel command line, or None."""
+    for word in cmdline.split():
+        if word.startswith("kyora.build="):
+            drives: dict[str, int] = {}
+            for part in word.split("=", 1)[1].split(","):
+                name, _, sectors = part.partition(":")
+                if not sectors.isdigit():
+                    raise BuildError("drive_mismatch", f"bad kyora.build= entry {part!r}")
+                drives[name] = int(sectors)
+            return drives
+    return None
+
+
+def fs_size_mb(content_bytes: int) -> int:
+    """pack_image's size (build-image.sh): the content plus 10% plus 512 MiB, here rounded up
+    to whole 4 MiB chunks so the published file is a whole number of them."""
+    content_mb = -(-content_bytes // MIB)
+    size = content_mb + content_mb // 10 + HEADROOM_MB
+    return -(-size // 4) * 4
+
+
+def inode_count(entries: int) -> int:
+    return entries + entries // 5 + 16384
+
+
+def derived_uuid(version: str, purpose: str) -> str:
+    """A fixed UUID per version digest and purpose ("uuid", "hash_seed"): a rebuild of the
+    same version writes the same superblock."""
+    raw = bytearray(hashlib.sha256(f"kyora-rootfs\0{purpose}\0{version}".encode()).digest()[:16])
+    raw[6] = (raw[6] & 0x0F) | 0x80  # RFC 9562 version 8: custom
+    raw[8] = (raw[8] & 0x3F) | 0x80
+    return str(uuid.UUID(bytes=bytes(raw)))
+
+
+def mkfs_argv(root: str, output: str, size_mb: int, inodes: int, version: str) -> list[str]:
+    """build-image.sh's pack_image, with everything pinned that would differ between two
+    builds of one version: block and inode size, UUID, hash seed, no lazy-init or discard
+    guesswork. E2FSPROGS_FAKE_TIME (the caller's env) pins the times mkfs makes up."""
+    return [
+        "mkfs.ext4", "-q", "-F", "-b", "4096", "-I", "256", "-L", LABEL, "-m", "0", "-N", str(inodes),
+        "-O", "^has_journal", "-U", derived_uuid(version, "uuid"),
+        "-E", f"hash_seed={derived_uuid(version, 'hash_seed')},lazy_itable_init=1,nodiscard",
+        "-d", root, output, f"{size_mb}M",
+    ]
+
+
+def debugfs_quote(path: str) -> str:
+    return '"' + path.replace('"', '""') + '"'
+
+
+def ctime_commands(paths: list[str], epoch: int) -> tuple[str, int]:
+    """debugfs commands that set each path's ctime to `epoch`. mkfs -d copies ctime from the
+    tree, and nothing can set a ctime there. Returns (commands, paths skipped): debugfs can't
+    name a path with a newline in it."""
+    lines, skipped = [], 0
+    for rel in paths:
+        if "\n" in rel or "\r" in rel:
+            skipped += 1
+            continue
+        lines.append(f"sif {debugfs_quote('/' + rel)} ctime @{epoch}\n")
+    return "".join(lines), skipped
+
+
+def epoch_of(manifest: dict[str, Any]) -> int | None:
+    built = manifest.get("builtAt")
+    if not isinstance(built, str):
+        return None
+    try:
+        when = datetime.datetime.fromisoformat(built.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=datetime.timezone.utc)
+    return int(when.timestamp())
+
+
+def superblock(path: str) -> dict[str, Any]:
+    """The few ext4 superblock fields the build checks: block count and size, label."""
+    with open(path, "rb") as f:
+        f.seek(1024)
+        sb = f.read(1024)
+    if len(sb) < 1024 or struct.unpack_from("<H", sb, 0x38)[0] != 0xEF53:
+        raise BuildError("internal", f"{path}: no ext4 superblock")
+    blocks = struct.unpack_from("<I", sb, 0x4)[0]
+    if struct.unpack_from("<I", sb, 0x60)[0] & 0x80:  # INCOMPAT_64BIT
+        blocks |= struct.unpack_from("<I", sb, 0x150)[0] << 32
+    block_size = 1024 << struct.unpack_from("<I", sb, 0x18)[0]
+    label = sb[0x78:0x88].split(b"\0", 1)[0].decode(errors="replace")
+    return {"blocks": blocks, "blockSize": block_size, "bytes": blocks * block_size, "label": label}
+
+
+def resolve_in_root(root: str, rel: str, max_links: int = 40) -> str | None:
+    """`rel` resolved inside the tree at `root` the way the guest will see it: symlinks
+    followed, absolute ones from `root`, `..` never above it. None if it doesn't exist."""
+    parts = collections.deque(p for p in rel.split("/") if p)
+    done: list[str] = []
+    links = 0
+    while parts:
+        part = parts.popleft()
+        if part == ".":
+            continue
+        if part == "..":
+            if done:
+                done.pop()
+            continue
+        path = os.path.join(root, *done, part)
+        try:
+            st = os.lstat(path)
+        except OSError:
+            return None
+        if stat.S_ISLNK(st.st_mode):
+            links += 1
+            if links > max_links:
+                return None
+            target = os.readlink(path)
+            if target.startswith("/"):
+                done = []
+            parts.extendleft(reversed([p for p in target.split("/") if p]))
+            continue
+        done.append(part)
+    return "/".join(done)
+
+
+def describe(root: str, rel: str) -> tuple[Any, ...] | None:
+    """What a check compares about one entry: type, mode, owner, and content or link target."""
+    path = os.path.join(root, rel)
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return None
+    kind = stat.S_IFMT(st.st_mode)
+    if stat.S_ISREG(st.st_mode):
+        digest = hashlib.sha256()
+        with open(path, "rb") as f:
+            while chunk := f.read(MIB):
+                digest.update(chunk)
+        what: Any = digest.hexdigest()
+    elif stat.S_ISLNK(st.st_mode):
+        what = os.readlink(path)
+    else:
+        what = None
+    return (kind, stat.S_IMODE(st.st_mode), st.st_uid, st.st_gid, what)
+
+
+def tree(root: str, rel: str) -> dict[str, tuple[Any, ...]]:
+    """Every entry at and under rel (no symlinks followed), described."""
+    out: dict[str, tuple[Any, ...]] = {}
+    top = describe(root, rel)
+    if top is None:
+        return out
+    out[rel] = top
+    if top[0] == stat.S_IFDIR:
+        for dirpath, dirnames, filenames in os.walk(os.path.join(root, rel)):
+            for name in sorted(dirnames + filenames):
+                child = os.path.relpath(os.path.join(dirpath, name), root)
+                described = describe(root, child)
+                if described is not None:
+                    out[child] = described
+    return out
+
+
+def kyora_differences(base: str, root: str, written: dict[str, bytes]) -> list[str]:
+    """Where the new root's kyora-init, agent or /etc/kyora differ from the base's, other
+    than what the build wrote itself (`written`: rel path -> the bytes it wrote)."""
+    diffs = []
+    for rel in KYORA_FILES:
+        a, b = resolve_in_root(base, rel), resolve_in_root(root, rel)
+        if a is None:
+            diffs.append(f"/{rel} (missing in the base)")
+        elif a != b or describe(base, a) != describe(root, b):
+            diffs.append(f"/{rel}")
+    before, after = tree(base, KYORA_DIR), tree(root, KYORA_DIR)
+    for rel in sorted(set(before) | set(after)):
+        if rel in written:
+            entry = after.get(rel)
+            if entry is None or entry[4] != hashlib.sha256(written[rel]).hexdigest():
+                diffs.append(f"/{rel}")
+        elif before.get(rel) != after.get(rel):
+            diffs.append(f"/{rel}")
+    return diffs
+
+
+def scan(root: str) -> tuple[int, int]:
+    """(allocated bytes, entries) of a tree, hard links counted once: what du and find say."""
+    seen: set[tuple[int, int]] = set()
+    total = 0
+    entries = 1
+    stack = [root]
+    while stack:
+        with os.scandir(stack.pop()) as it:
+            for entry in it:
+                entries += 1
+                st = entry.stat(follow_symlinks=False)
+                if st.st_nlink > 1 and not stat.S_ISDIR(st.st_mode):
+                    key = (st.st_dev, st.st_ino)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                total += st.st_blocks * 512
+                if stat.S_ISDIR(st.st_mode):
+                    stack.append(entry.path)
+    total += os.lstat(root).st_blocks * 512
+    return total, entries
+
+
+def is_whiteout(st: os.stat_result) -> bool:
+    return stat.S_ISCHR(st.st_mode) and st.st_rdev == 0
+
+
+def upper_paths(upper: str) -> list[str]:
+    """Everything the build wrote, from the overlay's upper layer: what has build-time
+    timestamps. Whiteouts (deletions) are not entries of the new tree."""
+    out = [""]
+    for dirpath, dirnames, filenames in os.walk(upper):
+        dirnames.sort()
+        for name in dirnames + sorted(filenames):
+            path = os.path.join(dirpath, name)
+            if not is_whiteout(os.lstat(path)):
+                out.append(os.path.relpath(path, upper))
+    return out
+
+
+def clamp_times(root: str, paths: list[str], epoch: int) -> None:
+    """mtime and atime of each path (relative to root, symlinks themselves) to at most `epoch`,
+    as SOURCE_DATE_EPOCH clamping does: what the build wrote looks built at the base's time."""
+    for rel in paths:
+        path = os.path.join(root, rel) if rel else root
+        st = os.lstat(path)
+        when = min(int(st.st_mtime), epoch) * 1_000_000_000
+        os.utime(path, ns=(when, when), follow_symlinks=False)
+
+
+# --------------------------------------------------------------------------- the build
+
+
+class Builder:
+    def __init__(self, args: argparse.Namespace, sys_: Sys, log: Log) -> None:
+        self.args = args
+        self.sys = sys_
+        self.log = log
+        self.work = os.path.abspath(args.work)
+        self.root = os.path.join(self.work, "root")
+        self.upper = os.path.join(self.work, "upper")
+        self.base = BASE_MOUNT
+        self.deadline = time.monotonic() + args.timeout
+        self.created: list[str] = []  # files the build put into the root that aren't the image's
+        self.spec: dict[str, Any] = {}
+        self.kyora: dict[str, str] = {}
+        self.started = time.monotonic()
+
+    def remaining(self) -> float:
+        left = self.deadline - time.monotonic()
+        if left <= 0:
+            raise BuildError("timeout", f"the build ran out of its {self.args.timeout}s")
+        return left
+
+    # ---------------------------------------------------------------- inputs
+
+    def load_spec(self) -> None:
+        self.log.phase, self.log.step = "spec", None
+        try:
+            self.spec = imagespec.resolve(imagespec.load(self.args.spec))
+        except imagespec.SpecError as e:
+            raise BuildError(e.code, str(e), e.field, bad_input=True) from None
+        self.name = self.args.name or self.spec["name"]
+        if not self.name or not imagespec.IMAGE_NAME_RE.fullmatch(self.name):
+            raise BuildError("invalid_spec", "the image needs a name: --name, or the spec's name", "name")
+        self.base_ref = self.args.base_ref or self.spec["base"]
+        steps = len(self.spec["run"])
+        self.log.sys(f"spec {self.name} on {self.base_ref}: {len(imagespec.phases(self.spec))} phases, {steps} run steps")
+
+    def check_drives(self) -> None:
+        """The builder VM's drives must be the ones the host attached, in that order."""
+        if self.args.base != DEFAULT_BASE and self.args.output != DEFAULT_OUTPUT:
+            return
+        expected = build_drives(self.sys.cmdline())
+        if expected is None:
+            raise BuildError("drive_mismatch", "no kyora.build= on the kernel command line: not a builder VM "
+                             "(pass --base and --output to build elsewhere)")
+        for name, path in (("base", self.args.base), ("output", self.args.output)):
+            actual = _size(path) // 512
+            if expected.get(name) != actual:
+                raise BuildError("drive_mismatch", f"{path} has {actual} sectors, kyora.build= says {name}:{expected.get(name)}")
+
+    # ---------------------------------------------------------------- the base
+
+    def attach_base(self) -> None:
+        source = self.args.base
+        self.unmount_under(self.base)
+        os.makedirs(self.base, exist_ok=True)
+        if os.path.isdir(source):
+            self.sys.mount(["--bind", source, self.base])
+            self.sys.mount(["-o", "remount,bind,ro", self.base])
+        elif stat.S_ISBLK(os.stat(source).st_mode):
+            self.sys.mount(["-t", "ext4", "-o", "ro,noload", source, self.base])
+        elif os.path.isfile(source):
+            self.sys.mount(["-t", "ext4", "-o", "loop,ro,noload", source, self.base])
+        else:
+            raise BuildError("base_invalid", f"{source} is not a block device, an ext4 file or a directory")
+        raw = imagespec.read_in_root(self.base, "etc/kyora-image.json")
+        if raw is None:
+            raise BuildError("base_invalid", "the base has no /etc/kyora-image.json: not a kyora image")
+        try:
+            manifest = json.loads(raw)
+        except ValueError:
+            raise BuildError("base_invalid", "the base's /etc/kyora-image.json is not JSON") from None
+        for rel in KYORA_FILES:
+            target = resolve_in_root(self.base, rel)
+            if target is None or not os.path.isfile(os.path.join(self.base, target)):
+                raise BuildError("base_invalid", f"the base has no /{rel}: not a kyora image")
+        self.base_manifest = raw
+        try:
+            problems = imagespec.check_dependencies(self.spec, imagespec.base_profile(manifest))
+        except imagespec.SpecError as e:
+            raise BuildError("base_invalid", str(e)) from None
+        if problems:
+            raise BuildError("invalid_spec", str(imagespec.SpecError(problems)), problems[0].field)
+        epoch = epoch_of(manifest)  # every timestamp the build writes is the base's build time
+        self.epoch = epoch if epoch is not None else int(os.lstat(os.path.join(self.base, "etc/kyora-image.json")).st_mtime)
+        if self.args.base_digest:
+            self.base_digest = self.args.base_digest
+        else:
+            self.base_digest = "sha256:" + hashlib.sha256(raw).hexdigest()
+            self.log.sys(f"no --base-digest: using the base manifest's sha256 ({self.base_digest}), for local builds only")
+        try:
+            self.version = imagespec.digest(self.spec, self.base_digest)
+        except imagespec.SpecError as e:
+            raise BuildError("invalid_spec", str(e), "base") from None
+        if self.args.digest and self.args.digest != self.version:
+            raise BuildError("digest_mismatch", f"the spec on this base is {self.version}, not {self.args.digest}")
+        self.image_id = f"{self.name}@{self.version}"
+        self.log.sys(f"base {manifest.get('id')} ({self.base_digest}), built {manifest.get('builtAt')}: "
+                     f"this version is {self.version}", version=self.version)
+
+    # ---------------------------------------------------------------- the root
+
+    def prepare(self) -> None:
+        self.clear_work()
+        for d in ("upper", "ovl", "root", "tmp", "work", "mnt"):
+            os.makedirs(os.path.join(self.work, d), mode=0o755)
+        os.chmod(os.path.join(self.work, "tmp"), 0o1777)
+        self.sys.mount(["-t", "overlay", "overlay", "-o",
+                        f"lowerdir={self.base},upperdir={self.upper},workdir={os.path.join(self.work, 'ovl')},"
+                        "redirect_dir=off,index=off,metacopy=off", self.root])
+        for name in SCRATCH_DIRS + SYSTEM_DIRS:  # dev/pts is the builder's, once /dev is bound
+            self.require_dir(name)
+        self.sys.mount(["--bind", os.path.join(self.work, "tmp"), self.target("tmp")])
+        self.sys.mount(["-t", "tmpfs", "-o", "mode=0755", "tmpfs", self.target("run")])
+        self.sys.mount(["--bind", os.path.join(self.work, "work"), self.target("work")])
+        self.sys.mount(["--bind", os.path.join(self.work, "mnt"), self.target("mnt")])
+        self.sys.mount(["-t", "proc", "proc", self.target("proc")])
+        self.sys.mount(["-t", "sysfs", "sysfs", self.target("sys")])
+        self.sys.mount(["--bind", "/dev", self.target("dev")])
+        self.sys.mount(["--bind", "/dev/pts", self.target("dev/pts")])
+        self.bind_resolver()
+        policy = os.path.join(self.root, POLICY_RC)
+        if not os.path.lexists(policy) and os.path.isdir(os.path.dirname(policy)):
+            with open(policy, "w") as f:
+                f.write("#!/bin/sh\nexit 101\n")  # no services start in the build root
+            os.chmod(policy, 0o755)
+            self.created.append(POLICY_RC)
+        plan = os.path.join(self.work, "tmp", "kyora-build")
+        written = imagespec.write_plan(
+            plan, self.spec, name=self.name, version=self.version, base_ref=self.base_ref,
+            base_digest=self.base_digest, base_manifest=self.base_manifest,
+            base_env=(imagespec.read_in_root(self.base, "etc/kyora/env") or b"").decode(),
+            base_caches=(imagespec.read_in_root(self.base, "etc/kyora/caches.json") or b"").decode(),
+            built_at=self.args.built_at,
+        )
+        self.kyora = {f"{KYORA_DIR}/{name}": text for name, text in written.items()}
+        shutil.copyfile(CHROOT_INSTALL, os.path.join(plan, "chroot-install.sh"))
+        os.chmod(os.path.join(plan, "chroot-install.sh"), 0o755)
+        os.makedirs(os.path.join(plan, "stages"), exist_ok=True)
+        for name in ("apt.sh", "toolchains.sh", "extras.sh", "kyora.sh", "delta.sh"):
+            shutil.copyfile(os.path.join(STAGES_DIR, name), os.path.join(plan, "stages", name))
+        self.apt_config = os.path.isfile(APT_PROXY_FILE)
+        if self.apt_config:  # the agent's proxy file, read by apt from the build's /tmp only
+            shutil.copyfile(APT_PROXY_FILE, os.path.join(plan, "apt.conf"))
+
+    def clear_work(self) -> None:
+        self.unmount_under(self.work)
+        if os.path.lexists(self.work):
+            shutil.rmtree(self.work)
+        os.makedirs(self.work)
+
+    def target(self, rel: str) -> str:
+        return os.path.join(self.root, rel)
+
+    def require_dir(self, rel: str) -> None:
+        """A mount point inside the root must be a real directory all the way down: mount
+        follows symlinks, and the base's are the account's own."""
+        path = self.root
+        for part in rel.split("/"):
+            path = os.path.join(path, part)
+            try:
+                if not stat.S_ISDIR(os.lstat(path).st_mode):
+                    raise BuildError("base_invalid", f"/{rel} is not a directory in the base")
+            except FileNotFoundError:
+                raise BuildError("base_invalid", f"the base has no /{rel}") from None
+
+    def bind_resolver(self) -> None:
+        """The builder's resolver, seen at /etc/resolv.conf for the build and never written into it."""
+        rel = "etc/resolv.conf"
+        if not os.path.exists("/etc/resolv.conf"):
+            return
+        path = os.path.join(self.root, rel)
+        try:
+            st = os.lstat(path)
+        except FileNotFoundError:
+            st = None
+        if st is None:
+            with open(path, "w"):
+                pass
+            self.created.append(rel)
+            st = os.lstat(path)
+        if stat.S_ISREG(st.st_mode):
+            self.sys.mount(["--bind", "/etc/resolv.conf", path])
+            return
+        if stat.S_ISLNK(st.st_mode):  # systemd's stub: a link into /run, which is the build's tmpfs
+            link = os.readlink(path)
+            target = os.path.normpath(link.lstrip("/") if link.startswith("/") else os.path.join("etc", link))
+            if target.split("/")[0] in ("run", "tmp") and resolve_in_root(self.root, os.path.dirname(target)) in (
+                    None, os.path.dirname(target)):
+                os.makedirs(os.path.join(self.root, os.path.dirname(target)), exist_ok=True)
+                shutil.copyfile("/etc/resolv.conf", os.path.join(self.root, target))
+                return
+        self.log.sys("/etc/resolv.conf in the base is neither a file nor a link into /run: no DNS in the build")
+
+    # ---------------------------------------------------------------- phases
+
+    def chroot_env(self) -> list[str]:
+        env = {
+            "PATH": CHROOT_PATH, "HOME": "/root", "LANG": "C.UTF-8", "TERM": "dumb",
+            "DEBIAN_FRONTEND": "noninteractive", "IMAGE_ID": self.image_id, "SOURCE_DATE_EPOCH": str(self.epoch),
+        }
+        env.update({k: os.environ[k] for k in PROXY_VARS if os.environ.get(k)})
+        if self.apt_config:
+            env["APT_CONFIG"] = f"/{PLAN}/apt.conf"
+        return [f"{k}={v}" for k, v in env.items()]
+
+    def chroot_phase(self, phase: str, step: int | None) -> None:
+        timeout = self.remaining()
+        extra: dict[str, Any] = {}
+        if step is None:
+            what, text = phase, f"{phase}: {_phase_text(self.spec, phase)}"
+        else:
+            run = self.spec["run"][step - 1]
+            if run["timeoutSeconds"]:
+                timeout = min(timeout, run["timeoutSeconds"])
+            of = len(self.spec["run"])
+            first = run["run"].strip().splitlines()[0]
+            what, text = f"run step {step}/{of}", f"run step {step}/{of} as {run['user']}: {first[:200]}"
+            extra = {"of": of, "run": run["run"][:1000]}
+        with self.log.phase_of(phase, text, step, **extra):
+            argv = ["chroot", self.root, "/usr/bin/env", "-i", *self.chroot_env(),
+                    "/bin/bash", f"/{PLAN}/chroot-install.sh", phase] + ([str(step)] if step else [])
+            try:
+                rc = self.sys.run(argv, env={"PATH": CHROOT_PATH}, timeout=timeout, on_line=self.log.line)
+            except StepTimeout:
+                raise BuildError("timeout", f"{what} ran out of time ({int(timeout)}s)") from None
+            finally:
+                self.reap()
+            if rc != 0:
+                last = f": {self.log.tail[-1]}" if self.log.tail else ""
+                raise BuildError("step_failed", f"{what} failed (exit {rc}){last}")
+
+    def reap(self) -> None:
+        """Kill whatever a phase left running in the root (a daemon a postinst started)."""
+        for _ in range(3):
+            pids = self.sys.chroot_pids(os.path.realpath(self.root))
+            if not pids:
+                return
+            for pid in pids:
+                self.sys.kill(pid)
+            time.sleep(0.2)
+
+    # ---------------------------------------------------------------- finishing the tree
+
+    def finish_root(self) -> None:
+        self.reap()
+        self.unmount_under(self.root, keep=self.root)
+        for rel in self.created:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(os.path.join(self.root, rel))
+        for name in SCRATCH_DIRS + SYSTEM_DIRS:
+            upper = os.path.join(self.upper, name)
+            if not os.path.lexists(upper):
+                continue
+            if not stat.S_ISDIR(os.lstat(upper).st_mode):
+                raise BuildError("step_failed", f"a step replaced /{name}, which is not part of the image")
+            for child in os.listdir(upper):
+                merged = os.path.join(self.root, name, child)
+                if os.path.isdir(merged) and not os.path.islink(merged):
+                    shutil.rmtree(merged)
+                elif os.path.lexists(merged):
+                    os.unlink(merged)
+
+    def verify(self) -> None:
+        written = {rel: text.encode() for rel, text in self.kyora.items()}
+        diffs = kyora_differences(self.base, self.root, written)
+        if diffs:
+            raise BuildError("agent_modified", "the build changed kyora's own files: " + ", ".join(diffs[:10]))
+        self.log.sys("kyora-init, the agent and /etc/kyora are the base's")
+
+    # ---------------------------------------------------------------- pack, check, hash
+
+    def pack(self) -> int:
+        content, entries = scan(self.root)
+        size_mb = fs_size_mb(content)
+        fs_bytes = size_mb * MIB
+        max_bytes = self.args.max_root_gb << 30
+        if fs_bytes > max_bytes:
+            raise BuildError("too_large", f"the image needs {size_mb} MiB, over the {self.args.max_root_gb} GiB limit")
+        output = self.args.output
+        if os.path.exists(output) and stat.S_ISBLK(os.stat(output).st_mode):
+            if fs_bytes > _size(output):
+                raise BuildError("too_large", f"the image needs {size_mb} MiB, the output drive has {_size(output) // MIB} MiB")
+            if os.path.realpath(output) in self.mounted_sources():
+                raise BuildError("drive_mismatch", f"{output} is mounted")
+        else:
+            with open(output, "wb") as f:  # fresh and sparse: unwritten blocks read as zeros
+                f.truncate(fs_bytes)
+        self.log.sys(f"{content // MIB} MiB in {entries} entries: a {size_mb} MiB file system", contentBytes=content)
+        paths = upper_paths(self.upper)
+        clamp_times(self.root, paths, self.epoch)
+        env = {**os.environ, "E2FSPROGS_FAKE_TIME": str(self.epoch)}
+        argv = mkfs_argv(self.root, output, size_mb, inode_count(entries), self.version)
+        if self.sys.run(argv, env=env, timeout=self.remaining(), on_line=self.log.line) != 0:
+            raise BuildError("internal", f"mkfs.ext4 failed: {self.log.tail[-1] if self.log.tail else ''}")
+        commands, skipped = ctime_commands(paths, self.epoch)
+        script = os.path.join(self.work, "ctime.debugfs")
+        with open(script, "w") as f:
+            f.write(commands)
+        problems: list[str] = []
+
+        def debugfs_line(stream: str, text: str) -> None:
+            if not (text.startswith("debugfs ") or text.startswith("debugfs: ") or not text.strip()):
+                problems.append(text)
+
+        if self.sys.run(["debugfs", "-w", "-f", script, output], env=env, timeout=self.remaining(), on_line=debugfs_line) != 0:
+            raise BuildError("internal", "debugfs failed setting the build's ctimes")
+        for text in problems[:20]:
+            self.log.record("err", text)
+        self.log.sys(f"{len(paths)} entries the build wrote, timestamps pinned to {self.epoch}"
+                     + (f" ({skipped} with a newline in the name left as written)" if skipped else "")
+                     + (f"; debugfs reported {len(problems)} problems" if problems else ""))
+        self.content, self.entries = content, entries
+        return fs_bytes
+
+    def fsck(self) -> None:
+        rc = self.sys.run(["e2fsck", "-fn", self.args.output], timeout=self.remaining(), on_line=self.log.line)
+        if rc != 0:
+            raise BuildError("fsck_failed", f"e2fsck -fn found problems (exit {rc})")
+
+    def digest_output(self, fs_bytes: int) -> dict[str, Any]:
+        os.sync()
+        sb = superblock(self.args.output)
+        if sb["bytes"] != fs_bytes or sb["label"] != LABEL:
+            raise BuildError("internal", f"the file system is {sb['bytes']} bytes labelled {sb['label']!r}, "
+                             f"not {fs_bytes} labelled {LABEL!r}")
+        rootfs = imagespec.rootfs_digest(self.args.output, fs_bytes)
+        self.log.sys(f"rootfs {rootfs['digest']}: {rootfs['chunks']} data chunks of {fs_bytes // CHUNK}")
+        return rootfs
+
+    # ---------------------------------------------------------------- mounts
+
+    def mounted_sources(self) -> set[str]:
+        with open("/proc/self/mountinfo") as f:
+            return {os.path.realpath(line.split(" - ", 1)[1].split()[1]) for line in f if " - " in line}
+
+    def unmount_under(self, path: str, keep: str | None = None) -> None:
+        """Every mount at or below path, deepest first (and `keep` itself left mounted)."""
+        path = os.path.realpath(path)
+        keep = os.path.realpath(keep) if keep else None
+        for _ in range(8):
+            points = sorted({m for m in self.sys.mountpoints()
+                             if (m == path or m.startswith(path + "/")) and m != keep}, reverse=True)
+            if not points:
+                return
+            for point in points:
+                try:
+                    self.sys.umount(point)
+                except OSError:
+                    self.sys.umount(point, detach=True)
+        raise BuildError("internal", f"still mounted under {path}")
+
+    def teardown(self) -> None:
+        with contextlib.suppress(Exception):
+            self.reap()
+        for path in (self.root, self.base):
+            try:
+                self.unmount_under(path)
+            except (BuildError, OSError) as e:
+                self.log.sys(f"teardown: {e}")
+        if not self.args.keep:
+            with contextlib.suppress(OSError):
+                if not any(m.startswith(self.work + "/") for m in self.sys.mountpoints()):
+                    shutil.rmtree(self.work)
+
+    # ---------------------------------------------------------------- all of it
+
+    def build(self) -> dict[str, Any]:
+        self.load_spec()
+        self.check_drives()
+        try:
+            with self.log.phase_of("base", f"base {self.args.base}, read-only"):
+                self.attach_base()
+            with self.log.phase_of("prepare", f"overlay root at {self.root}"):
+                self.prepare()
+            for phase, step in imagespec.phases(self.spec):
+                self.chroot_phase(phase, step)
+            with self.log.phase_of("verify", "unmount, empty the scratch dirs, check kyora's own files"):
+                self.finish_root()
+                self.verify()
+            with self.log.phase_of("pack", f"mkfs.ext4 -d onto {self.args.output}"):
+                fs_bytes = self.pack()
+            with self.log.phase_of("fsck", f"e2fsck -fn {self.args.output}"):
+                self.fsck()
+            with self.log.phase_of("hash", f"{CHUNK // MIB} MiB chunks of {fs_bytes // MIB} MiB"):
+                rootfs = self.digest_output(fs_bytes)
+        finally:
+            self.teardown()
+        return {
+            "fsBytes": fs_bytes,
+            "digest": self.version,
+            "id": self.image_id,
+            "rootfs": rootfs,
+            "contentBytes": self.content,
+            "entries": self.entries,
+            "elapsedMs": int((time.monotonic() - self.started) * 1000),
+        }
+
+
+def _phase_text(spec: dict[str, Any], phase: str) -> str:
+    value = {"rustup": (spec["rustup"] or {}).get("toolchains"), "files": [f["path"] for f in spec["files"]]}.get(
+        phase, spec.get(phase))
+    if isinstance(value, list):
+        return " ".join(value)
+    if isinstance(value, str):
+        return value
+    return {"config": "/etc/kyora/env and caches.json", "manifest": "/etc/kyora-image.json", "strip": "caches and logs"}.get(
+        phase, phase)
+
+
+def _size(path: str) -> int:
+    with open(path, "rb") as f:
+        return f.seek(0, os.SEEK_END)
+
+
+# --------------------------------------------------------------------------- CLI
+
+
+def parse_args(argv: list[str] | None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="kyora-image-build", description=__doc__.split("\n\n")[0])
+    parser.add_argument("--spec", help="the image spec (JSON)")
+    parser.add_argument("--base-digest", help="the base version's digest (the Worker resolves it)")
+    parser.add_argument("--digest", help="the version digest the Worker computed: refuse to build anything else")
+    parser.add_argument("--name", help="the image's name (default: the spec's)")
+    parser.add_argument("--base-ref", help="the base as the spec named it (default: the spec's base)")
+    parser.add_argument("--built-at", default=datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"))
+    parser.add_argument("--base", default=DEFAULT_BASE, help="the base: block device, ext4 file or directory")
+    parser.add_argument("--output", default=DEFAULT_OUTPUT, help="the output: block device or file")
+    parser.add_argument("--work", default=DEFAULT_WORK, help="scratch space: the overlay's upper, the build's /tmp")
+    parser.add_argument("--timeout", type=int, help="seconds for the whole build (default: the spec's, else 3600)")
+    parser.add_argument("--max-root-gb", type=int, default=int(os.environ.get("VMS_IMAGE_MAX_ROOT_GB", "32")))
+    parser.add_argument("--keep", action="store_true", help="keep the work directory")
+    parser.add_argument("--version", action="version", version=f"kyora-image-build {VERSION}")
+    args = parser.parse_args(argv)
+    if not args.spec:
+        parser.error("--spec is required")
+    return args
+
+
+def main(argv: list[str] | None = None, sys_: Sys | None = None, out: Any = None) -> int:
+    args = parse_args(argv)
+    log = Log(out or sys.stdout)
+    try:  # a bad spec is refused before anything else, root or not
+        imagespec.resolve(imagespec.load(args.spec))
+    except imagespec.SpecError as e:
+        return _fail(log, e.code, str(e), e.field, True)
+    except OSError as e:
+        return _fail(log, "invalid_spec", f"{args.spec}: {e.strerror}", "spec", True)
+    if os.geteuid() != 0:
+        log.write({"error": {"code": "internal", "message": "run as root (mount, chroot, mkfs)"}})
+        return 1
+
+    def cancel(signum: int, frame: Any) -> None:
+        raise Cancelled()
+
+    signal.signal(signal.SIGTERM, cancel)
+    try:
+        if args.timeout is None:
+            args.timeout = spec_timeout(args.spec)
+        result = Builder(args, sys_ or Sys(), log).build()
+    except BuildError as e:
+        return _fail(log, e.code, e.message, e.field, e.bad_input)
+    except imagespec.SpecError as e:
+        return _fail(log, e.code, str(e), e.field, True)
+    except (Cancelled, KeyboardInterrupt):
+        return _fail(log, "cancelled", "the build was cancelled")
+    except Exception as e:  # noqa: BLE001 - the last line must say what happened
+        return _fail(log, "internal", f"{type(e).__name__}: {e}")
+    log.write(result)
+    return 0
+
+
+def spec_timeout(path: str) -> int:
+    """The spec's build.timeoutSeconds, else the default (the spec itself is checked later)."""
+    try:
+        build = imagespec.load(path).get("build")
+        timeout = build.get("timeoutSeconds") if isinstance(build, dict) else None
+    except (imagespec.SpecError, OSError, AttributeError):
+        timeout = None
+    return timeout if isinstance(timeout, int) and not isinstance(timeout, bool) and timeout > 0 else DEFAULT_TIMEOUT
+
+
+def _fail(log: Log, code: str, message: str, field: str | None = None, bad_input: bool = False) -> int:
+    log.sys(f"error: {code}: {message}")
+    error: dict[str, Any] = {"code": code, "message": message}
+    if field:
+        error["field"] = field
+    log.write({"error": error})
+    return 2 if bad_input or code in INPUT_ERRORS else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

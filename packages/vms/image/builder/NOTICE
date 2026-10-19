@@ -1,0 +1,17 @@
+kyora image builder
+Copyright 2026 Elia Hilse
+
+This product includes software developed by Elia Hilse
+(https://github.com/eliahilse).
+
+Licensed under the Apache License, Version 2.0. See the LICENSE file
+distributed with this work for the full terms. It covers the image builder
+the kyora-vms CLI carries and uploads into a builder VM, these files under
+packages/vms/image:
+
+  builder/kyora-image-build
+  tools/imagespec.py
+  tools/profiles.py
+  rootfs/chroot-install.sh
+  rootfs/stages/apt.sh, toolchains.sh, extras.sh, kyora.sh, delta.sh
+

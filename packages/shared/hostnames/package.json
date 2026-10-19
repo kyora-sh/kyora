@@ -1,0 +1,34 @@
+{
+  "name": "@kyora-sh/hostnames",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Egress hostname rules shared by the kyora-vms CLI, kyora-vmd and kyora cloud",
+  "license": "Apache-2.0",
+  "author": "Elia Hilse",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kyora-sh/kyora",
+    "directory": "packages/shared/hostnames"
+  },
+  "homepage": "https://kyora.sh",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "scripts": {
+    "check-types": "tsc --noEmit"
+  },
+  "dependencies": {
+    "tldts": "^7.4.16"
+  },
+  "devDependencies": {
+    "@repo/typescript-config": "workspace:*",
+    "@types/bun": "1.4.2",
+    "typescript": "^5.9.2"
+  }
+}
