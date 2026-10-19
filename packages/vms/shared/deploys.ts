@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 export interface DeployResources { vcpus: number; memoryMb: number; diskGb: number }
 export interface DeploySpec {
   image: string

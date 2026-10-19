@@ -31,8 +31,7 @@
     "dist",
     "README.md",
     "LICENSE",
-    "NOTICE",
-    "LICENSE-Elastic-2.0"
+    "NOTICE"
   ],
   "publishConfig": {
     "access": "public"

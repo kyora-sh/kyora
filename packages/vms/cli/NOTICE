@@ -5,22 +5,12 @@ This product includes software developed by Elia Hilse
 (https://github.com/eliahilse).
 
 Licensed under the Apache License, Version 2.0. See the LICENSE file
-distributed with this work for the full terms, except for the parts named
-under "Elastic License 2.0" below.
+distributed with this work for the full terms.
 
 It bundles kyora-switch, kyora usage (@kyora-sh/usage), kyora hostnames
-(@kyora-sh/hostnames) and the kyora image builder, each Copyright 2026
-Elia Hilse and licensed under the Apache License, Version 2.0.
-
-Elastic License 2.0
--------------------
-
-It also bundles the image chunk format from kyora's packages/vms/shared
-(image-chunks.ts and image-chunks-bun.ts, in dist/index.js and
-dist/kyora.js) and ships its deploy types (dist/types/shared/deploys.d.ts).
-These are Copyright 2025 Elia Hilse and licensed under the Elastic License
-2.0, not the Apache License. See the LICENSE-Elastic-2.0 file distributed
-with this work for the full terms.
+(@kyora-sh/hostnames), the kyora image builder and the image chunk format
+and deploy types from kyora's packages/vms/shared, each Copyright 2025 or
+2026 Elia Hilse and licensed under the Apache License, Version 2.0.
 
 Third-party software
 --------------------

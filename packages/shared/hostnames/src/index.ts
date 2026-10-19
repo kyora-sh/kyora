@@ -1,9 +1,7 @@
 import { getDomain, parse } from "tldts"
 
 /**
- * The egress hostname rules the kyora-vms CLI (Apache-2.0), kyora-vmd and kyora cloud (Elastic-2.0)
- * all check against. Apache-2.0 like the CLI that bundles it (LICENSE here), so the CLI's build
- * pulls in no Elastic-2.0 source.
+ * The egress hostname rules the kyora-vms CLI, kyora-vmd and kyora cloud all check against.
  */
 
 const LABEL = "[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"

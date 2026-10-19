@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 /**
  * The chunk format images move in, shared by the Worker, kyora-node and the
  * CLI. An image is a flat ext4 file cut into 4 MiB chunks; an all-zero chunk is a hole and is never

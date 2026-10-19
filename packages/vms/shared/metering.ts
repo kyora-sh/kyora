@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 export const METER_COUNTERS = ["cpuUsec", "memMbSeconds", "netRxBytes", "netTxBytes", "diskUsedBytes"] as const
 export type MeterCounter = (typeof METER_COUNTERS)[number]
 export const BURST_COUNTERS = ["burstCpuUsec", "burstMemMbSeconds"] as const
