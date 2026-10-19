@@ -12,7 +12,7 @@ import { dirname, join } from "node:path"
 const root = join(import.meta.dir, "../..")
 $.cwd(root)
 
-type Pkg = { dir: string; name: string; version: string; isNew: boolean }
+type Pkg = { dir: string; name: string; version: string; isNew: boolean; published: boolean }
 
 async function output(key: string, value: string) {
   if (Bun.env.GITHUB_OUTPUT) await appendFile(Bun.env.GITHUB_OUTPUT, `${key}=${value}\n`)
@@ -50,13 +50,15 @@ async function npmState(name: string, version: string) {
   })
 }
 
+/** public packages whose version is not on npm, or is but has no tag yet (a run that stopped after publishing) */
 async function pendingPackages(): Promise<Pkg[]> {
   const pending: Pkg[] = []
   for await (const file of new Bun.Glob("packages/*/*/package.json").scan({ cwd: root })) {
     const pkg = await Bun.file(join(root, file)).json()
     if (pkg.private) continue
     const state = await npmState(pkg.name, pkg.version)
-    if (state !== "published") pending.push({ dir: join(root, dirname(file)), name: pkg.name, version: pkg.version, isNew: state === "new" })
+    const entry = { dir: join(root, dirname(file)), name: pkg.name, version: pkg.version, isNew: state === "new", published: state === "published" }
+    if (!entry.published || !(await tagged(`${pkg.name}@${pkg.version}`))) pending.push(entry)
   }
   return pending.sort((a, b) => a.name.localeCompare(b.name))
 }
@@ -72,14 +74,22 @@ async function pack(pkg: Pkg) {
   const manifest = JSON.parse(await $`tar -xOzf ${tarball} package/package.json`.text())
   if (manifest.name !== pkg.name || manifest.version !== pkg.version) throw new Error(`${pkg.name}: packed ${manifest.name}@${manifest.version}`)
   if (JSON.stringify(manifest).includes("workspace:")) throw new Error(`${pkg.name}: the packed package.json still has workspace: ranges`)
+  // provenance needs the package to name this public repository
+  const repository = typeof manifest.repository === "string" ? manifest.repository : manifest.repository?.url
+  if (!/github\.com[/:]kyora-sh\/kyora(\.git)?$/.test(repository ?? "")) throw new Error(`${pkg.name}: repository must point at github.com/kyora-sh/kyora for provenance`)
   return tarball
 }
 
-const distTag = (version: string) => (version.includes("-") ? "next" : "latest")
+const prerelease = (version: string) => version.includes("-")
+const distTag = (version: string) => (prerelease(version) ? "next" : "latest")
 
 async function npmPreflight() {
   const pending = await pendingPackages()
   for (const pkg of pending) {
+    if (pkg.published) {
+      await summary(`- npm: ${pkg.name}@${pkg.version} is published but not tagged yet`)
+      continue
+    }
     const tarball = await pack(pkg)
     await $`npm publish ${tarball} --dry-run --access public --tag ${distTag(pkg.version)}`
     await summary(`- npm: ${pkg.name}@${pkg.version} ready${pkg.isNew ? " (new package: the first publish needs NPM_TOKEN)" : ""}`)
@@ -99,24 +109,32 @@ async function changelogSection(pkg: Pkg) {
   return lines.slice(start + 1, end < 0 ? undefined : end).join("\n").trim() || `${pkg.name}@${pkg.version}`
 }
 
-async function tag(name: string, notes?: string) {
-  const exists = (await $`git ls-remote --tags origin ${`refs/tags/${name}`}`.text()).trim()
-  if (!exists) {
-    await $`git tag ${name} ${Bun.env.GITHUB_SHA ?? "HEAD"}`
+async function tagged(name: string) {
+  return (await $`git ls-remote --tags origin ${`refs/tags/${name}`}`.quiet().text()).trim() !== ""
+}
+
+/** tags the commit that last changed the version file (so a later rerun tags the release, not main's head), with a GitHub release when given notes */
+async function tag(name: string, versionFile: string, version: string, notes?: string) {
+  if (!(await tagged(name))) {
+    const commit = (await $`git log -1 --format=%H -- ${versionFile}`.text()).trim() || (Bun.env.GITHUB_SHA ?? "HEAD")
+    await $`git tag ${name} ${commit}`
     await $`git push origin ${`refs/tags/${name}`}`
   }
   if (notes === undefined) return
   const release = await $`gh release view ${name}`.quiet().nothrow()
-  if (release.exitCode !== 0) await $`gh release create ${name} --title ${name} --notes ${notes} --verify-tag`
+  if (release.exitCode === 0) return
+  const flags = prerelease(version) ? ["--prerelease", "--latest=false"] : []
+  await $`gh release create ${name} --title ${name} --notes ${notes} --verify-tag ${flags}`
 }
 
 async function npmPublish() {
   const pending = await pendingPackages()
   const needToken = pending.filter(pkg => pkg.isNew)
+  const toPublish = pending.filter(pkg => !pkg.published)
   if (needToken.length && !Bun.env.NODE_AUTH_TOKEN) throw new Error(`new packages need NPM_TOKEN for their first publish: ${needToken.map(pkg => pkg.name).join(", ")}`)
   const tarballs = new Map<string, string>()
-  for (const pkg of pending) tarballs.set(pkg.name, await pack(pkg))
-  for (const pkg of pending) {
+  for (const pkg of toPublish) tarballs.set(pkg.name, await pack(pkg))
+  for (const pkg of toPublish) {
     await retry(`publish ${pkg.name}`, async () => {
       const publish = await $`npm publish ${tarballs.get(pkg.name)!} --access public --provenance --tag ${distTag(pkg.version)}`.nothrow()
       if (publish.exitCode !== 0 && (await npmState(pkg.name, pkg.version)) !== "published") throw new Error(`npm publish exited ${publish.exitCode}`)
@@ -124,13 +142,13 @@ async function npmPublish() {
     await retry(`confirm ${pkg.name}`, async () => {
       if ((await npmState(pkg.name, pkg.version)) !== "published") throw new Error(`${pkg.name}@${pkg.version} is not visible on npm yet`)
     }, 6)
-    await tag(`${pkg.name}@${pkg.version}`, await changelogSection(pkg))
     await summary(`- npm: published ${pkg.name}@${pkg.version}`)
   }
+  for (const pkg of pending) await tag(`${pkg.name}@${pkg.version}`, join(pkg.dir, "package.json"), pkg.version, await changelogSection(pkg))
   if (!pending.length) await summary("- npm: nothing to publish")
 }
 
-type Crate = { name: string; version: string }
+type Crate = { name: string; version: string; published: boolean }
 
 /** crates.io answers 200 for a published version and 404 otherwise */
 async function crateVersionPublished(crate: Crate) {
@@ -147,8 +165,12 @@ async function pendingCrates() {
   // publish = false shows as an empty list; null means any registry
   const publishable: Crate[] = metadata.packages.filter((pkg: { publish: string[] | null }) => pkg.publish === null || pkg.publish.includes("crates-io"))
   if (!publishable.length) throw new Error("no crate is publishable: set publish and versions in Cargo.toml before turning crates on")
+  // as with npm: unpublished, or published without a tag
   const pending: Crate[] = []
-  for (const crate of publishable) if (!(await crateVersionPublished(crate))) pending.push({ name: crate.name, version: crate.version })
+  for (const crate of publishable) {
+    const published = await crateVersionPublished(crate)
+    if (!published || !(await tagged(`${crate.name}@${crate.version}`))) pending.push({ name: crate.name, version: crate.version, published })
+  }
   return pending
 }
 
@@ -156,8 +178,9 @@ const packageArgs = (crates: Crate[]) => crates.flatMap(crate => ["-p", crate.na
 
 async function cratesPreflight() {
   const pending = await pendingCrates()
-  if (pending.length) await $`cargo publish --dry-run --locked ${packageArgs(pending)}`
-  for (const crate of pending) await summary(`- crates: ${crate.name}@${crate.version} ready`)
+  const toPublish = pending.filter(crate => !crate.published)
+  if (toPublish.length) await $`cargo publish --dry-run --locked ${packageArgs(toPublish)}`
+  for (const crate of pending) await summary(`- crates: ${crate.name}@${crate.version} ${crate.published ? "is published but not tagged yet" : "ready"}`)
   if (!pending.length) await summary("- crates: nothing to publish")
   await output("crates", String(pending.length))
 }
@@ -165,12 +188,18 @@ async function cratesPreflight() {
 async function cratesPublish() {
   const pending = await pendingCrates()
   if (!pending.length) return summary("- crates: nothing to publish")
-  if (!Bun.env.CARGO_REGISTRY_TOKEN) throw new Error("CARGO_REGISTRY_TOKEN is unset")
-  // cargo publishes them in dependency order and waits for each to be available before the next
-  await $`cargo publish --locked ${packageArgs(pending)}`
-  for (const crate of pending) {
-    await tag(`${crate.name}@${crate.version}`)
-    await summary(`- crates: published ${crate.name}@${crate.version}`)
+  const toPublish = pending.filter(crate => !crate.published)
+  if (toPublish.length && !Bun.env.CARGO_REGISTRY_TOKEN) throw new Error("CARGO_REGISTRY_TOKEN is unset")
+  try {
+    // cargo publishes them in dependency order and waits for each to be available before the next
+    if (toPublish.length) await $`cargo publish --locked ${packageArgs(toPublish)}`
+  } finally {
+    // tag whatever reached crates.io, also when cargo stopped part way
+    for (const crate of pending) {
+      if (!crate.published && !(await crateVersionPublished(crate))) continue
+      await tag(`${crate.name}@${crate.version}`, "Cargo.toml", crate.version)
+      await summary(`- crates: published ${crate.name}@${crate.version}`)
+    }
   }
 }
 

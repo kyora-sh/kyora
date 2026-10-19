@@ -13,6 +13,11 @@
     "cli"
   ],
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kyora-sh/kyora.git",
+    "directory": "packages/vms/cli"
+  },
   "author": "Elia Hilse",
   "homepage": "https://kyora.sh",
   "main": "./dist/library.js",

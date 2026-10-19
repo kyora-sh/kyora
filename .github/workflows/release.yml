@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   version:
-    if: github.repository == 'kyora-sh/kyora'
+    if: github.repository == 'kyora-sh/kyora' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -96,7 +96,7 @@ jobs:
     needs: [preflight, npm]
     # after npm, so a failed npm publish never leaves crates published alone
     if: >-
-      always() && needs.preflight.result == 'success' &&
+      !cancelled() && needs.preflight.result == 'success' &&
       (needs.npm.result == 'success' || needs.npm.result == 'skipped') &&
       vars.KYORA_PUBLISH_CRATES == 'true' && needs.preflight.outputs.crates != '0'
     runs-on: ubuntu-latest
