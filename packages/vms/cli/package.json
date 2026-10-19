@@ -1,0 +1,59 @@
+{
+  "name": "@kyora-sh/vms",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Run commands in disposable VMs, upload files, stream output and download artifacts",
+  "keywords": [
+    "microvm",
+    "sandbox",
+    "remote-build",
+    "claude-code",
+    "codex",
+    "agents",
+    "cli"
+  ],
+  "license": "Apache-2.0",
+  "author": "Elia Hilse",
+  "homepage": "https://kyora.sh",
+  "main": "./dist/library.js",
+  "types": "./dist/types/cli/src/library.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/types/cli/src/library.d.ts",
+      "import": "./dist/library.js"
+    }
+  },
+  "bin": {
+    "kyora-vms": "./dist/index.js",
+    "kyora": "./dist/kyora.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "NOTICE",
+    "LICENSE-Elastic-2.0"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "bun": ">=1.2.19"
+  },
+  "scripts": {
+    "build": "rm -rf ./dist && bun build ./src/index.ts ./src/kyora.ts --outdir ./dist --target bun --minify --splitting && chmod +x ./dist/index.js ./dist/kyora.js && bun build ./src/library.ts --outdir ./dist --target node --minify && tsc -p tsconfig.library.json",
+    "check-types": "tsc --noEmit",
+    "test": "bun test",
+    "bench": "bun --no-env-file src/testing/bench-transfers.ts",
+    "dev": "bun --watch src/index.ts",
+    "vms": "bun --no-env-file src/index.ts",
+    "prepublishOnly": "bun run build"
+  },
+  "devDependencies": {
+    "@kyora-sh/hostnames": "workspace:*",
+    "@repo/typescript-config": "workspace:*",
+    "@types/bun": "1.4.2",
+    "kyora-switch": "workspace:*",
+    "typescript": "^5.9.2"
+  }
+}
