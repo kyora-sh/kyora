@@ -1,1 +1,11 @@
 /target
+node_modules
+.turbo
+dist
+*.tgz
+*.tsbuildinfo
+.DS_Store
+.env
+.env.*
+*.pem
+__pycache__/

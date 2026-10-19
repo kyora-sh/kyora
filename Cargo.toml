@@ -6,7 +6,7 @@ members = ["crates/*"]
 version = "0.0.0"
 edition = "2024"
 license = "Apache-2.0"
-repository = "https://github.com/eliahilse/kyora"
+repository = "https://github.com/kyora-sh/kyora"
 rust-version = "1.89"
 publish = false
 
