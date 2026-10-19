@@ -565,7 +565,7 @@ describe("verifyBundle", () => {
   })
 })
 
-describe("kyora-vms run --git", () => {
+describe("kyora vms run --git", () => {
   test("the sandbox's git sees what git sees here: status, staged changes, diff against HEAD", async () => {
     const repo = await makeHistoryRepo(root)
     const here = run(["sh", "-c", VIEW], repo)
@@ -619,7 +619,7 @@ describe("kyora-vms run --git", () => {
     const repo = await makeHistoryRepo(root)
     const here = run(["sh", "-c", VIEW], repo)
     const tail = Array.from({ length: 30 }, (_, i) => `tail ${i + 1}\n`).join("")
-    // the cuts fall in the command's own stream (the history's setup is kyora-vms's, and not resumable)
+    // the cuts fall in the command's own stream (the history's setup is kyora'ss, and not resumable)
     vmd.options.cutAfter = [Math.floor(here.length / 2), 60]
     const result = await cli(["run", "--git", "--", "sh", "-c", `${VIEW}; for i in $(seq 1 30); do echo tail $i; sleep 0.01; done`], {
       cwd: repo,
@@ -784,7 +784,7 @@ describe("kyora-vms run --git", () => {
   })
 })
 
-describe("kyora-vms push --git", () => {
+describe("kyora vms push --git", () => {
   test("sets up .git where it pushed to, and a second push replaces it", async () => {
     const repo = await makeHistoryRepo(root)
     const id = (await cli(["create"], { cwd: root, env: env() })).stdout.trim()

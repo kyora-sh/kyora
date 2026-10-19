@@ -1,7 +1,7 @@
 import { getDomain, parse } from "tldts"
 
 /**
- * The egress hostname rules the kyora-vms CLI, kyora-vmd and kyora cloud all check against.
+ * The egress hostname rules the kyora CLI, kyora-vmd and kyora cloud all check against.
  */
 
 const LABEL = "[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"

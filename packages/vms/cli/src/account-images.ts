@@ -7,7 +7,7 @@ import { json, note, write } from "./output"
 import { formatBytes } from "./units"
 
 /**
- * `kyora-vms image push|ls|rm|usage`: account images, built once, stored
+ * `kyora vms image push|ls|rm|usage`: account images, built once, stored
  * on the account in kyora cloud and pulled by the machines that boot them. A push cuts the file
  * into the shared chunk format (packages/vms/shared/image-chunks.ts), tells the server the whole
  * chunk list, uploads only the chunks the account doesn't hold yet, and commits.
@@ -20,7 +20,7 @@ export interface AccountImage {
   version: number
   /** name@version */
   ref: string
-  /** the content key of the build that made it (kyora-vms image build), when one did */
+  /** the content key of the build that made it (kyora vms image build), when one did */
   specKey: string | null
   /** what it was built on, as the build said */
   base: string | null
@@ -204,10 +204,10 @@ export interface ImageCommandValues {
   region?: string
 }
 
-const USAGE = `usage: kyora-vms image build [kyora.image.json] [--name N] [--region R] [--json]
-       kyora-vms image lock [kyora.image.json] [--name N]        pin the newest version in kyora.image.lock
-       kyora-vms image ls | versions <name> | rm <name@N|img_…> | usage
-       kyora-vms image push <file.ext4> --name N [--region R]`
+const USAGE = `usage: kyora vms image build [kyora.image.json] [--name N] [--region R] [--json]
+       kyora vms image lock [kyora.image.json] [--name N]        pin the newest version in kyora.image.lock
+       kyora vms image ls | versions <name> | rm <name@N|img_…> | usage
+       kyora vms image push <file.ext4> --name N [--region R]`
 
 /** an account's images by name: the newest ready version, how many, their regions */
 export function imageGroups(images: AccountImage[]): Array<{ name: string; latest: AccountImage | null; versions: number; regions: string[]; pending: number }> {
@@ -227,7 +227,7 @@ export function imageGroups(images: AccountImage[]): Array<{ name: string; lates
 
 const ago = (iso: string | null) => (iso ? iso.replace("T", " ").replace(/\.\d+Z$/, "Z") : "")
 
-/** `kyora-vms image …`; `usage` throws the CLI's usage error */
+/** `kyora vms image …`; `usage` throws the CLI's usage error */
 export async function imageCommand(api: VmsClient, positionals: string[], values: ImageCommandValues, asJson: boolean, usage: (message: string) => never): Promise<number> {
   const [sub, arg, extra] = positionals
   const line = (text: string) => write(process.stdout, `${text}\n`)
@@ -238,20 +238,20 @@ export async function imageCommand(api: VmsClient, positionals: string[], values
       return buildCommand(api, { spec: arg, name: values.name, region: values.region, json: asJson }, usage)
     }
     case "lock": {
-      if (extra || values.region) usage("usage: kyora-vms image lock [kyora.image.json] [--name N]")
+      if (extra || values.region) usage("usage: kyora vms image lock [kyora.image.json] [--name N]")
       const { lockCommand } = await import("./image-commands")
       return lockCommand(api, { spec: arg, name: values.name, json: asJson }, usage)
     }
     case "versions": {
-      if (!arg || extra || values.name || values.region) usage("usage: kyora-vms image versions <name>")
+      if (!arg || extra || values.name || values.region) usage("usage: kyora vms image versions <name>")
       const versions = (await listAccountImages(api)).filter((image) => image.name === arg).sort((a, b) => b.version - a.version)
       if (asJson) await json({ name: arg, versions })
-      else if (versions.length === 0) note(`no versions of ${arg} in this account (kyora-vms image ls)`)
+      else if (versions.length === 0) note(`no versions of ${arg} in this account (kyora vms image ls)`)
       else for (const image of versions) await line(`${image.ref}  ${image.status}  ${image.region ?? "-"}  ${formatBytes(image.bytes)}  sha256:${image.sha256.slice(0, 12)}  ${image.id}  ${ago(image.readyAt ?? image.createdAt)}${image.base ? `  on ${image.base}` : ""}`)
       return 0
     }
     case "push": {
-      if (!arg || extra) usage("usage: kyora-vms image push <file.ext4> --name <name> [--region <id>]")
+      if (!arg || extra) usage("usage: kyora vms image push <file.ext4> --name <name> [--region <id>]")
       if (!values.name || !/^[a-z][a-z0-9-]{0,63}$/.test(values.name)) usage("image push needs --name: 1-64 characters of a-z, 0-9 and -, starting with a letter")
       const pushed = await pushImage(api, arg, { name: values.name, ...(values.region ? { region: values.region } : {}), log: asJson ? undefined : note })
       if (asJson) await json({ ...pushed.image, uploaded: pushed.uploaded, uploadedBytes: pushed.uploadedBytes })
@@ -260,12 +260,12 @@ export async function imageCommand(api: VmsClient, positionals: string[], values
     }
     case "ls":
     case "list": {
-      if (arg || values.name || values.region) usage("usage: kyora-vms image ls")
+      if (arg || values.name || values.region) usage("usage: kyora vms image ls")
       const images = await listAccountImages(api)
       if (asJson) await json({ images, names: imageGroups(images).map(({ latest, ...group }) => ({ ...group, latest: latest?.ref ?? null, sizeBytes: latest?.bytes ?? null })) })
       else {
         const groups = imageGroups(images)
-        if (groups.length === 0) note("no images in this account yet: kyora-vms image build")
+        if (groups.length === 0) note("no images in this account yet: kyora vms image build")
         for (const group of groups) {
           const latest = group.latest
           await line(`${group.name}  ${latest ? latest.ref : "-"}  ${group.versions} version${group.versions === 1 ? "" : "s"}  ${latest ? formatBytes(latest.bytes) : "-"}  ${group.regions.join(",") || "-"}${group.pending ? `  (${group.pending} not ready)` : ""}`)
@@ -275,13 +275,13 @@ export async function imageCommand(api: VmsClient, positionals: string[], values
     }
     case "rm":
     case "delete": {
-      if (!arg || extra || values.name || values.region) usage("usage: kyora-vms image rm <name@N|img_…>")
+      if (!arg || extra || values.name || values.region) usage("usage: kyora vms image rm <name@N|img_…>")
       let id = arg
       if (!isImageId(arg)) {
         const { findVersion, isPinnedRef } = await import("./image-refs")
-        if (!isPinnedRef(arg)) usage(`image rm takes one version: name@N or img_… (kyora-vms image versions ${arg}), got ${JSON.stringify(arg)}`)
+        if (!isPinnedRef(arg)) usage(`image rm takes one version: name@N or img_… (kyora vms image versions ${arg}), got ${JSON.stringify(arg)}`)
         const found = findVersion(await listAccountImages(api), arg)
-        if (!found) throw new ApiError(`no such image: ${arg} (kyora-vms image versions)`, 404, "image_not_found")
+        if (!found) throw new ApiError(`no such image: ${arg} (kyora vms image versions)`, 404, "image_not_found")
         id = found.id
       }
       await removeImage(api, id)
@@ -289,7 +289,7 @@ export async function imageCommand(api: VmsClient, positionals: string[], values
       return 0
     }
     case "usage": {
-      if (arg || values.name || values.region) usage("usage: kyora-vms image usage")
+      if (arg || values.name || values.region) usage("usage: kyora vms image usage")
       const used = await imageUsage(api)
       if (asJson) await json(used)
       else await line(`${used.month}: ${formatBytes(used.storedBytes)} stored in ${used.images} image(s), ${used.gbMonths.toFixed(4)} GB-months so far, $${used.usd.toFixed(4)} at $${used.rate}/GB-month`)

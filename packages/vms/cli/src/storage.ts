@@ -4,25 +4,25 @@ import { loadConfig } from "./config"
 import { note, printJson, write } from "./output"
 
 /**
- * `kyora-vms storage …`: kyora cloud's managed object storage. Private
+ * `kyora vms storage …`: kyora cloud's managed object storage. Private
  * buckets of the account (or org) the token acts as; inside a sandbox, a session's token reaches
  * its own prefix (`sessions/<id>/`), and KYORA_STORAGE_KEY, a scoped key, its bucket and prefix.
  */
 
-export const STORAGE_HELP = `kyora-vms storage: private object storage for your account (kyora cloud)
+export const STORAGE_HELP = `kyora vms storage: private object storage for your account (kyora cloud)
 
-  kyora-vms storage ls                              your buckets
-  kyora-vms storage ls <bucket> [prefix]            the objects in one (--limit N, --delimiter)
-  kyora-vms storage mb <bucket> [--region ID]       make a bucket (in your region unless you name one)
-  kyora-vms storage rb <bucket> [--force]           delete an empty bucket (--force: with its objects)
-  kyora-vms storage put <bucket> <key> <file|->     upload (large files go in parts); --content-type
-  kyora-vms storage get <bucket> <key> [file|-]     download (to stdout without a file, or with -)
-  kyora-vms storage rm <bucket> <key>               delete an object
-  kyora-vms storage presign <bucket> <key>          a URL for that one object, for --ttl seconds
+  kyora vms storage ls                              your buckets
+  kyora vms storage ls <bucket> [prefix]            the objects in one (--limit N, --delimiter)
+  kyora vms storage mb <bucket> [--region ID]       make a bucket (in your region unless you name one)
+  kyora vms storage rb <bucket> [--force]           delete an empty bucket (--force: with its objects)
+  kyora vms storage put <bucket> <key> <file|->     upload (large files go in parts); --content-type
+  kyora vms storage get <bucket> <key> [file|-]     download (to stdout without a file, or with -)
+  kyora vms storage rm <bucket> <key>               delete an object
+  kyora vms storage presign <bucket> <key>          a URL for that one object, for --ttl seconds
                     [--put [--length N]] [--ttl S]  (at most 900; default 300); --put to upload
                     [--inline]                      (a session's or a scoped key gives --length); a GET
                                                     downloads, or with --inline shows media in the browser
-  kyora-vms storage usage [--month YYYY-MM]         this month's storage usage and cost
+  kyora vms storage usage [--month YYYY-MM]         this month's storage usage and cost
 
 The key in use: KYORA_STORAGE_KEY (a scoped key, kysk_…) when it is set, else your login's (or,
 in a kyora session's sandbox, the session's: keys are then under sessions/<session id>/).
@@ -191,14 +191,14 @@ export async function storageMain(argv: string[], env: Record<string, string | u
     console.log(STORAGE_HELP)
     return 0
   }
-  const allowed = VERBS[verb] ?? usage(`unknown storage command "${verb}"; run \`kyora-vms storage --help\``)
+  const allowed = VERBS[verb] ?? usage(`unknown storage command "${verb}"; run \`kyora vms storage --help\``)
   for (const name of Object.keys(values) as Option[]) if (name !== "json" && !allowed.includes(name)) usage(`storage ${verb} does not take --${name}`)
   if (verb === "presign" && values.length !== undefined && !values.put) usage("--length is for --put")
   if (verb === "presign" && values.inline && values.put) usage("--inline is for a GET (without --put)")
   const asJson = Boolean(values.json)
   const config = await loadConfig()
   const key = env.KYORA_STORAGE_KEY?.trim() || config.key
-  if (!key) throw new ApiError("storage: no key; run kyora-vms login, or set KYORA_STORAGE_KEY", 0)
+  if (!key) throw new ApiError("storage: no key; run kyora vms login, or set KYORA_STORAGE_KEY", 0)
   const client = new StorageClient(config.url, key, fetcher)
 
   switch (verb) {
@@ -206,7 +206,7 @@ export async function storageMain(argv: string[], env: Record<string, string | u
       if (rest.length === 0) {
         const { buckets } = (await (await client.call("GET", "/v1/storage/buckets")).json()) as { buckets: Array<{ name: string; region: string; createdAt: string }> }
         if (asJson) printJson({ buckets })
-        else if (buckets.length === 0) note("no buckets yet: kyora-vms storage mb <name>")
+        else if (buckets.length === 0) note("no buckets yet: kyora vms storage mb <name>")
         else for (const bucket of buckets) console.log(`${bucket.name}\t${bucket.region}\t${bucket.createdAt}`)
         return 0
       }
@@ -220,14 +220,14 @@ export async function storageMain(argv: string[], env: Record<string, string | u
       return 0
     }
     case "mb": {
-      if (rest.length !== 1) usage("usage: kyora-vms storage mb <bucket> [--region ID]")
+      if (rest.length !== 1) usage("usage: kyora vms storage mb <bucket> [--region ID]")
       const made = (await (await client.call("POST", "/v1/storage/buckets", { json: { name: bucketArg(rest[0], "mb"), ...(values.region ? { region: values.region } : {}) } })).json()) as { name: string; region: string }
       if (asJson) printJson(made)
       else console.log(`${made.name} (${made.region})`)
       return 0
     }
     case "rb": {
-      if (rest.length !== 1) usage("usage: kyora-vms storage rb <bucket> [--force]")
+      if (rest.length !== 1) usage("usage: kyora vms storage rb <bucket> [--force]")
       const bucket = bucketArg(rest[0], "rb")
       let deleted = 0
       for (;;) {
@@ -241,7 +241,7 @@ export async function storageMain(argv: string[], env: Record<string, string | u
       return 0
     }
     case "put": {
-      if (rest.length !== 3) usage("usage: kyora-vms storage put <bucket> <key> <file|->")
+      if (rest.length !== 3) usage("usage: kyora vms storage put <bucket> <key> <file|->")
       const [bucket, objectKey, source] = rest as [string, string, string]
       const data = source === "-" ? new Blob([await Bun.stdin.arrayBuffer()]) : Bun.file(source)
       if (source !== "-" && !(await (data as ReturnType<typeof Bun.file>).exists())) throw new Error(`no such file: ${source}`)
@@ -251,7 +251,7 @@ export async function storageMain(argv: string[], env: Record<string, string | u
       return 0
     }
     case "get": {
-      if (rest.length < 2 || rest.length > 3) usage("usage: kyora-vms storage get <bucket> <key> [file|-]")
+      if (rest.length < 2 || rest.length > 3) usage("usage: kyora vms storage get <bucket> <key> [file|-]")
       const [bucket, objectKey, target] = rest as [string, string, string | undefined]
       const response = await client.call("GET", client.object(bucketArg(bucket, "get"), objectKey))
       if (!target || target === "-") {
@@ -265,13 +265,13 @@ export async function storageMain(argv: string[], env: Record<string, string | u
       return 0
     }
     case "rm": {
-      if (rest.length !== 2) usage("usage: kyora-vms storage rm <bucket> <key>")
+      if (rest.length !== 2) usage("usage: kyora vms storage rm <bucket> <key>")
       await client.call("DELETE", client.object(bucketArg(rest[0], "rm"), rest[1]!))
       if (asJson) printJson({ key: rest[1], deleted: true })
       return 0
     }
     case "presign": {
-      if (rest.length !== 2) usage("usage: kyora-vms storage presign <bucket> <key> [--put [--length N]] [--ttl S]")
+      if (rest.length !== 2) usage("usage: kyora vms storage presign <bucket> <key> [--put [--length N]] [--ttl S]")
       const signed = (await (await client.call("POST", `/v1/storage/buckets/${bucketArg(rest[0], "presign")}/presign`, {
         json: presignRequest(rest[1]!, { put: values.put, ttl: wholeNumber(values.ttl, "--ttl"), length: wholeNumber(values.length, "--length"), inline: values.inline }),
       })).json()) as { url: string; expiresAt: string; key: string }

@@ -1,21 +1,23 @@
 # kyora vms
 
-Run commands in disposable VMs. `kyora-vms run` uploads your worktree, runs the command, streams its output live and exits with its exit code. It then downloads the artifacts you asked for and destroys the VM.
+Run commands in disposable VMs. `kyora vms run` uploads your worktree, runs the command, streams its output live and exits with its exit code. It then downloads the artifacts you asked for and destroys the VM.
 
 ```bash
-kyora-vms run --network registries --out target/release/app -- cargo build --release
+kyora vms run --network registries --out target/release/app -- cargo build --release
 ```
+
+`kyora vms` is one command group of the `kyora` CLI, which also has `kyora run` and `kyora tui` (the kyora agent harness), `kyora detach` and `kyora back`, deploys and `kyora switch` (`kyora --help` lists them). `kyora login`, `logout`, `whoami` and `org` are the same commands as `kyora vms login` and the rest. `kyora-vms`, the earlier name, still works: `kyora-vms <args>` is `kyora vms <args>`.
 
 ## Start a VM and get back into it
 
 ```bash
-kyora-vms new brisk-otter                  # fresh VM, straight into its main shell
+kyora vms new brisk-otter                  # fresh VM, straight into its main shell
 # Enter, then ~. to detach; the shell keeps running
-kyora-vms ls
-kyora-vms attach brisk-otter               # ssh is an alias; no argument selects the sole VM
-kyora-vms rename brisk-otter build-box
-kyora-vms ttl build-box 4h
-kyora-vms rm build-box
+kyora vms ls
+kyora vms attach brisk-otter               # ssh is an alias; no argument selects the sole VM
+kyora vms rename brisk-otter build-box
+kyora vms ttl build-box 4h
+kyora vms rm build-box
 ```
 
 `new` defaults to registry networking and a 1-hour idle timeout. Its TTL uses the
@@ -29,8 +31,8 @@ Sandbox names use 1-32 characters of `a-z`, `0-9` and `-`, and are unique among 
 sandboxes across regions (per API key on a direct daemon). A collision returns HTTP 409
 `name_taken`. Every sandbox argument accepts a name, a full ID or a unique ID prefix;
 an ambiguous prefix lists its candidates. Names starting with `-` go after `--`, for
-example `kyora-vms attach -- -build`. `attach` with several VMs offers a numbered
-picker in a TTY. Bare `kyora-vms` in a TTY shows help when no credentials are
+example `kyora vms attach -- -build`. `attach` with several VMs offers a numbered
+picker in a TTY. Bare `kyora vms` in a TTY shows help when no credentials are
 configured, otherwise it lists your VMs and a one-line hint.
 
 `ls` shows NAME, a unique short ID, IMAGE, SIZE, NET, REGION when present, AGE, EXPIRES,
@@ -46,8 +48,8 @@ Session parents and children keep their session-managed deadlines.
 `rm` accepts several names or IDs; `rm --all` asks for confirmation in a TTY and requires `--yes` in scripts. Destructive names and prefixes resolve against live server records; reads still accept unique prefixes from the list.
 
 ```bash
-source <(kyora-vms completion bash)        # or zsh
-kyora-vms completion fish | source
+source <(kyora vms completion bash)        # or zsh
+kyora vms completion fish | source
 ```
 
 Completions include subcommands and sandbox names, cached for five seconds per server
@@ -59,7 +61,7 @@ Requires [Bun](https://bun.sh) ≥ 1.2.19 on your PATH. `npx` will not work.
 
 ```bash
 bun add -g @kyora-sh/vms
-kyora-vms login
+kyora vms login
 ```
 
 Or without installing: `bunx @kyora-sh/vms health`. From a checkout: `bun --no-env-file --config=/dev/null packages/vms/cli/src/index.ts`.
@@ -71,13 +73,13 @@ Or without installing: `bunx @kyora-sh/vms health`. From a checkout: `bun --no-e
 [kyora cloud](https://cloud.kyora.sh) is the default server. Sign in once:
 
 ```bash
-kyora-vms login           # opens the browser; approve the code it shows there
-kyora-vms health          # ok · https://cloud.kyora.sh · kyora cloud
+kyora vms login           # opens the browser; approve the code it shows there
+kyora vms health          # ok · https://cloud.kyora.sh · kyora cloud
 ```
 
-The token is kept in `~/.config/kyora/credentials.json` (mode 0600, one entry per server). `KYORA_TOKEN=kyora_…`, a token made on the dashboard, works instead, in CI for example. `kyora-vms whoami` says whose token is in use, `kyora-vms nodes` lists the machines and what is free on them, and `kyora-vms logout` deletes the token here (revoke it on the dashboard to end it everywhere). `login --url` signs in to another kyora cloud; point `KYORA_VMS_URL` at it to use that login.
+The token is kept in `~/.config/kyora/credentials.json` (mode 0600, one entry per server). `KYORA_TOKEN=kyora_…`, a token made on the dashboard, works instead, in CI for example. `kyora vms whoami` says whose token is in use, `kyora vms nodes` lists the machines and what is free on them, and `kyora vms logout` deletes the token here (revoke it on the dashboard to end it everywhere). `login --url` signs in to another kyora cloud; point `KYORA_VMS_URL` at it to use that login.
 
-An organization is a shared kyora cloud account: its members' sandboxes, snapshots, URLs and tokens belong to the org, under its caps. `kyora-vms org ls` lists yours, `kyora-vms org use acme` makes commands act as it , and `kyora-vms org use personal` switches back. With no access of your own, sign in for the org directly: `kyora-vms login --org acme`.
+An organization is a shared kyora cloud account: its members' sandboxes, snapshots, URLs and tokens belong to the org, under its caps. `kyora vms org ls` lists yours, `kyora vms org use acme` makes commands act as it , and `kyora vms org use personal` switches back. With no access of your own, sign in for the org directly: `kyora vms login --org acme`.
 
 ### Your own server
 
@@ -87,7 +89,7 @@ You need an API key (`kvms_…`) from whoever runs the box. Put it in `~/.config
 mkdir -p ~/.config/kyora-vms
 printf 'KYORA_VMS_URL=https://vms.example.com\nKYORA_VMS_KEY=kvms_…\n' > ~/.config/kyora-vms/env
 chmod 600 ~/.config/kyora-vms/env
-kyora-vms health          # ok · https://vms.example.com · server … · key: accepted (from …)
+kyora vms health          # ok · https://vms.example.com · server … · key: accepted (from …)
 ```
 
 ### Which one is used
@@ -102,11 +104,11 @@ Paste this into `CLAUDE.md` / `AGENTS.md`:
 ## Heavy or untrusted commands run in kyora vms, not locally
 
 - Builds, test suites and anything that downloads and executes code:
-  `kyora-vms run --network registries -- <cmd…>`
+  `kyora vms run --network registries -- <cmd…>`
   It uploads this worktree (git-tracked + untracked-not-ignored files), runs the
   command in a fresh microVM, streams its output, and exits with its exit code.
 - To get build outputs back, add `--out <path>` (relative to the repo root), for example
-  `kyora-vms run --network registries --out target/release/app -- cargo build --release`.
+  `kyora vms run --network registries --out target/release/app -- cargo build --release`.
   They land at the same path locally.
 - `--network none` (the default) has no network at all; `registries` reaches crates.io,
   npm, PyPI and GitHub only.
@@ -118,14 +120,14 @@ Paste this into `CLAUDE.md` / `AGENTS.md`:
   instead of passing it every time.
 - Exit code 123 means the requested image is unavailable on reachable machines (`image_unavailable`, HTTP 409).
   The message names the image and regions that report it.
-- Exit code 125 means kyora-vms itself failed (read its `[kyora-vms]` line on stderr);
-  124 means `--timeout` hit (kyora-vms never waits more than a minute past it); anything
+- Exit code 125 means kyora itself failed (read its `[kyora-vms]` line on stderr);
+  124 means `--timeout` hit (kyora never waits more than a minute past it); anything
   else is the command's own code.
 - When every machine is busy, `run` waits in line on its own (up to 15 min, its place on
   stderr); there is no need to retry it in a loop.
-- For several commands against one upload: `id=$(kyora-vms create --network registries)`,
-  `kyora-vms push $id`, `kyora-vms exec $id -- …` (repeat), `kyora-vms pull $id target/…`,
-  then always `kyora-vms rm $id`.
+- For several commands against one upload: `id=$(kyora vms create --network registries)`,
+  `kyora vms push $id`, `kyora vms exec $id -- …` (repeat), `kyora vms pull $id target/…`,
+  then always `kyora vms rm $id`.
 - The VM has no `.git` unless you ask. To run `git diff`/`git log` in it, add
   `--git-base origin/main` (that ref, HEAD, and the commits back to their merge base),
   `--git-depth N` (the last N commits) or `--git` (all of HEAD's history).
@@ -135,30 +137,30 @@ Paste this into `CLAUDE.md` / `AGENTS.md`:
 
 ```bash
 # Rust release build, binary back into ./target/release/app
-kyora-vms run --network registries --cpus 8 --memory 16G --out target/release/app -- cargo build --release
+kyora vms run --network registries --cpus 8 --memory 16G --out target/release/app -- cargo build --release
 
 # tests with a hard time limit; exit code is the test runner's, 124 on timeout
-kyora-vms run --network registries --timeout 20m -- cargo test --workspace
+kyora vms run --network registries --timeout 20m -- cargo test --workspace
 
 # a subproject of a monorepo, with a variable passed through from your shell
-kyora-vms run --cwd packages/api --env DATABASE_URL -- bun test
+kyora vms run --cwd packages/api --env DATABASE_URL -- bun test
 
 # something you do not trust, with no network at all
-kyora-vms run -- ./install.sh
+kyora vms run -- ./install.sh
 
 # the script comes from stdin
-cat bench.py | kyora-vms run --stdin -- python3 -
+cat bench.py | kyora vms run --stdin -- python3 -
 
 # a review in the VM: what this branch changes against main, local edits included
-kyora-vms run --git-base origin/main -- sh -c 'git log --oneline origin/main..; git diff origin/main --stat'
+kyora vms run --git-base origin/main -- sh -c 'git log --oneline origin/main..; git diff origin/main --stat'
 
 # upload once, run many times
-id=$(kyora-vms create --network registries --ttl 2h)
-kyora-vms push $id
-kyora-vms exec $id -- cargo build
-kyora-vms exec $id -- cargo test
-kyora-vms pull $id target/debug/app --to ./out
-kyora-vms rm $id
+id=$(kyora vms create --network registries --ttl 2h)
+kyora vms push $id
+kyora vms exec $id -- cargo build
+kyora vms exec $id -- cargo test
+kyora vms pull $id target/debug/app --to ./out
+kyora vms rm $id
 ```
 
 ## What `run` does
@@ -230,39 +232,40 @@ Limits:
 | code | meaning |
 | --- | --- |
 | the command's | the remote command's own exit code, 0-255 |
-| 124 | `--timeout` hit and the command was killed, or its exit still hadn't come a minute later and kyora-vms gave up on it (and cancelled it) |
+| 124 | `--timeout` hit and the command was killed, or its exit still hadn't come a minute later and kyora gave up on it (and cancelled it) |
 | 128 + n | the command died of signal n (137 = SIGKILL, e.g. out of memory) |
-| 130 / 143 | you interrupted kyora-vms (Ctrl-C / SIGTERM) |
+| 130 / 143 | you interrupted kyora vms (Ctrl-C / SIGTERM) |
 | 123 | requested image unavailable on reachable machines (HTTP 409 `image_unavailable`); the message names its available regions |
-| 125 | kyora-vms itself failed: config, network, API error (no machine had room within `--wait`, or at once with `--no-wait`), a command whose stream broke and could not be reattached (see [When the connection breaks](#when-the-connection-breaks)), or an `--out` that was missing or unsafe after a successful command |
+| 125 | kyora itself failed: config, network, API error (no machine had room within `--wait`, or at once with `--no-wait`), a command whose stream broke and could not be reattached (see [When the connection breaks](#when-the-connection-breaks)), or an `--out` that was missing or unsafe after a successful command |
 
 ## Commands
 
 ```
-kyora-vms run [options] -- <cmd…>        upload, run, stream, download, destroy
-kyora-vms create [options]                start a sandbox, print its id (only the id on stdout)
-kyora-vms ls [id]                         your sandboxes
-kyora-vms exec <id> [options] -- <cmd…>   run a command in a sandbox
-kyora-vms push <id> [dir] [--dest /work]  upload a directory (git-aware, like run; --no-git, --git, --shards too)
-kyora-vms pull <id> <path>… [--to dir]    download sandbox paths and unpack them here
-kyora-vms rm <id>… | --all                destroy sandboxes
-kyora-vms screenshot <id> [-o file.png]   a screenshot of a desktop sandbox (--image desktop)
-kyora-vms computer <id> <action> [args…]  drive its desktop: a click, typing, keys, scrolling (below)
-kyora-vms shell <id> [-- cmd…]            a terminal in the sandbox that outlives its connection (below)
-kyora-vms health                          is the host up, is the key accepted
-kyora-vms nodes                           kyora cloud's machines and what is free on them
-kyora-vms regions [default <id>|global]   kyora cloud's regions, what is free in each, where your creates go
-kyora-vms login [--url URL]               sign in to kyora cloud through the browser
-kyora-vms login --org ORG                 a token that acts as an org you're in
-kyora-vms org ls | org use <org>|personal your orgs, and which account commands act as
-kyora-vms logout [--url URL]              forget the tokens for that server here
-kyora-vms whoami                          whose token is in use
-kyora-vms session up|status|attach|pull   move a Claude Code session to a VM and back (also `kyora session …`)
+kyora vms run [options] -- <cmd…>        upload, run, stream, download, destroy
+kyora vms create [options]                start a sandbox, print its id (only the id on stdout)
+kyora vms ls [id]                         your sandboxes
+kyora vms exec <id> [options] -- <cmd…>   run a command in a sandbox
+kyora vms push <id> [dir] [--dest /work]  upload a directory (git-aware, like run; --no-git, --git, --shards too)
+kyora vms pull <id> <path>… [--to dir]    download sandbox paths and unpack them here
+kyora vms rm <id>… | --all                destroy sandboxes
+kyora vms screenshot <id> [-o file.png]   a screenshot of a desktop sandbox (--image desktop)
+kyora vms computer <id> <action> [args…]  drive its desktop: a click, typing, keys, scrolling (below)
+kyora vms shell <id> [-- cmd…]            a terminal in the sandbox that outlives its connection (below)
+kyora vms health                          is the host up, is the key accepted
+kyora vms nodes                           kyora cloud's machines and what is free on them
+kyora vms regions [default <id>|global]   kyora cloud's regions, what is free in each, where your creates go
+kyora vms login [--url URL]               sign in to kyora cloud through the browser
+kyora vms login --org ORG                 a token that acts as an org you're in
+kyora vms org ls | org use <org>|personal
+                                          your orgs, and which account commands act as
+kyora vms logout [--url URL]              forget the tokens for that server here
+kyora vms whoami                          whose token is in use
+kyora vms session up|status|attach|pull   move a Claude Code session to a VM and back (also `kyora session …`)
 ```
 
 `kyora switch …` runs kyora-switch (hot-swap coding-agent logins between accounts), with the same commands and flags.
 
-`kyora-vms create --ttl none` keeps a VM with no expiry and disables idle reaping
+`kyora vms create --ttl none` keeps a VM with no expiry and disables idle reaping
 unless `--idle DURATION` is also supplied. `--idle none` disables idle reaping for a
 finite VM. Create defaults to 8 h TTL and 20 min idle. `ls` shows **no expiry** for
 unlimited VMs. `run --ttl none --keep` keeps the VM after execution; run without
@@ -273,17 +276,17 @@ Unlimited VMs are billed per second and count against concurrent limits. Removal
 this feature rejects `none` with a validation error; the CLI never silently uses a
 finite lifetime instead.
 
-`kyora-vms --help` lists every option. Sizes take `8G` / `512M` (a bare number means GB); durations take `90s`, `30m`, `1h30m` (a bare number means seconds). `--env NAME=value` sets a variable; `--env NAME` passes your own `$NAME`. Nothing from your environment reaches the VM unless you name it.
+`kyora vms --help` lists every option. Sizes take `8G` / `512M` (a bare number means GB); durations take `90s`, `30m`, `1h30m` (a bare number means seconds). `--env NAME=value` sets a variable; `--env NAME` passes your own `$NAME`. Nothing from your environment reaches the VM unless you name it.
 
 Sandbox paths (`--out`, `pull`, `--cwd`, `--dest`) are relative to `/work` unless absolute, and must stay under `/work` (or `/tmp`).
 
 `--wait DURATION` (run, create) sets the capacity wait, up to 15 minutes (default). `--no-wait` fails immediately. Queue position goes to stderr; `create` prints only the ID to stdout. Direct servers do not queue creates.
 
-`--region ID` (run, create) runs in that kyora cloud region and only there: `eu`, `us`, `apac` (`kyora-vms regions` lists them). No room there is exit 125, or a wait in line there; the sandbox and its files never leave it. `$KYORA_VMS_REGION`, and a default of yours (`kyora-vms regions default us`), name a region the same way. With no region default, or with `--region global`, region selection is automatic. `--strict` from earlier versions does nothing now but say so. Against a direct server `--region global` means nothing and a named region is refused.
+`--region ID` (run, create) runs in that kyora cloud region and only there: `eu`, `us`, `apac` (`kyora vms regions` lists them). No room there is exit 125, or a wait in line there; the sandbox and its files never leave it. `$KYORA_VMS_REGION`, and a default of yours (`kyora vms regions default us`), name a region the same way. With no region default, or with `--region global`, region selection is automatic. `--strict` from earlier versions does nothing now but say so. Against a direct server `--region global` means nothing and a named region is refused.
 
-`--no-share` (run, create, new, `kyora session up`) creates a sandbox that can never be shared: `kyora-vms share` on it fails with `share_disabled`, for its screen and its terminals. It is fixed for the sandbox's life, carried into its snapshots and every restore of them, and inherited by the sandboxes a session creates. `kyora-vms ls --json` shows it as `"shareable": false`.
+`--no-share` (run, create, new, `kyora session up`) creates a sandbox that can never be shared: `kyora vms share` on it fails with `share_disabled`, for its screen and its terminals. It is fixed for the sandbox's life, carried into its snapshots and every restore of them, and inherited by the sandboxes a session creates. `kyora vms ls --json` shows it as `"shareable": false`.
 
-`kyora-vms share <id> screen --mode vnc|broadcast` selects screen sharing mode. `vnc` is the default for small audiences; `broadcast` supports up to 200 viewers per link. Browsers that cannot play broadcasts use VNC. `--list` marks broadcast shares `(broadcast)`. Pointer activity and shortcuts are visible. Typed characters are masked unless you use `--keys full`.
+`kyora vms share <id> screen --mode vnc|broadcast` selects screen sharing mode. `vnc` is the default for small audiences; `broadcast` supports up to 200 viewers per link. Browsers that cannot play broadcasts use VNC. `--list` marks broadcast shares `(broadcast)`. Pointer activity and shortcuts are visible. Typed characters are masked unless you use `--keys full`.
 
 `--shards N` (run, push; 1-16) sets concurrent upload archives. Cloud uploads default to one per 256 MiB, up to 8. Direct servers default to one; each archive counts against the key's upload limit.
 
@@ -299,28 +302,28 @@ touching your checked-out branch. Login credentials stay out of the VM by defaul
 `--image desktop` gives the sandbox a screen (Xvfb, openbox, Chromium; 1280x800 unless `--display WxH` says otherwise) that `screenshot` and `computer` drive with the Anthropic computer-use tool's actions:
 
 ```bash
-id=$(kyora-vms create --image desktop --display 1280x800)
-kyora-vms screenshot $id -o screen.png                  # --region x,y,w,h (a zoom), --scale 0.5, -o - for stdout
-kyora-vms computer $id left_click 640 400               # right_click, double_click, … [x y], --modifiers shift
-kyora-vms computer $id type "hello"                     # text starting with - goes after --
-kyora-vms computer $id key ctrl+l                       # --repeat 3; several: key "ctrl+a Delete"
-kyora-vms computer $id scroll down 5 640 400 --screenshot -o after.png
-kyora-vms computer $id cursor_position                  # 640 400
+id=$(kyora vms create --image desktop --display 1280x800)
+kyora vms screenshot $id -o screen.png                  # --region x,y,w,h (a zoom), --scale 0.5, -o - for stdout
+kyora vms computer $id left_click 640 400               # right_click, double_click, … [x y], --modifiers shift
+kyora vms computer $id type "hello"                     # text starting with - goes after --
+kyora vms computer $id key ctrl+l                       # --repeat 3; several: key "ctrl+a Delete"
+kyora vms computer $id scroll down 5 640 400 --screenshot -o after.png
+kyora vms computer $id cursor_position                  # 640 400
 ```
 
 The other actions are `zoom x0 y0 x1 y1`, `left_click_drag x0 y0 x1 y1`, `mouse_move x y`, `left_mouse_down`, `left_mouse_up`, `hold_key combo seconds`, `wait seconds` and `info`. `--screenshot` adds a screenshot once the action ran and the screen settled; without `-o` a screenshot goes to `./<id>-<time>.png` and its path is printed. `--json` prints the API's answer. An image without a desktop answers `501`, exit 125.
 
 ### Terminals
 
-`kyora-vms shell <id>` attaches your terminal, raw and at your size, to a tmux session in the sandbox (`main` unless `--name` says otherwise; made if it isn't there). A full-screen program runs there as it does locally, and keeps running when you detach or the network drops:
+`kyora vms shell <id>` attaches your terminal, raw and at your size, to a tmux session in the sandbox (`main` unless `--name` says otherwise; made if it isn't there). A full-screen program runs there as it does locally, and keeps running when you detach or the network drops:
 
 ```bash
-kyora-vms shell $id                          # a login shell
-kyora-vms shell $id -- claude                # claude in a new window of "main" (--cwd, -e for that window)
-kyora-vms shell $id --name build -- npm test # another session
-kyora-vms shell $id --view                   # watch it; your keys go nowhere
-kyora-vms shell $id --list                   # NAME  WINDOWS  CLIENTS  STATE  LAST OUTPUT
-kyora-vms shell $id --kill build
+kyora vms shell $id                          # a login shell
+kyora vms shell $id -- claude                # claude in a new window of "main" (--cwd, -e for that window)
+kyora vms shell $id --name build -- npm test # another session
+kyora vms shell $id --view                   # watch it; your keys go nowhere
+kyora vms shell $id --list                   # NAME  WINDOWS  CLIENTS  STATE  LAST OUTPUT
+kyora vms shell $id --kill build
 ```
 
 `~.` after Enter detaches (`~~` types a `~`, `~?` lists the escapes); tmux's `C-b d` does too, and so does a signal from outside (exit 128 + its number). A dropped connection prints `[kyora-vms] reconnecting…` and attaches again by itself (backing off up to 10 s, for up to 2 minutes: `KYORA_VMS_REATTACH_WINDOW_MS`, as for exec), and tmux redraws the screen; a refusal that attaching again won't change ends it with the server's reason. The terminal is put back as it was however the shell ends. A terminal wider or taller than 1000 is sent as 1000. OSC 52 (a program setting your clipboard) is taken out of the output unless `--clipboard` or `KYORA_VMS_CLIPBOARD=1`. Exit 0 when you detach or the session ends, 125 when it couldn't attach. A session something runs in keeps the sandbox from idling out, but never past its `--ttl`.
@@ -356,7 +359,7 @@ On kyora cloud the upload event also has `parts` (requests it took) and `shards`
 
 ## End-to-end tests
 
-`src/e2e/` holds tests that run against a real kyora cloud with your own config: the URL and key `kyora-vms health` reports (your login, or `KYORA_VMS_KEY`/`KYORA_VMS_URL`). They create real sandboxes, so a plain `bun test` skips them. Opt in with `KYORA_E2E=1`, from `packages/vms/cli`:
+`src/e2e/` holds tests that run against a real kyora cloud with your own config: the URL and key `kyora vms health` reports (your login, or `KYORA_VMS_KEY`/`KYORA_VMS_URL`). They create real sandboxes, so a plain `bun test` skips them. Opt in with `KYORA_E2E=1`, from `packages/vms/cli`:
 
 ```sh
 KYORA_E2E=1 bun test src/e2e/snapshot.e2e.test.ts                       # region eu (the default)
@@ -380,8 +383,8 @@ Every phase (create, snapshot, destroy, restore, first exec) is timed and logged
 - **Unsafe downloads are refused.** Absolute paths, `..`, escaping links and writes through symlinks are refused. Devices are skipped; setuid and group/other-write bits are cleared. A refused entry exits 125.
 - **Host files are never mounted in the VM.** Sandboxes have their own kernel, disk and network namespace.
 
-`kyora-vms images [--json]` lists fleet images and per-region availability. Admins also
-see each machine's presence, version, SHA-256 and build time. `kyora-vms images build
+`kyora vms images [--json]` lists fleet images and per-region availability. Admins also
+see each machine's presence, version, SHA-256 and build time. `kyora vms images build
 <profile> --node <name>` or `--all` requests an admin rebuild and reports which machines
 accepted it. The matching APIs are `GET /v1/images` and admin `POST /v1/images/build`.
-An unavailable image exits 123. Use `kyora-vms images` to check availability before creating a sandbox.
+An unavailable image exits 123. Use `kyora vms images` to check availability before creating a sandbox.

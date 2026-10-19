@@ -6,6 +6,7 @@ import { FAILED } from "./output"
 
 setDefaultTimeout(30_000)
 const entry = join(import.meta.dir, "kyora.ts")
+const alias = join(import.meta.dir, "index.ts")
 const temps: string[] = []
 let without: string
 
@@ -31,8 +32,8 @@ afterAll(async () => {
   await Promise.all(temps.map((dir) => rm(dir, { recursive: true, force: true })))
 })
 
-async function kyora(args: string[], path: string) {
-  const child = Bun.spawn([process.execPath, "--no-env-file", entry, ...args], { env: { HOME: without, PATH: path }, stdout: "pipe", stderr: "pipe" })
+async function kyora(args: string[], path: string, bin = entry) {
+  const child = Bun.spawn([process.execPath, "--no-env-file", bin, ...args], { env: { HOME: without, PATH: path }, stdout: "pipe", stderr: "pipe" })
   const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited])
   return { stdout, stderr, code }
 }
@@ -84,9 +85,32 @@ test("without kyora-harness on PATH, kyora run says how to install it", async ()
   expect(result.stderr).toContain("cargo install --locked --git https://github.com/kyora-sh/kyora kyora-cli")
 })
 
-test("kyora --help lists the harness commands", async () => {
+test("kyora --help lists the harness commands, kyora vms and the account commands", async () => {
   const { stdout, code } = await kyora(["--help"], without)
   expect(code).toBe(0)
-  expect(stdout).toContain("kyora run …")
-  expect(stdout).toContain("kyora tui …")
+  for (const line of ["kyora run …", "kyora tui …", "kyora vms …", "kyora login [--url URL]", "kyora-vms is deprecated"]) expect(stdout).toContain(line)
+  expect(stdout).not.toMatch(/[\u2013\u2014]/)
+})
+
+test("kyora-vms <args> is kyora vms <args>, with nothing added to its output", async () => {
+  const dir = await harness('echo harness\nexit 7\n')
+  const help = await kyora(["--help"], dir, alias)
+  expect(help).toEqual(await kyora(["vms", "--help"], dir))
+  expect(help.stdout).toStartWith("kyora vms: run commands in disposable VMs")
+  expect(help.stderr).toBe("")
+  // run is the sandbox run here: no command after -- is a usage error, not the harness
+  const run = await kyora(["run"], dir, alias)
+  expect(run).toEqual(await kyora(["vms", "run"], dir))
+  expect(run.stdout).not.toContain("harness")
+  expect(run.stderr).toContain("no command: put it after --")
+  expect(run.code).toBe(FAILED)
+})
+
+test("kyora login is kyora vms login", async () => {
+  const { stdout, code } = await kyora(["vms", "--help"], without)
+  expect(code).toBe(0)
+  const top = await kyora(["login", "extra"], without)
+  expect(top).toEqual(await kyora(["vms", "login", "extra"], without))
+  expect(top.stderr).toContain("login takes no arguments")
+  expect(stdout).toContain("kyora vms login [--url URL]")
 })

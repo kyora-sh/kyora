@@ -102,7 +102,7 @@ export async function loadConfig(env: Env = process.env, cwd = process.cwd()): P
   let org: string | null = null
   if (!chosen) {
     const saved = (await readCredentials(credentials))[originOf(url)]
-    // `kyora-vms org use`: the org's token when one is in use, else the personal one
+    // `kyora vms org use`: the org's token when one is in use, else the personal one
     const active = saved ? activeLogin(saved) : null
     if (active) {
       chosen = { value: active.token, source: credentials }

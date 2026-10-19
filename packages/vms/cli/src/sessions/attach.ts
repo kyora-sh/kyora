@@ -8,7 +8,7 @@ import { note, write } from "../output"
  * is a reattach to that exec's stream: from the start of what the sandbox kept (the latest
  * 8 MiB), rendered from the agent's JSON events, reconnecting when the stream breaks. Ctrl-C
  * lets go of the stream; the agent runs on. TODO(feat/vms-shell): a session started in a tmux
- * window attaches through `kyora-vms shell` instead, and gets a real terminal.
+ * window attaches through `kyora vms shell` instead, and gets a real terminal.
  */
 
 const EXEC_ID = /^[0-9a-f]{32}$/

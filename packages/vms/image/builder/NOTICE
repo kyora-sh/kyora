@@ -6,7 +6,7 @@ This product includes software developed by Elia Hilse
 
 Licensed under the Apache License, Version 2.0. See the LICENSE file
 distributed with this work for the full terms. It covers the image builder
-the kyora-vms CLI carries and uploads into a builder VM, these files under
+the kyora CLI carries and uploads into a builder VM, these files under
 packages/vms/image:
 
   builder/kyora-image-build

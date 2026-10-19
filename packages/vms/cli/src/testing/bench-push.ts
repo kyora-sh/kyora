@@ -1,5 +1,5 @@
 /**
- * One push, as its own process so its memory can be measured: what `kyora-vms push` runs,
+ * One push, as its own process so its memory can be measured: what `kyora vms push` runs,
  * with the parts in flight settable (the benchmark's "before" row keeps them at two).
  *
  *   KYORA_TOKEN=… bun src/testing/bench-push.ts <url> <sandbox> <dir> <shards> [partsInFlight]

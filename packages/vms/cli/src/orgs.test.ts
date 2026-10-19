@@ -7,7 +7,7 @@ import { loadConfig } from "./config"
 import { readCredentials, saveLogin } from "./credentials"
 import { orgList, orgUse } from "./orgs"
 
-/** `kyora-vms org ls` / `org use` against a small fake kyora cloud: which stored token commands send */
+/** `kyora vms org ls` / `org use` against a small fake kyora cloud: which stored token commands send */
 const PERSONAL = "kyora_personal_000000000000000000000000000000"
 const MINTED = "kyora_orgtoken_11111111111111111111111111111"
 
@@ -62,7 +62,7 @@ test("org use mints an org token with the personal one, keeps both, and switches
   expect(await config()).toMatchObject({ key: PERSONAL, org: null })
 
   expect(await quietly(async () => orgUse(await config(), "acme", false))).toBe(0)
-  expect(minted).toEqual([{ org: "acme", auth: `Bearer ${PERSONAL}`, name: expect.stringMatching(/^kyora-vms on /) }])
+  expect(minted).toEqual([{ org: "acme", auth: `Bearer ${PERSONAL}`, name: expect.stringMatching(/^kyora vms on /) }])
   expect(await config()).toMatchObject({ key: MINTED, org: "acme" })
   const stored = (await readCredentials(credentials()))[origin]!
   expect(stored).toMatchObject({ token: PERSONAL, login: "alice", use: "acme", orgs: { acme: { token: MINTED, id: "usr_acme", actor: "alice" } } })
@@ -95,7 +95,7 @@ test("an org-only login (login --org) has no personal token to fall back to or m
   await saveLogin(credentials(), origin, { token: "", login: "bob", url: origin, orgs: { acme: { token: MINTED, id: "usr_acme", login: "acme", actor: "bob", expiresAt: null } }, use: "acme" })
   expect(await config()).toMatchObject({ key: MINTED, org: "acme" })
   await expect(orgUse(await config(), "personal", false)).rejects.toThrow("there is no personal login")
-  await expect(orgUse(await config(), "globex", false)).rejects.toThrow("run kyora-vms login --org globex")
+  await expect(orgUse(await config(), "globex", false)).rejects.toThrow("run kyora vms login --org globex")
   // a `use` naming an org with no stored token is ignored, never a token sent elsewhere
   await saveLogin(credentials(), origin, { token: PERSONAL, login: "bob", url: origin, use: "ghost" })
   expect(await config()).toMatchObject({ key: PERSONAL, org: null })

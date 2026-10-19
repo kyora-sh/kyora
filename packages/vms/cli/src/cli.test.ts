@@ -55,7 +55,7 @@ test("prints warnings once when a queued API create finishes", async () => {
   expect(made.stderr.split("[kyora-vms] warning: egressAllow is ignored with network open").length).toBe(2)
 })
 
-describe("kyora-vms run", () => {
+describe("kyora vms run", () => {
   test("uploads the git worktree as git sees it, with exec bits and symlinks, and destroys the sandbox", async () => {
     const repo = await makeRepo(root)
     const listing = "find . \\( -type f -o -type l \\) -print | LC_ALL=C sort; ./build.sh; readlink link.rs"

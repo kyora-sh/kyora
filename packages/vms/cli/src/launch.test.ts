@@ -3,9 +3,9 @@ import { mkdtemp, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
-// kyora-vms runs inside the repositories it uploads, untrusted ones included. Bun reads a .env and
+// kyora runs inside the repositories it uploads, untrusted ones included. Bun reads a .env and
 // a bunfig.toml (whose `preload` runs code first) from the working directory unless the shebang
-// says not to: running `kyora-vms run` in a repository must never run that repository's code here.
+// says not to: running `kyora vms run` in a repository must never run that repository's code here.
 for (const name of ["index.ts", "kyora.ts"]) {
   test(`${name}'s shebang keeps a directory's .env and bunfig.toml out of the CLI`, async () => {
     const entry = join(import.meta.dir, name)

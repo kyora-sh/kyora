@@ -2,7 +2,7 @@ import { chmod, mkdir, open, rename, rm } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { note } from "./output"
 
-/** an org token (`kyora-vms org use` or `login --org`): it acts as the org, minted by `actor` */
+/** an org token (`kyora vms org use` or `login --org`): it acts as the org, minted by `actor` */
 export interface StoredOrgLogin {
   token: string
   id: string
@@ -11,7 +11,7 @@ export interface StoredOrgLogin {
   expiresAt?: string | null
 }
 
-/** one `kyora-vms login`, keyed by origin in credentials.json */
+/** one `kyora vms login`, keyed by origin in credentials.json */
 export interface StoredLogin {
   /** the personal token; empty when this origin only has org logins */
   token: string
@@ -53,7 +53,7 @@ async function readRaw(path: string): Promise<Record<string, unknown>> {
     parsed = JSON.parse(await file.text())
   } catch {
     // a damaged file is ignored, loudly, rather than failing every command
-    note(`ignoring ${path}: it is not valid JSON (\`kyora-vms login\` writes a fresh one)`)
+    note(`ignoring ${path}: it is not valid JSON (\`kyora vms login\` writes a fresh one)`)
     return {}
   }
   return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {}

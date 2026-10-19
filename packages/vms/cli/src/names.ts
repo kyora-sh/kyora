@@ -22,7 +22,7 @@ export function resolveSandbox(sandboxes: Sandbox[], input: string): Sandbox {
   const candidates = sandboxes.filter((s) => s.id.startsWith(input))
   if (candidates.length === 1) return candidates[0]!
   if (candidates.length > 1) throw new Error(`ambiguous sandbox prefix ${input}:\n${candidates.map((s) => `  ${sandboxLabel(s)}  ${s.id}`).join("\n")}`)
-  throw new Error(`no sandbox named ${input}; run kyora-vms ls`)
+  throw new Error(`no sandbox named ${input}; run kyora vms ls`)
 }
 
 export const isFullId = (input: string): boolean => /^(?:sb_[0-9a-f]{16}|sb_(?:[a-z][a-z0-9-]{1,23}_)?[a-z0-9]{6}_[A-Za-z0-9_-]{16})$/.test(input)

@@ -49,7 +49,7 @@ function fakeCloud() {
   return { objects, calls, client: new StorageClient("https://cloud.test", "kysk_test", fetcher) }
 }
 
-describe("kyora-vms storage", () => {
+describe("kyora vms storage", () => {
   test("put: one PUT for a small file, parts for one over the single-PUT size", async () => {
     const cloud = fakeCloud()
     expect(await cloud.client.put("assets", "dir/a b.txt", new Blob(["hello"]), "text/plain")).toMatchObject({ key: "dir/a b.txt", size: 5 })

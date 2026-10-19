@@ -253,7 +253,7 @@ describe.skipIf(!ENABLED)(`snapshots end to end (region ${REGION})`, () => {
     const env = (globalThis as Record<symbol, unknown>)[Symbol.for("kyora.e2e.env")] as Record<string, string | undefined> | undefined
     if (!env) throw new Error("run from packages/vms/cli with KYORA_E2E=1 set, so the test preload keeps your config")
     const config = await loadConfig(env)
-    if (!config.key) throw new Error(`no key for ${config.url}: log in with \`kyora-vms login\` or set KYORA_VMS_KEY`)
+    if (!config.key) throw new Error(`no key for ${config.url}: log in with \`kyora vms login\` or set KYORA_VMS_KEY`)
     client = new VmsClient(config)
     if ((await client.kind()) !== "platform") throw new Error(`${config.url} is a single kyora-vmd: these tests need kyora cloud`)
     log(`against ${config.url} (key from ${config.keySource ?? "?"})`)

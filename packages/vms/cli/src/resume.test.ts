@@ -53,7 +53,7 @@ interface RawResult {
   code: number
   stdout: Buffer
   stderr: string
-  /** stderr without kyora-vms's own lines: the command's bytes */
+  /** stderr without kyora'ss own lines: the command's bytes */
   remoteStderr: Buffer
 }
 
@@ -503,7 +503,7 @@ describe("a stream that never ends", () => {
   })
 })
 
-describe("--timeout is kyora-vms' own deadline too", () => {
+describe("--timeout is kyora's own deadline too", () => {
   let server: FakeVmd
   /** a grace of half a second, so the tests see the deadline */
   const GRACE = { KYORA_VMS_TIMEOUT_GRACE_MS: "500" }
@@ -571,7 +571,7 @@ describe("--timeout is kyora-vms' own deadline too", () => {
     expect(await Bun.file(join(repo, "target/app")).text()).toBe("binary")
     expect(server.destroyed).toHaveLength(1)
 
-    // and the --git setup's exec, which kyora-vms runs for itself, is not waited on past its exit either
+    // and the --git setup's exec, which kyora runs for itself, is not waited on past its exit either
     const again = await bounded(spawnRaw(["run", "--git", "--timeout", "1s", "--", "cargo", "build"], baseEnv(server.url, { ...FAST, ...GRACE }), repo))
     expect(again.code).toBe(0)
     expect(again.stdout.toString()).toBe("built\n")

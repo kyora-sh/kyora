@@ -81,14 +81,14 @@ for (const kind of ["vmd", "platform"] as const) {
     return { vmd: fake, api, id, io, run, sent }
   }
 
-  describe(`kyora-vms shell (${kind === "vmd" ? "kyora-vmd" : "kyora cloud"})`, () => {
+  describe(`kyora vms shell (${kind === "vmd" ? "kyora-vmd" : "kyora cloud"})`, () => {
     test("named main shell prints attach and remove hints after detaching", async () => {
       const { vmd, io, run } = await setup()
       const done = run({ sandboxName: "brisk-otter" })
       await waitFor(() => vmd.tty.attaches.length === 1, 5_000, "the attach")
       io.type("~.")
       expect(await done).toBe(0)
-      expect(io.statuses.at(-1)).toBe("back in: kyora-vms attach brisk-otter · gone: kyora-vms rm brisk-otter")
+      expect(io.statuses.at(-1)).toBe("back in: kyora vms attach brisk-otter · gone: kyora vms rm brisk-otter")
       expect(io.raw.at(-1)).toBe(false)
     })
 
@@ -210,7 +210,7 @@ for (const kind of ["vmd", "platform"] as const) {
       vmd.tty.refuse = true
       vmd.tty.cut()
       expect(await done).toBe(125)
-      expect(io.statuses.at(-1)).toMatch(/^gave up reattaching after .*; the session keeps running: kyora-vms shell /)
+      expect(io.statuses.at(-1)).toMatch(/^gave up reattaching after .*; the session keeps running: kyora vms shell /)
       expect(io.raw).toEqual([true, false])
     })
 
@@ -441,7 +441,7 @@ describe("Escapes", () => {
   })
 })
 
-describe("kyora-vms shell (the command)", () => {
+describe("kyora vms shell (the command)", () => {
   test("--list and --kill; the flags it takes and refuses", async () => {
     vmd = await startFakeVmd()
     const root = await realpath(await tempDir("shell"))
@@ -611,7 +611,7 @@ print(json.dumps({"before": before, "raw": raw, "after": after, "code": os.waits
       // raw as ssh makes it: no echo, no line editing, no signals from keys, and no output processing (a newline from tmux moves down, never to the first column)
       expect(report.raw).toEqual({ echo: false, icanon: false, isig: false, opost: false, icrnl: false })
       expect(report.after).toEqual(report.before)
-      expect(report.seen).toContain("back in: kyora-vms attach")
+      expect(report.seen).toContain("back in: kyora vms attach")
       expect(vmd.tty.messages.filter((message) => message.kind === 0).map((message) => message.text).join("")).toBe("hello\r")
     } finally {
       await rm(root, { recursive: true, force: true })

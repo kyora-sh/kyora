@@ -4,7 +4,7 @@ import { note, printJson, write } from "./output"
 import { formatBytes } from "./units"
 
 /**
- * `kyora-vms screenshot` and `kyora-vms computer`: the sandbox's desktop through kyora cloud's
+ * `kyora vms screenshot` and `kyora vms computer`: the sandbox's desktop through kyora cloud's
  * computer-use API. Actions and their arguments are the Anthropic computer-use tool's.
  */
 
@@ -104,7 +104,7 @@ export function computerAction(name: string, args: string[], options: ActionOpti
       if (args.length === 4) action.coordinate = point(args, 2, "coordinate")
       break
     case "type":
-      if (args.length === 0) usage("type needs the text to type, e.g. kyora-vms computer <id> type \"hello world\"")
+      if (args.length === 0) usage("type needs the text to type, e.g. kyora vms computer <id> type \"hello world\"")
       action.text = args.join(" ")
       break
     case "key":
@@ -162,7 +162,7 @@ function described(shot: { width: number; height: number; screen?: { width: numb
   return `${shot.width}x${shot.height} PNG${scaled}, ${formatBytes(bytes)}${path === "-" ? "" : ` → ${path}`}`
 }
 
-/** `kyora-vms screenshot <id> [-o file.png] [--region x,y,w,h] [--scale s]`: prints where it went */
+/** `kyora vms screenshot <id> [-o file.png] [--region x,y,w,h] [--scale s]`: prints where it went */
 export async function screenshot(api: VmsClient, id: string, options: { out?: string; region?: string; scale?: string; json: boolean }): Promise<number> {
   const action: ComputerAction = options.region ? { action: "zoom", region: parseRegion(options.region) } : { action: "screenshot" }
   if (options.scale !== undefined) action.scale = parseScale(options.scale)
@@ -177,7 +177,7 @@ export async function screenshot(api: VmsClient, id: string, options: { out?: st
   return 0
 }
 
-/** `kyora-vms computer <id> <action> [args…]`: one action; prints what it says (the cursor, an image's path) */
+/** `kyora vms computer <id> <action> [args…]`: one action; prints what it says (the cursor, an image's path) */
 export async function computer(api: VmsClient, id: string, action: ComputerAction, options: { out?: string; json: boolean }): Promise<number> {
   const result: ComputerResult = await api.computer(id, action)
   const image = result.content.find((block) => block.type === "image")

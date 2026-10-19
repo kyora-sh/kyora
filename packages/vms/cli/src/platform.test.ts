@@ -216,7 +216,7 @@ describe("the rest of kyora cloud", () => {
 
     const rejected = await cli(["health"], { cwd: root, env: env({ KYORA_TOKEN: "kyora_revoked" }) })
     expect(rejected.code).toBe(125)
-    expect(rejected.stdout).toContain("token: rejected (from $KYORA_TOKEN): whoami: missing, invalid or expired token; run kyora-vms login")
+    expect(rejected.stdout).toContain("token: rejected (from $KYORA_TOKEN): whoami: missing, invalid or expired token; run kyora vms login")
 
     const who = await cli(["whoami"], { cwd: root, env: env() })
     expect(who.code).toBe(0)
@@ -251,12 +251,12 @@ describe("the rest of kyora cloud", () => {
     try {
       const nodes = await cli(["nodes"], { cwd: root, env: baseEnv(vmd.url) })
       expect(nodes.code).toBe(125)
-      expect(nodes.stderr).toContain(`${vmd.url} does not support nodes. Run \`kyora-vms health\` to check capacity`)
+      expect(nodes.stderr).toContain(`${vmd.url} does not support nodes. Run \`kyora vms health\` to check capacity`)
       const who = await cli(["whoami"], { cwd: root, env: baseEnv(vmd.url) })
-      expect(who.stderr).toContain("requires an API key. Run `kyora-vms health` to check the key")
+      expect(who.stderr).toContain("requires an API key. Run `kyora vms health` to check the key")
       const login = await cli(["login"], { cwd: root, env: baseEnv(vmd.url) })
       expect(login.code).toBe(125)
-      expect(login.stderr).toContain(`${vmd.url} requires an API key (KYORA_VMS_KEY). To sign in to kyora cloud: kyora-vms login --url https://cloud.kyora.sh`)
+      expect(login.stderr).toContain(`${vmd.url} requires an API key (KYORA_VMS_KEY). To sign in to kyora cloud: kyora vms login --url https://cloud.kyora.sh`)
       // the key says kyora-vmd, so only login (which sends no key) asked the server what it is
       expect(vmd.requests).toEqual(["GET /v1/health"])
     } finally {
@@ -267,7 +267,7 @@ describe("the rest of kyora cloud", () => {
   test("with no token it says to log in", async () => {
     const result = await cli(["ls"], { cwd: root, env: env({ KYORA_TOKEN: undefined }) })
     expect(result.code).toBe(125)
-    expect(result.stderr).toContain(`list sandboxes: not logged in to ${cloud.url}; run \`kyora-vms login\`, or set KYORA_TOKEN`)
+    expect(result.stderr).toContain(`list sandboxes: not logged in to ${cloud.url}; run \`kyora vms login\`, or set KYORA_TOKEN`)
   })
 })
 
@@ -381,7 +381,7 @@ describe("waiting in line for room on kyora cloud", () => {
     clearTimeout(stuck)
 
     expect(result.code).toBe(125)
-    expect(result.stderr).toContain("create sandbox: still in line for room well past --wait (1.0s), with no answer from kyora cloud; kyora-vms took the create out of line")
+    expect(result.stderr).toContain("create sandbox: still in line for room well past --wait (1.0s), with no answer from kyora cloud; kyora took the create out of line")
     expect(Date.now() - started).toBeLessThan(10_000)
     const [ticket] = [...cloud.tickets.keys()]
     expect(cloud.requests).toContain(`DELETE /v1/queue/${ticket}`)
@@ -391,7 +391,7 @@ describe("waiting in line for room on kyora cloud", () => {
   })
 })
 
-describe("kyora-vms login", () => {
+describe("kyora vms login", () => {
   /** a BROWSER that notes the URL it was asked to open */
   async function browser(): Promise<{ command: string; opened: () => string | null }> {
     const file = join(root, "opened.txt")
@@ -429,7 +429,7 @@ describe("kyora-vms login", () => {
     expect(MINTED).toContain(saved[origin].token)
 
     const who = await cli(["whoami"], { cwd: root, env: loginEnv(config) })
-    expect(who.stdout).toContain(`token: "kyora-vms on test", from ${file}`)
+    expect(who.stdout).toContain(`token: "kyora vms on test", from ${file}`)
     expect((await cli(["ls"], { cwd: root, env: loginEnv(config) })).stdout).toBe("no sandboxes running\n")
 
     const out = await cli(["logout"], { cwd: root, env: loginEnv(config) })

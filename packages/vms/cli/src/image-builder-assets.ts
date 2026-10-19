@@ -12,7 +12,7 @@ import profiles from "../../image/tools/profiles.py" with { type: "text" }
 /**
  * The in-VM image builder (packages/vms/image/builder/kyora-image-build) and what it needs, carried
  * in the CLI: the images on kyora's machines today were built before the builder shipped in them, so
- * `kyora-vms image build` uploads its own copy into the builder sandbox. Laid out as the builder
+ * `kyora vms image build` uploads its own copy into the builder sandbox. Laid out as the builder
  * looks for them: its library (imagespec.py, profiles.py) with chroot-install.sh next to it and the
  * stage files under stages/.
  */

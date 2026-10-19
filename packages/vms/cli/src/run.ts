@@ -33,7 +33,7 @@ export async function destroyQuietly(api: VmsClient, id: string): Promise<boolea
     await api.destroy(id)
     return true
   } catch (error) {
-    note(`could not destroy ${id} (${message(error)}); \`kyora-vms rm ${id}\` stops it now`)
+    note(`could not destroy ${id} (${message(error)}); \`kyora vms rm ${id}\` stops it now`)
     return false
   }
 }
@@ -63,7 +63,7 @@ export function reportPull(result: PullResult): boolean {
 
 /**
  * create → upload → exec → download → destroy. The exit code is the remote
- * command's; 125 means kyora-vms itself failed, and a failed download turns a
+ * command's; 125 means kyora itself failed, and a failed download turns a
  * remote success into 125 so an agent never mistakes a missing artifact for a build.
  * A create refused with image_unavailable exits 123.
  */
@@ -132,7 +132,7 @@ export async function run(api: VmsClient, options: RunOptions): Promise<number> 
     code = outcome.code
     if (outcome.error) note(outcome.error)
 
-    // once kyora-vms gave up on the command, --out gets what the grace allows, no more: the machine may be out of reach
+    // once kyora gave up on the command, --out gets what the grace allows, no more: the machine may be out of reach
     const late = outcome.expired ? AbortSignal.timeout(timeoutGraceMs()) : null
     const pulling = late ? AbortSignal.any([interrupt.signal, late]) : interrupt.signal
     for (const out of options.outs) {
@@ -171,7 +171,7 @@ export async function run(api: VmsClient, options: RunOptions): Promise<number> 
       if (options.keep) {
         kept = true
         const label = sandboxArgument(sandbox.name ?? sandbox.id)
-        note(`kept ${sandbox.id}${sandbox.name ? ` (${sandbox.name})` : ""}: \`kyora-vms exec ${label} -- …\`, \`kyora-vms rm ${label}\` when done`)
+        note(`kept ${sandbox.id}${sandbox.name ? ` (${sandbox.name})` : ""}: \`kyora vms exec ${label} -- …\`, \`kyora vms rm ${label}\` when done`)
       } else {
         await destroyQuietly(api, sandbox.id)
       }

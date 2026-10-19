@@ -1,15 +1,15 @@
 import type { CustomDomain, DnsRecord, VmsClient } from "./api"
 
 /**
- * `kyora-vms domain …`: custom domains for public URLs. Your hostname,
+ * `kyora vms domain …`: custom domains for public URLs. Your hostname,
  * CNAMEd to kyora, serves one of your public names exactly like <label>.kyora.run does.
  */
 
 export const DomainUsage = `usage:
-  kyora-vms domain add <hostname> --to <label> [--dcv http|txt]   serve a public URL name on your hostname
-  kyora-vms domain ls                                             your custom domains
-  kyora-vms domain status <hostname>                              current status and missing DNS records
-  kyora-vms domain rm <hostname>                                  remove it (its certificate goes too)`
+  kyora vms domain add <hostname> --to <label> [--dcv http|txt]   serve a public URL name on your hostname
+  kyora vms domain ls                                             your custom domains
+  kyora vms domain status <hostname>                              current status and missing DNS records
+  kyora vms domain rm <hostname>                                  remove it (its certificate goes too)`
 
 type Print = (line: string) => void
 
@@ -60,13 +60,13 @@ export async function domainCommand(api: VmsClient, args: { positionals: string[
     if (hostname !== undefined) usage(DomainUsage)
     const domains = await api.domains()
     if (args.json) print(JSON.stringify({ domains }))
-    else if (!domains.length) print("no custom domains yet: kyora-vms domain add <hostname> --to <label>")
+    else if (!domains.length) print("no custom domains yet: kyora vms domain add <hostname> --to <label>")
     else for (const domain of domains) print(`${domain.hostname}  ${domain.label}  ${domain.status}${domain.attached ? "" : "  detached"}`)
     return 0
   }
   if (!hostname) usage(DomainUsage)
   if (action === "add") {
-    if (!args.to) usage(`domain add needs --to <label>, one of your public URL names (kyora-vms expose --list)\n${DomainUsage}`)
+    if (!args.to) usage(`domain add needs --to <label>, one of your public URL names (kyora vms expose --list)\n${DomainUsage}`)
     if (args.dcv !== undefined && args.dcv !== "http" && args.dcv !== "txt") usage("--dcv takes http (the default: nothing to add but the TXT and the CNAME) or txt")
     const domain = await api.domainAdd(hostname, args.to, args.dcv as "http" | "txt" | undefined)
     if (args.json) {
@@ -78,7 +78,7 @@ export async function domainCommand(api: VmsClient, args: { positionals: string[
       printRecords(domain, print)
       print("")
       if (domain.status === "unverified") print("The TXT record verifies your ownership.")
-      print(`Then check: kyora-vms domain status ${domain.hostname}`)
+      print(`Then check: kyora vms domain status ${domain.hostname}`)
       print("The certificate is issued once the CNAME resolves, usually within minutes (DNS caches can make it longer).")
     } else print(domain.url)
     return 0
