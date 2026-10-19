@@ -51,7 +51,7 @@ crates/protocol    provider-neutral messages, content blocks, tool calls and str
 crates/providers   the ModelProvider trait, the Anthropic Messages API, stream accumulation, retry policy, a deterministic fake
 crates/tools       built-in file, shell and workspace tools
 crates/core        the runtime loop, tools and toolsets, ledger and budgets, sessions, traces
-crates/cli         `kyora run` and its config (binary `kyora`)
+crates/cli         the harness binary `kyora-harness` (`kyora run` and `kyora tui` hand off to it) and its config
 crates/tui         the event-driven TUI with a live recursion tree
 
 packages/vms/cli          `kyora-vms` and `kyora` (bins), plus a library export of the API client

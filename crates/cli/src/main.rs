@@ -1,4 +1,4 @@
-//! Command-line entry point for kyora.
+//! Command-line entry point for the kyora harness (binary `kyora-harness`).
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 use kyora_core::{
@@ -17,7 +17,7 @@ use tokio_util::sync::CancellationToken;
 mod config;
 
 #[derive(Parser)]
-#[command(name = "kyora", version)]
+#[command(name = "kyora-harness", version)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
@@ -588,7 +588,7 @@ mod tests {
             } else {
                 toml::from_str("model = 'anthropic/config-root'\nllm_model = 'anthropic/config-leaf'\neffort = 'low'\n[providers.anthropic]\nbase_url = 'http://127.0.0.1/config'").unwrap()
             };
-            let mut args = vec!["kyora", "run", "task"];
+            let mut args = vec!["kyora-harness", "run", "task"];
             if layer == "flag" {
                 args.extend([
                     "--model",

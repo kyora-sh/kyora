@@ -11,7 +11,7 @@ const FILE_KEY: &str = "test-only-file-credential";
 const TEXT: &str = include_str!("fixtures/anthropic-text.sse");
 
 fn command(dir: &tempfile::TempDir) -> Command {
-    let mut cmd = assert_cmd::cargo::cargo_bin_cmd!("kyora");
+    let mut cmd = assert_cmd::cargo::cargo_bin_cmd!("kyora-harness");
     cmd.env("HOME", dir.path())
         .env("KYORA_HOME", dir.path().join("home"))
         .env_remove("KYORA_MODEL")

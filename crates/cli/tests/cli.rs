@@ -1,7 +1,7 @@
 use assert_cmd::Command;
 use serde_json::{Value, json};
 fn command(dir: &tempfile::TempDir) -> Command {
-    let mut cmd = assert_cmd::cargo::cargo_bin_cmd!("kyora");
+    let mut cmd = assert_cmd::cargo::cargo_bin_cmd!("kyora-harness");
     cmd.env("KYORA_HOME", dir.path().join("home"))
         .env("HOME", dir.path())
         .env_remove("KYORA_FAKE_SCRIPT")
@@ -209,14 +209,14 @@ fn tool_round_trip_and_session_records_order_permissions_and_list() {
 
 #[test]
 fn tui_help_and_nonterminal_error() {
-    let help = Command::new(env!("CARGO_BIN_EXE_kyora"))
+    let help = Command::new(env!("CARGO_BIN_EXE_kyora-harness"))
         .args(["tui", "--help"])
         .output()
         .unwrap();
     assert!(help.status.success());
     assert!(String::from_utf8(help.stdout).unwrap().contains("--demo"));
     for args in [vec![], vec!["tui"], vec!["tui", "--demo"]] {
-        let output = Command::new(env!("CARGO_BIN_EXE_kyora"))
+        let output = Command::new(env!("CARGO_BIN_EXE_kyora-harness"))
             .args(args)
             .output()
             .unwrap();
@@ -400,7 +400,7 @@ fn ctrl_c_cancels_gracefully_and_kills_the_shell_group() {
     let dir = tempfile::tempdir().unwrap();
     let script = dir.path().join("cancel.json");
     std::fs::write(&script,json!({"rules":[{"responses":[{"content":[{"type":"tool_use","id":"wait","name":"shell","input":{"command":"echo $$ > shell.pid; sleep 60 & echo $! > child.pid; wait"}}],"stop_reason":"tool_use"}]}]}).to_string()).unwrap();
-    let child = std::process::Command::new(assert_cmd::cargo::cargo_bin!("kyora"))
+    let child = std::process::Command::new(assert_cmd::cargo::cargo_bin!("kyora-harness"))
         .args(["run", "task", "--fake-script"])
         .arg(script)
         .arg("-C")
@@ -505,7 +505,8 @@ fn fifo_read_does_not_block_run_timeout_or_first_ctrl_c() {
                 {"type":"tool_use","id":"wait","name":"shell","input":{"command":"echo ready > ready; sleep 60"}}
             ],"stop_reason":"tool_use"
         }]}]}).to_string()).unwrap();
-        let mut command = std::process::Command::new(assert_cmd::cargo::cargo_bin!("kyora"));
+        let mut command =
+            std::process::Command::new(assert_cmd::cargo::cargo_bin!("kyora-harness"));
         command
             .args(["run", "task", "--fake-script"])
             .arg(script)

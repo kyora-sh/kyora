@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 use std::time::Duration;
 
 fn command(dir: &tempfile::TempDir) -> Command {
-    let mut cmd = assert_cmd::cargo::cargo_bin_cmd!("kyora");
+    let mut cmd = assert_cmd::cargo::cargo_bin_cmd!("kyora-harness");
     cmd.env("KYORA_HOME", dir.path().join("home"))
         .env("HOME", dir.path())
         .env_remove("KYORA_FAKE_SCRIPT")
@@ -206,7 +206,7 @@ fn a_second_ctrl_c_during_server_shutdown_kills_the_servers_and_exits() {
             let _ = self.kyora.wait();
         }
     }
-    let mut child = std::process::Command::new(assert_cmd::cargo::cargo_bin!("kyora"))
+    let mut child = std::process::Command::new(assert_cmd::cargo::cargo_bin!("kyora-harness"))
         .args(["run", "task", "--fake-script"])
         .arg(script(&dir))
         .arg("-C")

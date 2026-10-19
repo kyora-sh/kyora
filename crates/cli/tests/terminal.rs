@@ -6,7 +6,7 @@ fn terminal_restores_after_signals_and_keyboard_quit() {
             env!("CARGO_MANIFEST_DIR"),
             "/tests/terminal_pty.py"
         ))
-        .arg(env!("CARGO_BIN_EXE_kyora"))
+        .arg(env!("CARGO_BIN_EXE_kyora-harness"))
         .output()
         .expect("run the PTY regression with python3");
     assert!(
