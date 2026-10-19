@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { needsRelease, publishedCommit, vcsInfoCommit, withGitHead } from "./release"
+import { needsRelease, publishOutcome, publishedCommit, vcsInfoCommit, withGitHead } from "./release"
 
 const sha = "0123456789abcdef0123456789abcdef01234567"
 
@@ -28,4 +28,10 @@ test("a version with no recorded commit is never tagged on a guess", () => {
   for (const missing of [undefined, "", "HEAD", sha.slice(0, 12)]) {
     expect(() => publishedCommit("kyora@1.2.3", missing, "npm's gitHead")).toThrow("kyora@1.2.3: npm's gitHead names no commit")
   }
+})
+
+test("npm publish exiting 0 is a finished publish from this run, whatever the registry shows yet", () => {
+  for (const state of [undefined, "published", "free", "new"]) expect(publishOutcome(0, state)).toBe("ours")
+  expect(publishOutcome(1, "published")).toBe("theirs")
+  for (const state of [undefined, "free", "new"]) expect(publishOutcome(1, state)).toBe("failed")
 })
