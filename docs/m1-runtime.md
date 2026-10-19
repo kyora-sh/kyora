@@ -98,7 +98,7 @@ Filesystem operations run on the blocking pool. Cancellation or an expired deadl
 
 `SessionStore` creates UUIDv7 directories with private permissions and locks the event file exclusively. Its writer acknowledges each persistent event after flushing the record. Call `TraceSink::finish()` after the invocation to join the writer and release the lock. Deltas and stream resets are broadcast only; their envelopes have no persisted sequence. Large leaf prompts are content-addressed JSON blobs; messages remain inline. `TraceSink::ephemeral()` creates no files.
 
-`kyora` with no arguments and `kyora tui [--demo]` open the offline terminal UI. `kyora run` exposes the M1.1 model, effort, limit, tool-selection, cwd and output flags, and `sessions [--json]`. `KYORA_MODEL`, `KYORA_LLM_MODEL` and `KYORA_HOME` are supported. Models and limits are in `kyora-core::defaults`; shell and file settings are in `kyora-tools::defaults` and `ShellConfig::default()`. Library callers can pass an explicit session-home path.
+`kyora-harness` with no arguments and `kyora tui [--demo]` open the offline terminal UI. `kyora run` exposes the M1.1 model, effort, limit, tool-selection, cwd and output flags, and `kyora-harness sessions [--json]` lists the recorded sessions. `KYORA_MODEL`, `KYORA_LLM_MODEL` and `KYORA_HOME` are supported. Models and limits are in `kyora-core::defaults`; shell and file settings are in `kyora-tools::defaults` and `ShellConfig::default()`. Library callers can pass an explicit session-home path.
 
 Exit codes are 0 for completion, 1 for failure, 2 for usage errors, 3 for a limit, 4 for refusal and 130 for cancellation. Progress goes to stderr. JSON mode emits trace envelopes as NDJSON on stdout, including ephemeral deltas.
 
