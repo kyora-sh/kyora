@@ -1,6 +1,7 @@
 {
   "name": "kyora-switch",
   "version": "0.2.0",
+  "private": true,
   "type": "module",
   "description": "Hot-swap Claude Code, Codex, OpenCode, Muse, Grok Build and Antigravity logins between accounts, with live quota for every stored account",
   "keywords": [
@@ -28,9 +29,6 @@
     "LICENSE",
     "NOTICE"
   ],
-  "publishConfig": {
-    "access": "public"
-  },
   "engines": {
     "bun": ">=1.2.0"
   },

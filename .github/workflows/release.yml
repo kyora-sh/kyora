@@ -1,0 +1,122 @@
+name: Release
+
+# Every push to main opens or updates the "chore: release" pull request from the pending changesets.
+# Once it merges (no changesets left), preflight checks every registry that is turned on, and only
+# then does anything publish. npm and crates.io stay off until the repo vars KYORA_PUBLISH_NPM and
+# KYORA_PUBLISH_CRATES are "true"; both publish from protected environments.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  version:
+    if: github.repository == 'kyora-sh/kyora'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      pending: ${{ steps.changesets.outputs.has-changesets }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile
+      - id: changesets
+        uses: changesets/action@v2
+        with:
+          version-script: bun run version-packages
+          pr-title: "chore: release"
+          commit-message: "chore: release"
+
+  preflight:
+    needs: version
+    if: needs.version.outputs.pending == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      npm: ${{ steps.npm.outputs.npm }}
+      crates: ${{ steps.crates.outputs.crates }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: bun install --frozen-lockfile
+      - id: npm
+        run: bun .github/scripts/release.ts npm-preflight
+      - id: crates
+        if: vars.KYORA_PUBLISH_CRATES == 'true'
+        run: |
+          rustup show
+          bun .github/scripts/release.ts crates-preflight
+
+  npm:
+    needs: preflight
+    if: vars.KYORA_PUBLISH_NPM == 'true' && needs.preflight.outputs.npm != '0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: npm
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      # trusted publishing (OIDC) needs npm 11.5.1 or later
+      - run: npm install -g npm@^11.5.1
+      - run: bun install --frozen-lockfile
+      - run: bun .github/scripts/release.ts npm-publish
+        env:
+          # only for a package's first publish; trusted publishing needs no token
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+
+  crates:
+    needs: [preflight, npm]
+    # after npm, so a failed npm publish never leaves crates published alone
+    if: >-
+      always() && needs.preflight.result == 'success' &&
+      (needs.npm.result == 'success' || needs.npm.result == 'skipped') &&
+      vars.KYORA_PUBLISH_CRATES == 'true' && needs.preflight.outputs.crates != '0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: crates
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      BOOTSTRAP_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: rustup show
+      # trusted publishing once the crates exist; CARGO_REGISTRY_TOKEN only for their first publish
+      - id: auth
+        if: env.BOOTSTRAP_TOKEN == ''
+        uses: rust-lang/crates-io-auth-action@v1
+      - run: bun .github/scripts/release.ts crates-publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token || secrets.CARGO_REGISTRY_TOKEN }}

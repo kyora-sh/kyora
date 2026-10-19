@@ -65,18 +65,14 @@ Antigravity's terms rule out automated account rotation on consumer plans, so ag
 
 Requires [Bun](https://bun.sh) on your PATH. `npx` is not supported.
 
-```bash
-bun add -g kyora-switch
-kyora-switch status
-```
-
-Or run it without installing anything:
+It ships in the `kyora` CLI as `kyora switch`:
 
 ```bash
-bunx kyora-switch status
+bun add -g kyora
+kyora switch status
 ```
 
-The `kyora` CLI from `@kyora-sh/vms` runs it too: `kyora switch …` takes the same commands and flags.
+From a checkout: `bun packages/switch/cli/src/index.ts status`.
 
 Supports macOS and Linux. Windows is untested.
 

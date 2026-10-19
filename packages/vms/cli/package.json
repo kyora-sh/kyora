@@ -1,5 +1,5 @@
 {
-  "name": "@kyora-sh/vms",
+  "name": "kyora",
   "version": "0.1.0",
   "type": "module",
   "description": "Run commands in disposable VMs, upload files, stream output and download artifacts",

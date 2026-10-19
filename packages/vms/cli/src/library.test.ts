@@ -8,7 +8,7 @@ import { tempDir } from "./testing/fixtures"
 
 setDefaultTimeout(60_000)
 const cwd = join(import.meta.dir, "..")
-/** a project that installed the package: node_modules/@kyora-sh/vms is this package, as a link */
+/** a project that installed the package: node_modules/kyora is this package, as a link */
 let consumer: string
 
 async function run(cmd: string[], at = cwd) {
@@ -22,8 +22,8 @@ beforeAll(async () => {
   const build = await run([process.execPath, "--no-env-file", "run", "build"])
   expect(build.code, build.stderr).toBe(0)
   consumer = await tempDir("library")
-  await mkdir(join(consumer, "node_modules", "@kyora-sh"), { recursive: true })
-  await symlink(cwd, join(consumer, "node_modules", "@kyora-sh", "vms"))
+  await mkdir(join(consumer, "node_modules"), { recursive: true })
+  await symlink(cwd, join(consumer, "node_modules", "kyora"))
   await Bun.write(join(consumer, "package.json"), JSON.stringify({ name: "consumer", private: true, type: "module" }))
 })
 afterAll(() => rm(consumer, { recursive: true, force: true }))
@@ -36,7 +36,7 @@ for (const runtime of ["bun", "node"]) test(`library import and share requests w
   const script = `
     import assert from "node:assert/strict"
     const before = [process.stdout.listenerCount("error"), process.stderr.listenerCount("error")]
-    const { VmsClient, ApiError } = await import("@kyora-sh/vms")
+    const { VmsClient, ApiError } = await import("kyora")
     assert.deepEqual([process.stdout.listenerCount("error"), process.stderr.listenerCount("error")], before)
     assert.equal(typeof ApiError, "function")
     const calls = []
@@ -69,7 +69,7 @@ test("the declarations stand alone: no Bun types, no unpublished workspace packa
     include: ["main.ts"],
   }))
   await Bun.write(join(consumer, "main.ts"), `
-    import { VmsClient, type ClientConfig, type CreateSpec, type EgressPolicy, type Share } from "@kyora-sh/vms"
+    import { VmsClient, type ClientConfig, type CreateSpec, type EgressPolicy, type Share } from "kyora"
     const config: ClientConfig = { url: "https://cloud.kyora.sh", key: "kyora_fake" }
     const client = new VmsClient(config)
     const spec: CreateSpec = { shareable: false, image: "desktop" }

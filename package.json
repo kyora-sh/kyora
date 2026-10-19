@@ -1,12 +1,15 @@
 {
-  "name": "kyora",
+  "name": "kyora-workspace",
   "private": true,
   "scripts": {
     "build": "turbo run build",
     "check-types": "turbo run check-types",
-    "test": "turbo run test"
+    "test": "turbo run test",
+    "changeset": "changeset",
+    "version-packages": "changeset version && bun install --lockfile-only"
   },
   "devDependencies": {
+    "@changesets/cli": "^3.0.3",
     "turbo": "^2.8.16",
     "typescript": "5.9.2"
   },
