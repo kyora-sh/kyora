@@ -8,7 +8,7 @@ import { isFullId } from "./names"
 export const SUBCOMMANDS = "new ls usage top attach rm run create shell share ssh exec push pull screenshot computer rename ttl resize network completion health regions images image nodes session storage tokens login logout whoami"
 const safeName = (name: unknown): name is string => typeof name === "string" && /^[a-z0-9-]{1,32}$/.test(name)
 const safeCandidate = (name: unknown): name is string => typeof name === "string" && (safeName(name) || isFullId(name))
-const TOKEN_SCOPES = "vms:read vms:write vms:exec vms:share public-urls images storage storage:presign projects:read deploys relay"
+const TOKEN_SCOPES = "vms:read vms:write vms:exec vms:share public-urls images storage storage:presign projects:read deploys"
 const TOKEN_FLAGS = "--scope --project --label --region --max-sandboxes --max-vcpus --max-memory --max-ttl --network --names --name-prefix --expires --org --json"
 const TARGETS = "attach ssh shell share ls exec push pull rm screenshot computer rename ttl resize network"
 

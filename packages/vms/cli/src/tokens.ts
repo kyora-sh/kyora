@@ -11,7 +11,7 @@ const HELP = `usage:
   kyora-vms tokens ls [--org ORG] [--json]
   kyora-vms tokens revoke <id> [--org ORG] [--json]
 
-Capabilities: vms:read, vms:write, vms:exec, vms:share, public-urls, images, storage, storage:presign, projects:read, deploys, relay
+Capabilities: vms:read, vms:write, vms:exec, vms:share, public-urls, images, storage, storage:presign, projects:read, deploys
 
 Create options:
   --scope CAPABILITY       repeat, or separate with commas
