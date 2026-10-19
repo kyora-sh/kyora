@@ -1,0 +1,105 @@
+{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "kyora",
+      "devDependencies": {
+        "turbo": "^2.8.16",
+        "typescript": "5.9.2",
+      },
+    },
+    "packages/shared/hostnames": {
+      "name": "@kyora-sh/hostnames",
+      "version": "0.1.0",
+      "dependencies": {
+        "tldts": "^7.4.16",
+      },
+      "devDependencies": {
+        "@repo/typescript-config": "workspace:*",
+        "@types/bun": "1.4.2",
+        "typescript": "^5.9.2",
+      },
+    },
+    "packages/shared/usage": {
+      "name": "@kyora-sh/usage",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@repo/typescript-config": "workspace:*",
+        "@types/bun": "1.4.2",
+        "typescript": "^5.9.2",
+      },
+    },
+    "packages/switch/cli": {
+      "name": "kyora-switch",
+      "version": "0.2.0",
+      "bin": {
+        "kyora-switch": "./dist/index.js",
+      },
+      "devDependencies": {
+        "@kyora-sh/usage": "workspace:*",
+        "@repo/typescript-config": "workspace:*",
+        "@types/bun": "1.4.2",
+        "typescript": "^5.9.2",
+      },
+    },
+    "packages/tooling/typescript-config": {
+      "name": "@repo/typescript-config",
+      "version": "0.0.0",
+    },
+    "packages/vms/cli": {
+      "name": "@kyora-sh/vms",
+      "version": "0.1.0",
+      "bin": {
+        "kyora-vms": "./dist/index.js",
+        "kyora": "./dist/kyora.js",
+      },
+      "devDependencies": {
+        "@kyora-sh/hostnames": "workspace:*",
+        "@repo/typescript-config": "workspace:*",
+        "@types/bun": "1.4.2",
+        "kyora-switch": "workspace:*",
+        "typescript": "^5.9.2",
+      },
+    },
+  },
+  "packages": {
+    "@kyora-sh/hostnames": ["@kyora-sh/hostnames@workspace:packages/shared/hostnames"],
+
+    "@kyora-sh/usage": ["@kyora-sh/usage@workspace:packages/shared/usage"],
+
+    "@kyora-sh/vms": ["@kyora-sh/vms@workspace:packages/vms/cli"],
+
+    "@repo/typescript-config": ["@repo/typescript-config@workspace:packages/tooling/typescript-config"],
+
+    "@turbo/darwin-64": ["@turbo/darwin-64@2.11.9", "", { "os": "darwin", "cpu": "x64" }, "sha512-OkW+EESJjo248CThWe9DfuUqzGcRwHe1DXKWRw9DSZ0lMkocKbbwNMjWVCiO+WNBcARDM0ibu0c9SbuIe4mw6w=="],
+
+    "@turbo/darwin-arm64": ["@turbo/darwin-arm64@2.11.9", "", { "os": "darwin", "cpu": "arm64" }, "sha512-NIbFEogMaIyOi2egLH7XtuW0DXmPOpydnanyB3rw/WXCPYl1OAFRPHPGixIaakGnfNLey8LMmKemgNtqtFKdcg=="],
+
+    "@turbo/linux-64": ["@turbo/linux-64@2.11.9", "", { "os": [ "linux", "android", ], "cpu": "x64" }, "sha512-RkD/Atqqek2WNnYJlmPogZpXjAW+cSsPXDn7E0mufSNN86ClXCSKme/BBYMeIvPoFZ4egPJLF+JpYkuuNkMYhg=="],
+
+    "@turbo/linux-arm64": ["@turbo/linux-arm64@2.11.9", "", { "os": [ "linux", "android", ], "cpu": "arm64" }, "sha512-iW/0YGS9D9YlgD4ad2IEEolD9PuNJGdkEI650AELLln8YaGsloiH8QyTUnajjxPufMuY/eWRWxO+PMBYsGvVlA=="],
+
+    "@turbo/windows-64": ["@turbo/windows-64@2.11.9", "", { "os": "win32", "cpu": "x64" }, "sha512-rg/kuQmSm9m/z8W5HYHLMSnTbLDXBs/9liVZh9YnfkGYm0DlFj2SV9/0fQy/EpJTq81O36kMb7p8Fmt9f67ocA=="],
+
+    "@turbo/windows-arm64": ["@turbo/windows-arm64@2.11.9", "", { "os": "win32", "cpu": "arm64" }, "sha512-PgjBpLPW/WDsKzeBmNuw2QHtPxT/PtcloN3rHFTqVyMsqkLlyHVJbSusuhYoYFdi08lZ9Stryw66UOuPg/yW0w=="],
+
+    "@types/bun": ["@types/bun@1.4.2", "", { "dependencies": { "bun-types": "1.4.2" } }, "sha512-GimotNn7+ZV0uVArItBbriZsR1oNf0+WTzPkdcFrzShI7k2norL0uzEaJT8T33dWr7O/c9ZDuAFQrctKCi72oQ=="],
+
+    "@types/node": ["@types/node@26.6.5", "", { "dependencies": { "undici-types": "~8.9.0" } }, "sha512-uMzsv9stDdofIZBx4UGh4Z9ZgXnGC9seRDscilBcTHAeOFk67MZg/k9bWVfO+bk4qZmG+l52hRnLwUiH2LnJTg=="],
+
+    "bun-types": ["bun-types@1.4.2", "", { "dependencies": { "@types/node": "*" } }, "sha512-bxV1FgK7yBIzjRe5zBozIM4Bem11ZJcCXSrjWRG3YWLt8yFDePu4cLjpebO8OvPeIE9trbyPF4fuj3Cia4Fj3w=="],
+
+    "kyora-switch": ["kyora-switch@workspace:packages/switch/cli"],
+
+    "tldts": ["tldts@7.4.18", "", { "dependencies": { "tldts-core": "^7.4.18" }, "bin": { "tldts": "bin/cli.js" } }, "sha512-somxA8xKAUzlAxl0TX/jMSYIbRNFIVGnI96pVGJPeMc5BsHmfVXn6mOJT6U++ELnl04eGfzpfcEuZe8WiASkXg=="],
+
+    "tldts-core": ["tldts-core@7.4.18", "", {}, "sha512-KI2PKvCmvQI/xD6ypPqkU0i7oxNXR/O58RLRaHR4svsgVUQ2JE/XC8BtMbG6PSehD27I8sZJRcC1ASnCy6lp3g=="],
+
+    "turbo": ["turbo@2.11.9", "", { "optionalDependencies": { "@turbo/darwin-64": "2.11.9", "@turbo/darwin-arm64": "2.11.9", "@turbo/linux-64": "2.11.9", "@turbo/linux-arm64": "2.11.9", "@turbo/windows-64": "2.11.9", "@turbo/windows-arm64": "2.11.9" }, "bin": { "turbo": "bin/turbo" } }, "sha512-k2ev5dv9OgP2pJwaPuydkZdid+haX2U5TDGcPtpAz0gb0nbRR3eXY/cpfrlvHih52YRTxWIcRVKc0ri3C2Scrg=="],
+
+    "typescript": ["typescript@5.9.2", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-CWBzXQrc/qOkhidw1OzBTQuYRbfyxDXJMVJ1XNwUHGROVmuaeiEm3OslpZ1RV96d7SKKjZKrSJu3+t/xlw3R9A=="],
+
+    "undici-types": ["undici-types@8.9.0", "", {}, "sha512-KTDyRTYX8sWmKXAikPHHSyc63CRPETMctyjKFupcC6OBLXT3xsN0e9aF7m+mIXutFWpUXuedtowG7iLOzp0kQg=="],
+  }
+}
