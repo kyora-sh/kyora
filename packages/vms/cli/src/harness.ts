@@ -6,10 +6,13 @@ export const HARNESS = "kyora-harness"
 export const HARNESS_COMMANDS: ReadonlySet<string> = new Set(["run", "tui"])
 export const HARNESS_INSTALL = "cargo install --locked --git https://github.com/kyora-sh/kyora kyora-cli"
 
+type Execve = (file: string, args: string[], env: NodeJS.ProcessEnv) => never
+
 /**
- * Runs `kyora-harness <command> <args…>` in this terminal and returns its exit code. Ctrl-C reaches
- * the harness through the terminal's process group, so this process only outlives it; SIGTERM and
- * SIGHUP sent to `kyora` alone are passed on.
+ * Becomes `kyora-harness <command> <args…>`: the process is replaced, so the harness gets this
+ * process's terminal, signals and exit code as if it had been run directly. On a Bun that cannot
+ * replace itself, the harness runs as a child and its exit code is returned: Ctrl-C reaches it
+ * through the terminal's process group, and SIGTERM and SIGHUP sent to `kyora` alone are passed on.
  */
 export async function runHarness(command: string, args: string[]): Promise<number> {
   const bin = Bun.which(HARNESS)
@@ -17,6 +20,8 @@ export async function runHarness(command: string, args: string[]): Promise<numbe
     note(`kyora ${command} runs the kyora agent harness (${HARNESS}), which is not on your PATH; install it with: ${HARNESS_INSTALL}`)
     return FAILED
   }
+  const execve = (process as unknown as { execve?: Execve }).execve
+  if (typeof execve === "function") execve.call(process, bin, [bin, command, ...args], process.env)
   const child = Bun.spawn([bin, command, ...args], { stdin: "inherit", stdout: "inherit", stderr: "inherit" })
   const ignore = () => {}
   const forward = (signal: NodeJS.Signals) => () => child.kill(signal)
