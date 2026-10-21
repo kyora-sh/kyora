@@ -1,4 +1,26 @@
-# kyora
+<p align="center">
+  <a href="https://kyora.sh">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset=".github/assets/logo-dark.svg">
+      <img src=".github/assets/logo-light.svg" alt="kyora" width="248" height="64">
+    </picture>
+  </a>
+</p>
+
+<p align="center">The runtime for swarm scale: VMs, sessions and swarms for AI agents.</p>
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/kyora"><img src="https://img.shields.io/npm/v/kyora?color=000&label=npm" alt="npm version"></a>
+  <a href="https://www.npmjs.com/package/kyora"><img src="https://img.shields.io/npm/dm/kyora?color=000" alt="npm downloads"></a>
+  <a href="https://github.com/kyora-sh/kyora/actions/workflows/ci.yml"><img src="https://github.com/kyora-sh/kyora/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/kyora-sh/kyora?color=000" alt="license"></a>
+</p>
+
+<p align="center">
+  <a href="https://kyora.sh">Website</a> ·
+  <a href="https://docs.kyora.sh">Docs</a> ·
+  <a href="https://www.npmjs.com/package/kyora">npm</a>
+</p>
 
 The kyora command line: disposable VMs for builds and coding agents, sessions you can move to a VM and back, deploys, and logins you can swap between accounts. TypeScript on [Bun](https://bun.sh).
 

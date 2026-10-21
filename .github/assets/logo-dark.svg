@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 248 64" width="248" height="64" role="img" aria-label="kyora">
+  <g transform="scale(2)">
+    <rect x="0.25" y="0.25" width="31.5" height="31.5" rx="2" fill="#000" stroke="#fff" stroke-opacity="0.25" stroke-width="0.5"/>
+    <g fill="#fff">
+      <rect x="7" y="7" width="4" height="18"/>
+      <rect x="19" y="7" width="4" height="4"/>
+      <rect x="15" y="11" width="4" height="4"/>
+      <rect x="11" y="15" width="4" height="4"/>
+      <rect x="15" y="19" width="4" height="4"/>
+      <rect x="19" y="23" width="4" height="4" opacity="0.55"/>
+    </g>
+  </g>
+  <text x="84" y="46" fill="#fff" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="42" font-weight="500" letter-spacing="-1">kyora</text>
+</svg>
