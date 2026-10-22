@@ -114,6 +114,8 @@ export interface PageFile {
   path?: string
   /** the file as it was listed: it is uploaded only if it is still that file */
   inode?: { dev: number; ino: number }
+  /** the source directory as it was listed: every directory from it down to the file must still be that one, and no symlink */
+  root?: { path: string; dev: number; ino: number }
   data?: string
   size: number
   type: string
@@ -141,6 +143,10 @@ export async function pageFiles(source: string): Promise<PageFile[]> {
   const files: PageFile[] = []
   let bytes = 0
   const top = await realpath(root)
+  // the source itself, swapped for a symlink since it was looked at: nothing from there
+  const atTop = await lstat(top)
+  if (atTop.dev !== info.dev || atTop.ino !== info.ino) throw new Error(`${source} changed while it was being listed`)
+  const anchor = { path: root, dev: info.dev, ino: info.ino }
   const walk = async (dir: string): Promise<void> => {
     for (const entry of await readdir(dir, { withFileTypes: true })) {
       if (SKIP.has(entry.name)) continue
@@ -154,7 +160,7 @@ export async function pageFiles(source: string): Promise<PageFile[]> {
         if (!real.startsWith(`${top}${sep}`) || there.dev !== stat.dev || there.ino !== stat.ino) throw new Error(`${path} is not inside ${source} any more`)
         bytes += stat.size
         const key = relative(root, path).split(sep).join("/")
-        files.push({ key, path, inode: { dev: stat.dev, ino: stat.ino }, size: stat.size, type: contentType(key) })
+        files.push({ key, path, inode: { dev: stat.dev, ino: stat.ino }, root: anchor, size: stat.size, type: contentType(key) })
         if (files.length > MAX_FILES) throw new Error(`${source} has more than ${MAX_FILES} files; a page takes at most ${MAX_FILES}`)
         if (bytes > MAX_BYTES) throw new Error(`${source} is over ${formatBytes(MAX_BYTES)}; a page takes at most that`)
       }
@@ -226,12 +232,19 @@ async function inParallel<T>(items: T[], each: (item: T) => Promise<void>, signa
  * A file's bytes as listed: opened without following a symlink, and read only if the opened file is the
  * one listed (not one swapped in since). Read whole, through that descriptor, so nothing else is read later.
  */
-export async function listedFile(file: PageFile, root?: string): Promise<Blob> {
+export async function listedFile(file: PageFile): Promise<Blob> {
   if (!file.path) return new Blob([file.data!])
   const changed = () => new Error(`${file.path} changed while it was being published`)
-  // no directory on the way from the source to it may have become a symlink
-  if (root) for (let dir = dirname(file.path); dir.startsWith(root) && dir !== root; dir = dirname(dir)) {
-    if (!(await lstat(dir).catch(() => null))?.isDirectory()) throw changed()
+  // no directory on the way from the source (itself included) to it may have become a symlink or another directory
+  if (file.root) {
+    for (let dir = dirname(file.path); ; dir = dirname(dir)) {
+      const stat = await lstat(dir).catch(() => null)
+      if (!stat?.isDirectory() || !dir.startsWith(file.root.path)) throw changed()
+      if (dir === file.root.path) {
+        if (stat.dev !== file.root.dev || stat.ino !== file.root.ino) throw changed()
+        break
+      }
+    }
   }
   const handle = await open(file.path, constants.O_RDONLY | constants.O_NOFOLLOW).catch(() => Promise.reject(changed()))
   try {
@@ -327,7 +340,7 @@ export async function publishPage(deps: PagesDeps, options: PublishOptions): Pro
   // nothing points at a fresh prefix until the switch: a failed upload deletes it
   try {
     await inParallel(files, async (file) => {
-      await storage.put(bucket, `${prefix}${file.key}`, await listedFile(file, resolve(options.source)), file.type, options.signal)
+      await storage.put(bucket, `${prefix}${file.key}`, await listedFile(file), file.type, options.signal)
     }, options.signal)
     options.signal?.throwIfAborted()
   } catch (error) {
@@ -359,8 +372,9 @@ export interface RemoveResult {
 }
 
 /** release the name, then (unless kept) delete its files, if a publish made their prefix */
-export async function removePage(deps: PagesDeps, name: string, keepFiles = false): Promise<RemoveResult> {
+export async function removePage(deps: PagesDeps, name: string, keepFiles = false, signal?: AbortSignal): Promise<RemoveResult> {
   const page = await deps.api.page(checkName(name))
+  signal?.throwIfAborted()
   await deps.api.pageRemove(page.name)
   if (keepFiles) return { name: page.name, removed: true, files: null }
   const deleted = await deleteUnserved(deps, page.bucket, page.prefix)

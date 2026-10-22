@@ -166,7 +166,13 @@ describe("pages", () => {
     await rm(join(dir, "assets"), { recursive: true })
     await write(root, "elsewhere/app.js", "console.log(1)")
     await symlink(join(root, "elsewhere"), join(dir, "assets"))
-    await expect(listedFile(app!, dir)).rejects.toThrow("changed while it was being published")
+    await expect(listedFile(app!)).rejects.toThrow("changed while it was being published")
+    // nor anything once the source itself became a symlink
+    const [data] = (await pageFiles(dir)).filter((one) => one.key === "data.bin")
+    await write(root, "outside/data.bin", "not yours")
+    await rm(dir, { recursive: true })
+    await symlink(join(root, "outside"), dir)
+    await expect(listedFile(data!)).rejects.toThrow("changed while it was being published")
   })
 
   test("without a name: kyora cloud names it from the directory's name, and each such publish is a new page", async () => {

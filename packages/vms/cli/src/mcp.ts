@@ -149,7 +149,10 @@ export class McpServer {
     const invalid = validate(tool.inputSchema, args)
     if (invalid) return this.error(id, INVALID_PARAMS, `${tool.name}: ${invalid}`)
     const controller = new AbortController()
-    const work = this.options.context(controller.signal).then((context) => tool.handler(args as Record<string, unknown>, context))
+    const work = this.options.context(controller.signal).then((context) => {
+      controller.signal.throwIfAborted()
+      return tool.handler(args as Record<string, unknown>, context)
+    })
     if (id !== null) this.running.set(id, { controller, done: work.catch(() => {}) })
     try {
       const value = await work
@@ -244,6 +247,8 @@ export function guardStdout(clean: (text: string) => string = (text) => text): G
   const write = process.stdout.write.bind(process.stdout)
   const stderr = process.stderr.write.bind(process.stderr) as (chunk: string) => boolean
   let held = ""
+  /** the rest of a line that was too long is dropped too, up to its newline */
+  let dropping = false
   const flushLines = (all: boolean) => {
     const end = all ? held.length : held.lastIndexOf("\n") + 1
     if (end <= 0) return
@@ -251,11 +256,18 @@ export function guardStdout(clean: (text: string) => string = (text) => text): G
     held = held.slice(end)
   }
   process.stderr.write = ((chunk: unknown, ...rest: unknown[]) => {
-    held += typeof chunk === "string" ? chunk : chunk instanceof Uint8Array ? new TextDecoder().decode(chunk) : String(chunk)
+    let text = typeof chunk === "string" ? chunk : chunk instanceof Uint8Array ? new TextDecoder().decode(chunk) : String(chunk)
+    if (dropping) {
+      const newline = text.indexOf("\n")
+      text = newline === -1 ? "" : text.slice(newline + 1)
+      dropping = newline === -1
+    }
+    held += text
     flushLines(false)
-    // a line this long never ends: dropped, since a credential could straddle any cut of it
+    // a line this long: all of it is left out, since a credential could straddle any cut of it
     if (held.length > STDERR_HOLD) {
       held = ""
+      dropping = true
       stderr("[kyora] (a line over 64 KB was left out)\n")
     }
     const callback = rest.find((arg) => typeof arg === "function") as (() => void) | undefined

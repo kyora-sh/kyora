@@ -427,9 +427,11 @@ export function kyoraTools(): Tool[] {
       description: "Give a VM another name.",
       inputSchema: object({ sandbox: SANDBOX, name: string("1-32 characters of a-z, 0-9 and -") }, ["sandbox", "name"]),
       annotations: { ...WRITE, idempotentHint: true },
-      handler: async (args, { api }) => {
+      handler: async (args, { api, signal }) => {
         const name = input(() => validName(args.name as string))
-        return api.update(await resolveTarget(api, args.sandbox as string), { name })
+        const id = await resolveTarget(api, args.sandbox as string)
+        signal.throwIfAborted()
+        return api.update(id, { name })
       },
     },
     {
@@ -438,9 +440,11 @@ export function kyoraTools(): Tool[] {
       description: "Set a VM's total lifetime, counted from its creation (not from now): e.g. 4h, or none.",
       inputSchema: object({ sandbox: SANDBOX, ttl: string("e.g. 4h or 90m, or none") }, ["sandbox", "ttl"]),
       annotations: { ...WRITE, destructiveHint: true, idempotentHint: true },
-      handler: async (args, { api }) => {
+      handler: async (args, { api, signal }) => {
         const ttlSeconds = input(() => (args.ttl === "none" ? 0 : parseSeconds(args.ttl as string, "ttl")))
-        return api.update(await resolveTarget(api, args.sandbox as string), { ttlSeconds })
+        const id = await resolveTarget(api, args.sandbox as string)
+        signal.throwIfAborted()
+        return api.update(id, { ttlSeconds })
       },
     },
     {
@@ -704,7 +708,7 @@ export function kyoraTools(): Tool[] {
       description: "Unpublish a page: its name is released and its files deleted (unless keep_files).",
       inputSchema: object({ name: string("the page's name"), keep_files: boolean("leave its files in the bucket") }, ["name"]),
       annotations: DESTROY,
-      handler: async (args, { pages }) => removePage(pages, args.name as string, Boolean(args.keep_files)),
+      handler: async (args, { pages, signal }) => removePage(pages, args.name as string, Boolean(args.keep_files), signal),
     },
     {
       name: "pages_login_url",
