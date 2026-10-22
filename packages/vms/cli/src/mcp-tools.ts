@@ -11,7 +11,7 @@ import type { Schema } from "./mcp"
 import { resolveDestructiveTarget, resolveTarget, validName } from "./names"
 import { note } from "./output"
 import { listFiles } from "./pack"
-import { publishPage, removePage, type PagesDeps } from "./pages"
+import { checkName, publishPage, removePage, type PagesDeps } from "./pages"
 import { repoTop } from "./sessions/git"
 import { getSession } from "./sessions/platform"
 import { resolveState } from "./sessions/state"
@@ -110,6 +110,16 @@ const input = <T>(compute: () => T): T => {
 }
 
 const local = (context: ToolContext, path: string) => resolve(context.cwd, path)
+
+/** an argument that goes into a request's path, checked against what it can be (never . or ..) */
+function pathArg(args: Record<string, unknown>, key: string, pattern: RegExp, what: string): string {
+  const value = args[key] as string
+  if (!pattern.test(value) || /(^|\.)\.($|\.)/.test(value)) throw new ToolInputError(`${key} must be ${what}`)
+  return value
+}
+const HOSTNAME = /^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/
+const LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/
+const hostname = (args: Record<string, unknown>) => pathArg(args, "hostname", HOSTNAME, "a hostname, e.g. app.example.com")
 
 /** the bucket argument, checked: it goes into the request's path */
 function bucketOf(args: Record<string, unknown>): string {
@@ -265,7 +275,7 @@ const ports = (sandbox?: string) => (sandbox ? `/v1/sandboxes/${encodeURICompone
 
 async function project(args: Record<string, unknown>, context: ToolContext): Promise<string> {
   try {
-    return await resolveProject(text(args.project), context.cwd)
+    return await resolveProject(args.project === undefined ? undefined : pathArg(args, "project", /^[A-Za-z0-9_-]+$/, "a project's name or id"), context.cwd)
   } catch (error) {
     if (error instanceof DeployUsage) throw new Error(`${error.message.split(/[;\n]/)[0]}; pass project (projects_list names them), or run \`kyora link\` in the checkout`)
     throw error
@@ -533,7 +543,7 @@ export function kyoraTools(): Tool[] {
       annotations: READ,
       handler: async (args, context) => {
         const name = await project(args, context)
-        const id = text(args.deployment) ?? (await context.api.deployments(name)).deployments[0]?.id
+        const id = (args.deployment === undefined ? undefined : pathArg(args, "deployment", /^dpl_[A-Za-z0-9_-]+$/, "a deployment id, dpl_…")) ?? (await context.api.deployments(name)).deployments[0]?.id
         if (!id) throw new Error("this project has no deployments")
         const tail = new Tail((args.limit_bytes as number | undefined) ?? 20_000)
         const reader = (await context.api.deploymentLogs(name, id)).body?.getReader()
@@ -550,7 +560,7 @@ export function kyoraTools(): Tool[] {
       annotations: WRITE,
       handler: async (args, { api }) => {
         if ((args.to === undefined) === (args.page === undefined)) throw new ToolInputError("give to (a public URL name) or page (a public page), one of them")
-        return api.domainAdd(args.hostname as string, args.page !== undefined ? { page: args.page as string } : (args.to as string), args.dcv as "http" | "txt" | undefined)
+        return api.domainAdd(hostname(args), args.page !== undefined ? { page: args.page as string } : (args.to as string), args.dcv as "http" | "txt" | undefined)
       },
     },
     {
@@ -567,7 +577,7 @@ export function kyoraTools(): Tool[] {
       description: "One custom domain's status now: whether it serves, and the DNS records still missing.",
       inputSchema: object({ hostname: string("the hostname") }, ["hostname"]),
       annotations: READ,
-      handler: async (args, { api }) => api.domain(args.hostname as string),
+      handler: async (args, { api }) => api.domain(hostname(args)),
     },
     {
       name: "domains_remove",
@@ -576,7 +586,7 @@ export function kyoraTools(): Tool[] {
       inputSchema: object({ hostname: string("the hostname") }, ["hostname"]),
       annotations: DESTROY,
       handler: async (args, { api }) => {
-        await api.domainRemove(args.hostname as string)
+        await api.domainRemove(hostname(args))
         return { removed: true, hostname: args.hostname }
       },
     },
@@ -607,7 +617,7 @@ export function kyoraTools(): Tool[] {
       inputSchema: object({ label: string("the URL's name"), sandbox: string("the VM it belongs to (optional)") }, ["label"]),
       annotations: DESTROY,
       handler: async (args, { api, signal }) => {
-        const label = encodeURIComponent(args.label as string)
+        const label = pathArg(args, "label", LABEL, "a public URL name: a-z, 0-9 and -")
         const path = args.sandbox === undefined ? `/v1/ports/${label}` : `${ports(await resolveTarget(api, args.sandbox as string))}/${label}`
         signal.throwIfAborted()
         await api.call("unexpose port", "DELETE", path, { accept: [204] })
@@ -730,7 +740,7 @@ export function kyoraTools(): Tool[] {
       description: "A link, valid for 60 seconds, that signs a browser in to a private page. Give it to the user to open.",
       inputSchema: object({ name: string("the page's name") }, ["name"]),
       annotations: { ...WRITE, idempotentHint: false },
-      handler: async (args, { pages }) => ({ loginUrl: await pages.api.pageLogin(args.name as string), expiresInSeconds: 60 }),
+      handler: async (args, { pages }) => ({ loginUrl: await pages.api.pageLogin(input(() => checkName(args.name as string))), expiresInSeconds: 60 }),
     },
   ]
 }

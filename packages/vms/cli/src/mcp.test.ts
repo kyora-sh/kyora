@@ -206,6 +206,9 @@ describe("kyora mcp: the tools", () => {
     expect((await call(server, "domains_list")).value.domains).toHaveLength(1)
     expect((await call(server, "domains_status", { hostname: "shop.example.com" })).value.serving).toBe(true)
     expect((await call(server, "domains_remove", { hostname: "shop.example.com" })).value.removed).toBe(true)
+    for (const [name, args] of [["domains_remove", { hostname: ".." }], ["domains_status", { hostname: "a/../../v1" }], ["unexpose", { label: ".." }], ["deployments_list", { project: ".." }], ["deployment_logs", { project: "web", deployment: "dpl_x/../.." }], ["pages_login_url", { name: ".." }]] as const) {
+      expect((await call(server, name, args).catch((error: Error) => error)).toString()).toContain("-32602")
+    }
 
     expect((await call(server, "projects_list")).value.projects[0].name).toBe("web")
     expect((await call(server, "deploy", { project: "web", ref: "main" })).value).toMatchObject({ id: "dpl_2", state: "queued" })
