@@ -17,7 +17,7 @@ server was started in.`
 
 export const PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"]
 
-const INSTRUCTIONS = `kyora runs commands in disposable microVMs and publishes static sites.
+const INSTRUCTIONS = `kyora runs commands in disposable microVMs and publishes static pages.
 - vms_run is the one-call path: upload a local directory, run a shell command, get the output tails and exit code, optionally pull files back; the VM is destroyed after.
 - For several commands against one upload: vms_create, vms_push, vms_exec (repeat), vms_pull, then vms_destroy.
 - A VM has no network unless you ask: network "registries" reaches package registries, "open" the internet.

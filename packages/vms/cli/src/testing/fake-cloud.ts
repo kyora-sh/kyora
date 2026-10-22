@@ -11,7 +11,7 @@ export interface FakeCloud {
   requests: string[]
   buckets: Map<string, string>
   /** `bucket/key` → its bytes and content type */
-  objects: Map<string, { data: Uint8Array; type: string | null }>
+  objects: Map<string, { data: Uint8Array<ArrayBuffer>; type: string | null }>
   pages: Map<string, Page>
   /** names another account holds */
   taken: Set<string>
