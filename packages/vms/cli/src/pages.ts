@@ -1,4 +1,5 @@
-import { lstat, readdir } from "node:fs/promises"
+import { constants } from "node:fs"
+import { lstat, open, readdir, realpath } from "node:fs/promises"
 import { basename, join, relative, resolve, sep } from "node:path"
 import { parseArgs } from "node:util"
 import { ApiError, VmsClient, type Page } from "./api"
@@ -97,12 +98,13 @@ export function publishId(now = new Date(), random = crypto.getRandomValues(new 
   return `${stamp}-${Buffer.from(random).toString("hex")}`
 }
 
-/** a prefix a publish made, `<name>/<publish id>/` (or `<publish id>/` for a first one without a name): the only kind ever deleted */
+/** where a first publish without a name goes: `_` is no page's name, so its prefixes never overlap a named one's */
+const UNNAMED = "_"
+
+/** a prefix a publish made, `<name>/<publish id>/` (or `_/<publish id>/` for a first one without a name): the only kind ever deleted */
 export function publishedPrefix(prefix: string): boolean {
   const parts = prefix.split("/")
-  if (parts.at(-1) !== "") return false
-  if (parts.length === 2) return PUBLISH_ID.test(parts[0]!)
-  return parts.length === 3 && NAME.test(parts[0]!) && PUBLISH_ID.test(parts[1]!)
+  return parts.length === 3 && parts[2] === "" && (parts[0] === UNNAMED || NAME.test(parts[0]!)) && PUBLISH_ID.test(parts[1]!)
 }
 
 export interface PageFile {
@@ -138,12 +140,15 @@ export async function pageFiles(source: string): Promise<PageFile[]> {
   if (!info.isDirectory()) throw new Error(`${source} is neither a file nor a directory`)
   const files: PageFile[] = []
   let bytes = 0
+  const top = await realpath(root)
   const walk = async (dir: string): Promise<void> => {
     for (const entry of await readdir(dir, { withFileTypes: true })) {
       if (SKIP.has(entry.name)) continue
       const path = join(dir, entry.name)
       if (entry.isDirectory()) await walk(path)
       else if (entry.isFile()) {
+        // a directory swapped for a symlink while this ran leads outside: nothing from there
+        if (!(await realpath(path)).startsWith(`${top}${sep}`)) throw new Error(`${path} is not inside ${source} any more`)
         const stat = await lstat(path)
         bytes += stat.size
         const key = relative(root, path).split(sep).join("/")
@@ -185,11 +190,11 @@ export interface PublishResult {
 const isMissing = (error: unknown) => error instanceof ApiError && error.status === 404
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
-async function ensureBucket(storage: StorageClient, bucket: string): Promise<void> {
-  const { buckets } = (await (await storage.call("GET", "/v1/storage/buckets")).json()) as { buckets: Array<{ name: string }> }
+async function ensureBucket(storage: StorageClient, bucket: string, signal?: AbortSignal): Promise<void> {
+  const { buckets } = (await (await storage.call("GET", "/v1/storage/buckets", { signal })).json()) as { buckets: Array<{ name: string }> }
   if (buckets.some((entry) => entry.name === bucket)) return
   try {
-    await storage.call("POST", "/v1/storage/buckets", { json: { name: bucket } })
+    await storage.call("POST", "/v1/storage/buckets", { json: { name: bucket }, signal })
   } catch (error) {
     // made by a publish running beside this one
     if (!(error instanceof ApiError && error.status === 409)) throw error
@@ -215,26 +220,63 @@ async function inParallel<T>(items: T[], each: (item: T) => Promise<void>, signa
   if (rejected) throw rejected.reason
 }
 
-/** a file as listed, opened only if it still is that file (not since swapped for a symlink or another file) */
+/**
+ * A file's bytes as listed: opened without following a symlink, and read only if the opened file is the
+ * one listed (not one swapped in since). Read whole, through that descriptor, so nothing else is read later.
+ */
 export async function listedFile(file: PageFile): Promise<Blob> {
   if (!file.path) return new Blob([file.data!])
-  const now = await lstat(file.path).catch(() => null)
-  if (!now?.isFile() || now.dev !== file.inode?.dev || now.ino !== file.inode?.ino) throw new Error(`${file.path} changed while it was being published`)
-  return Bun.file(file.path)
+  const changed = () => new Error(`${file.path} changed while it was being published`)
+  const handle = await open(file.path, constants.O_RDONLY | constants.O_NOFOLLOW).catch(() => Promise.reject(changed()))
+  try {
+    const now = await handle.stat()
+    if (!now.isFile() || now.dev !== file.inode?.dev || now.ino !== file.inode?.ino) throw changed()
+    return new Blob([await handle.readFile()])
+  } finally {
+    await handle.close()
+  }
 }
 
-/** a refusal from kyora cloud itself: the page was not switched */
-const refused = (error: unknown) => error instanceof ApiError && error.status >= 400 && error.status < 500
+/** a refusal from kyora cloud itself: the page was not switched (a 408 is the way's, not kyora cloud's) */
+const refused = (error: unknown) => error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 408
+
+/** how long deleting old files may take, apart from the publish's own cancellation (the switch already happened) */
+const CLEANUP_MS = 5 * 60_000
 
 /** every object under `prefix`, deleted; returns how many */
-export async function deletePrefix(storage: StorageClient, bucket: string, prefix: string): Promise<number> {
-  const { objects } = await storage.list(bucket, prefix, null, false)
+export async function deletePrefix(storage: StorageClient, bucket: string, prefix: string, signal: AbortSignal = AbortSignal.timeout(CLEANUP_MS)): Promise<number> {
+  const { objects } = await storage.list(bucket, prefix, null, false, signal)
   await inParallel(objects, async (object) => {
-    await storage.call("DELETE", storage.object(bucket, object.key)).catch((error) => {
+    await storage.call("DELETE", storage.object(bucket, object.key), { signal }).catch((error) => {
       if (!isMissing(error)) throw error
     })
-  })
+  }, signal)
   return objects.length
+}
+
+/** whether any page serves files under `prefix` (or a prefix it is under): those are never deleted; undefined when the pages can't be listed */
+async function served(api: PagesDeps["api"], bucket: string, prefix: string): Promise<boolean | undefined> {
+  const pages = await api.pages().catch(() => undefined)
+  return pages?.some((page) => page.bucket === bucket && (page.prefix.startsWith(prefix) || prefix.startsWith(page.prefix)))
+}
+
+/** `prefix`'s files deleted if no page serves them; null when they were kept, and why is told */
+async function deleteUnserved(deps: PagesDeps, bucket: string, prefix: string): Promise<number | null> {
+  if (!publishedPrefix(prefix)) {
+    deps.progress?.(`kept ${bucket}/${prefix}: not a prefix kyora publish made`)
+    return null
+  }
+  const used = await served(deps.api, bucket, prefix)
+  if (used !== false) {
+    deps.progress?.(`kept ${bucket}/${prefix}: ${used ? "a page serves files there" : "could not check that no page serves them"}`)
+    return null
+  }
+  try {
+    return await deletePrefix(deps.storage, bucket, prefix)
+  } catch (error) {
+    deps.progress?.(`the files in ${bucket}/${prefix} were not all deleted: ${message(error)}`)
+    return null
+  }
 }
 
 export function checkName(name: string): string {
@@ -262,8 +304,8 @@ export async function publishPage(deps: PagesDeps, options: PublishOptions): Pro
   const bytes = files.reduce((total, file) => total + file.size, 0)
   const name = options.name === undefined ? null : checkName(options.name)
   const previous = name ? await ownPage(api, name) : null
-  await ensureBucket(storage, bucket)
-  const prefix = `${name ? `${name}/` : ""}${publishId()}/`
+  await ensureBucket(storage, bucket, options.signal)
+  const prefix = `${name ?? UNNAMED}/${publishId()}/`
   deps.progress?.(`uploading ${files.length} file${files.length === 1 ? "" : "s"} (${formatBytes(bytes)}) to ${bucket}/${prefix}`)
   const discard = async (error: unknown): Promise<never> => {
     await deletePrefix(storage, bucket, prefix).catch(() => deps.progress?.(`could not delete ${bucket}/${prefix} after the failed publish`))
@@ -272,7 +314,7 @@ export async function publishPage(deps: PagesDeps, options: PublishOptions): Pro
   // nothing points at a fresh prefix until the switch: a failed upload deletes it
   try {
     await inParallel(files, async (file) => {
-      await storage.put(bucket, `${prefix}${file.key}`, await listedFile(file), file.type)
+      await storage.put(bucket, `${prefix}${file.key}`, await listedFile(file), file.type, options.signal)
     }, options.signal)
     options.signal?.throwIfAborted()
   } catch (error) {
@@ -283,21 +325,15 @@ export async function publishPage(deps: PagesDeps, options: PublishOptions): Pro
     page = await api.pageCreate({ ...(name ? { name } : { hint: basename(resolve(options.source)) }), bucket, prefix, ...(options.public ? { public: true } : {}), ...(options.spa ? { spa: true } : {}) })
   } catch (error) {
     if (refused(error)) return discard(error)
-    // no answer, or not one to go by: the switch may have happened, and then these files are live
-    const live = await api.pages().then((pages) => pages.find((one) => one.bucket === bucket && one.prefix === prefix) ?? null, () => undefined)
-    if (live === undefined) throw new Error(`${message(error)}; the page may or may not have switched to ${bucket}/${prefix}, which is kept (kyora pages ls tells)`)
-    if (live === null) return discard(error)
+    // no answer, or not one to go by: the switch may have happened, or may still happen, so the files stay
+    const live = await api.pages().then((pages) => pages.find((one) => one.bucket === bucket && one.prefix === prefix), () => undefined)
+    if (!live) throw new Error(`${message(error)}; the page may still switch to ${bucket}/${prefix}, so its files are kept (\`kyora pages ls\` shows where each page points)`)
     page = live
   }
   let replaced: PublishResult["replaced"] = null
   if (previous && (previous.bucket !== page.bucket || previous.prefix !== page.prefix)) {
-    if (publishedPrefix(previous.prefix)) {
-      try {
-        replaced = { bucket: previous.bucket, prefix: previous.prefix, deleted: await deletePrefix(storage, previous.bucket, previous.prefix) }
-      } catch (error) {
-        deps.progress?.(`the previous files in ${previous.bucket}/${previous.prefix} were not deleted: ${message(error)}`)
-      }
-    } else deps.progress?.(`kept ${previous.bucket}/${previous.prefix}, which the page served before: not a prefix kyora publish made`)
+    const deleted = await deleteUnserved(deps, previous.bucket, previous.prefix)
+    if (deleted !== null) replaced = { bucket: previous.bucket, prefix: previous.prefix, deleted }
   }
   return { page, files: files.length, bytes, replaced }
 }
@@ -314,11 +350,8 @@ export async function removePage(deps: PagesDeps, name: string, keepFiles = fals
   const page = await deps.api.page(checkName(name))
   await deps.api.pageRemove(page.name)
   if (keepFiles) return { name: page.name, removed: true, files: null }
-  if (!publishedPrefix(page.prefix)) {
-    deps.progress?.(`kept ${page.bucket}/${page.prefix}: not a prefix kyora publish made`)
-    return { name: page.name, removed: true, files: null }
-  }
-  return { name: page.name, removed: true, files: { bucket: page.bucket, prefix: page.prefix, deleted: await deletePrefix(deps.storage, page.bucket, page.prefix) } }
+  const deleted = await deleteUnserved(deps, page.bucket, page.prefix)
+  return { name: page.name, removed: true, files: deleted === null ? null : { bucket: page.bucket, prefix: page.prefix, deleted } }
 }
 
 /** the clients pages use: the login's token, for the pages API and the storage it uploads to */

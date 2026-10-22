@@ -1,6 +1,6 @@
-import { format } from "node:util"
+import { Console } from "node:console"
 import { VERSION } from "./api"
-import { kyoraTools, toolContext, ToolInputError, type Tool, type ToolContext } from "./mcp-tools"
+import { createsInFlight, kyoraTools, toolContext, ToolInputError, type Tool, type ToolContext } from "./mcp-tools"
 import { note } from "./output"
 import { knownSecrets, redact } from "./redact"
 
@@ -225,33 +225,64 @@ export function validate(schema: Schema, value: unknown, path = ""): string | nu
   }
 }
 
+/** what holds stderr back until a line is whole, so a credential written in pieces is still redacted whole */
+const STDERR_HOLD = 64 * 1024
+
+export interface Guard {
+  /** writes one frame to the real stdout */
+  send: (text: string) => Promise<void>
+  /** writes out what stderr still holds (a last line without its newline) */
+  flush: () => void
+}
+
 /**
- * From here on stdout is the transport's alone: console output and process.stdout.write go to stderr, so
- * nothing a library prints can corrupt a frame, and everything on stderr goes through `clean` (redaction).
- * Returns the writer for the frames.
+ * From here on stdout is the transport's alone: process.stdout.write and every console method go to stderr,
+ * so nothing a library prints can corrupt a frame. stderr is written a whole line at a time, through `clean`.
  */
-export function guardStdout(clean: (text: string) => string = (text) => text): (text: string) => Promise<void> {
+export function guardStdout(clean: (text: string) => string = (text) => text): Guard {
   const write = process.stdout.write.bind(process.stdout)
-  const stderr = process.stderr.write.bind(process.stderr) as (...args: unknown[]) => boolean
-  process.stderr.write = ((chunk: unknown, ...rest: unknown[]) => stderr(typeof chunk === "string" ? clean(chunk) : chunk instanceof Uint8Array ? clean(new TextDecoder().decode(chunk)) : chunk, ...rest)) as typeof process.stderr.write
+  const stderr = process.stderr.write.bind(process.stderr) as (chunk: string) => boolean
+  let held = ""
+  const flushLines = (all: boolean) => {
+    const end = all ? held.length : held.lastIndexOf("\n") + 1
+    if (end <= 0) return
+    stderr(clean(held.slice(0, end)))
+    held = held.slice(end)
+  }
+  process.stderr.write = ((chunk: unknown, ...rest: unknown[]) => {
+    held += typeof chunk === "string" ? chunk : chunk instanceof Uint8Array ? new TextDecoder().decode(chunk) : String(chunk)
+    flushLines(held.length > STDERR_HOLD)
+    const callback = rest.find((arg) => typeof arg === "function") as (() => void) | undefined
+    callback?.()
+    return true
+  }) as typeof process.stderr.write
   process.stdout.write = ((...args: unknown[]) => (process.stderr.write as (...args: unknown[]) => boolean)(...args)) as typeof process.stdout.write
-  const toStderr = (...args: unknown[]) => void process.stderr.write(`${format(...args)}\n`)
-  for (const method of ["log", "info", "debug", "warn", "error", "dir", "trace"] as const) (console as unknown as Record<string, unknown>)[method] = toStderr
-  return (text) => new Promise((resolve) => {
-    try {
-      write(text, () => resolve())
-    } catch {
-      resolve()
-    }
-  })
+  // a console of its own on stderr, for every method: Bun's own write to the file descriptors directly
+  const replacement = new Console({ stdout: process.stderr, stderr: process.stderr })
+  for (const method of Object.keys(console) as Array<keyof Console>) {
+    const own = (replacement as unknown as Record<string, unknown>)[method]
+    if (typeof own === "function") (console as unknown as Record<string, unknown>)[method] = own.bind(replacement)
+  }
+  return {
+    send: (text) => new Promise((resolve) => {
+      try {
+        write(text, () => resolve())
+      } catch {
+        resolve()
+      }
+    }),
+    flush: () => flushLines(true),
+  }
 }
 
 /** the most shutdown waits for calls to finish cleaning up (destroying their VMs) */
 const SHUTDOWN_MS = 30_000
+/** with a create still unanswered: past its own timeout (120 s), so the VM it makes is destroyed */
+const SHUTDOWN_CREATING_MS = 150_000
 
 /** serves until the client closes stdin (or SIGTERM, SIGINT), then cancels the calls still running and lets them clean up */
 export async function mcpMain(): Promise<number> {
-  const send = guardStdout((text) => redact(text))
+  const { send, flush } = guardStdout((text) => redact(text))
   const server = new McpServer({ tools: kyoraTools(), context: (signal) => toolContext(signal), secrets: () => knownSecrets() })
   let writing = Promise.resolve()
   const reply = (messages: Array<Frame | Frame[]>) => {
@@ -288,11 +319,13 @@ export async function mcpMain(): Promise<number> {
   // no new work from here on
   open = false
   reader.cancel().catch(() => {})
-  const deadline = Date.now() + SHUTDOWN_MS
-  await server.shutdown("the MCP client went away", SHUTDOWN_MS)
+  const wait = createsInFlight() > 0 ? SHUTDOWN_CREATING_MS : SHUTDOWN_MS
+  const deadline = Date.now() + wait
+  await server.shutdown("the MCP client went away", wait)
   const left = () => Bun.sleep(Math.max(0, deadline - Date.now()))
   await Promise.race([Promise.allSettled([...handling]), left()])
   await Promise.race([writing, Bun.sleep(5_000)])
+  flush()
   process.off("SIGTERM", signalled)
   process.off("SIGINT", signalled)
   return 0

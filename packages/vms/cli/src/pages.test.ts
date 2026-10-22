@@ -50,8 +50,8 @@ describe("pages", () => {
     const id = publishId(new Date("2026-10-22T02:40:05.123Z"), Uint8Array.from([1, 2, 3, 4]))
     expect(id).toBe("20261022t024005z-01020304")
     expect(publishedPrefix(`report/${id}/`)).toBe(true)
-    expect(publishedPrefix(`${id}/`)).toBe(true)
-    for (const prefix of ["", "/", "report/", `report/${id}`, `a/b/${id}/`, `Report/${id}/`, `report/${id}/x/`]) expect(publishedPrefix(prefix)).toBe(false)
+    expect(publishedPrefix(`_/${id}/`)).toBe(true)
+    for (const prefix of ["", "/", `${id}/`, `${id}/${id}/x/`, "report/", `report/${id}`, `a/b/${id}/`, `Report/${id}/`, `report/${id}/x/`]) expect(publishedPrefix(prefix)).toBe(false)
   })
 
   test("a directory goes up without .git, each file with its content type, and the page points at it", async () => {
@@ -103,6 +103,18 @@ describe("pages", () => {
     expect(cloud.objects.has("pages/index.html")).toBe(true)
   })
 
+  test("files another page serves are never deleted", async () => {
+    const dir = await site()
+    const first = await publishPage(deps, { source: dir, name: "one" })
+    // a page pointed at the same files through the API
+    cloud.pages.set("two", { ...first.page, name: "two", url: "https://two.kyora.page" })
+    await publishPage(deps, { source: dir, name: "one" })
+    expect(keys(`pages/${first.page.prefix}`)).toHaveLength(5)
+    expect(notes.join("\n")).toContain("a page serves files there")
+    expect((await removePage(deps, "two")).files).not.toBeNull()
+    expect(keys(`pages/${first.page.prefix}`)).toEqual([])
+  })
+
   test("a refused publish deletes its own upload and leaves the page as it was", async () => {
     const dir = await site()
     const first = await publishPage(deps, { source: dir, name: "report" })
@@ -112,7 +124,7 @@ describe("pages", () => {
     expect(cloud.pages.get("report")!.prefix).toBe(first.page.prefix)
   })
 
-  test("a switch whose answer was lost: the files stay when the page points at them, else they go", async () => {
+  test("a switch whose answer was lost keeps its files, whether or not the page points at them yet", async () => {
     const dir = await site()
     const first = await publishPage(deps, { source: dir, name: "report" })
     cloud.pageLostAnswer = 502
@@ -121,11 +133,12 @@ describe("pages", () => {
     expect(cloud.pages.get("report")!.prefix).toBe(second.page.prefix)
     expect(keys(`pages/${second.page.prefix}`)).toHaveLength(5)
     expect(keys(`pages/${first.page.prefix}`)).toEqual([])
-    // a 5xx that did not switch it: the upload is deleted, the page keeps serving
+    // a 5xx with no switch to be seen: it may still come, so the upload stays too
     cloud.pageLostAnswer = null
     cloud.pageFailure = { status: 500, error: "internal", message: "something broke" }
-    await expect(publishPage(deps, { source: dir, name: "report" })).rejects.toThrow("something broke")
-    expect(keys("pages/")).toEqual(keys(`pages/${second.page.prefix}`))
+    await expect(publishPage(deps, { source: dir, name: "report" })).rejects.toThrow("something broke; the page may still switch")
+    expect(keys("pages/report/")).toHaveLength(10)
+    expect(cloud.pages.get("report")!.prefix).toBe(second.page.prefix)
   })
 
   test("a failed upload stops the rest and leaves nothing behind", async () => {
@@ -153,7 +166,7 @@ describe("pages", () => {
     expect(cloud.requests.filter((line) => line.startsWith("GET /v1/pages/"))).toEqual([])
     expect(first.page.name).toMatch(/^weekly-report-[0-9a-f]{4}$/)
     expect(publishedPrefix(first.page.prefix)).toBe(true)
-    expect(first.page.prefix).toMatch(/^\d{8}t\d{6}z-[0-9a-f]{8}\/$/)
+    expect(first.page.prefix).toMatch(/^_\/\d{8}t\d{6}z-[0-9a-f]{8}\/$/)
     const second = await publishPage(deps, { source: dir })
     expect(second.page.name).not.toBe(first.page.name)
     expect(cloud.pages.get(first.page.name)!.prefix).toBe(first.page.prefix)

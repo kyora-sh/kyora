@@ -71,6 +71,8 @@ interface CallOptions {
   json?: unknown
   body?: BodyInit
   headers?: Record<string, string>
+  /** gives up on the request (and its answer's body) when aborted */
+  signal?: AbortSignal
 }
 
 export class StorageClient {
@@ -89,8 +91,9 @@ export class StorageClient {
     }
     let response: Response
     try {
-      response = await this.fetcher(`${this.url}${path}`, { method, headers, body, redirect: "manual" })
+      response = await this.fetcher(`${this.url}${path}`, { method, headers, body, redirect: "manual", signal: options.signal })
     } catch (error) {
+      if (options.signal?.aborted) throw options.signal.reason ?? error
       throw new ApiError(`storage: can't reach ${this.url} (${error instanceof Error ? error.message : String(error)})`, 0)
     }
     if (response.ok) return response
@@ -103,30 +106,30 @@ export class StorageClient {
   }
 
   /** a file (or stdin's bytes) in one PUT, or in parts when it is larger than one may be */
-  async put(bucket: string, key: string, data: Blob, contentType: string | null): Promise<{ key: string; size: number; etag: string }> {
+  async put(bucket: string, key: string, data: Blob, contentType: string | null, signal?: AbortSignal): Promise<{ key: string; size: number; etag: string }> {
     const type: Record<string, string> = contentType ? { "content-type": contentType } : {}
     if (data.size <= SINGLE_PUT) {
-      return (await (await this.call("PUT", this.object(bucket, key), { body: data, headers: { "content-length": String(data.size), ...type } })).json()) as { key: string; size: number; etag: string }
+      return (await (await this.call("PUT", this.object(bucket, key), { body: data, headers: { "content-length": String(data.size), ...type }, signal })).json()) as { key: string; size: number; etag: string }
     }
-    const started = (await (await this.call("POST", this.object(bucket, key, "?uploads"), { headers: type })).json()) as { uploadId: string; maxPartBytes: number }
+    const started = (await (await this.call("POST", this.object(bucket, key, "?uploads"), { headers: type, signal })).json()) as { uploadId: string; maxPartBytes: number }
     const size = Math.min(PART_SIZE, started.maxPartBytes)
     const query = (extra: string) => `?uploadId=${encodeURIComponent(started.uploadId)}${extra}`
     try {
       const parts: Array<{ partNumber: number; etag: string }> = []
       for (let offset = 0, partNumber = 1; offset < data.size; offset += size, partNumber++) {
         const chunk = data.slice(offset, Math.min(offset + size, data.size))
-        const answer = (await (await this.call("PUT", this.object(bucket, key, query(`&partNumber=${partNumber}`)), { body: chunk, headers: { "content-length": String(chunk.size) } })).json()) as { etag: string }
+        const answer = (await (await this.call("PUT", this.object(bucket, key, query(`&partNumber=${partNumber}`)), { body: chunk, headers: { "content-length": String(chunk.size) }, signal })).json()) as { etag: string }
         parts.push({ partNumber, etag: answer.etag })
       }
-      return (await (await this.call("POST", this.object(bucket, key, query("")), { json: { parts } })).json()) as { key: string; size: number; etag: string }
+      return (await (await this.call("POST", this.object(bucket, key, query("")), { json: { parts }, signal })).json()) as { key: string; size: number; etag: string }
     } catch (error) {
-      await this.call("DELETE", this.object(bucket, key, query(""))).catch(() => {})
+      await this.call("DELETE", this.object(bucket, key, query("")), { signal: AbortSignal.timeout(30_000) }).catch(() => {})
       throw error
     }
   }
 
   /** every object under a prefix, page after page (up to `limit`) */
-  async list(bucket: string, prefix: string, limit: number | null, delimiter: boolean): Promise<{ objects: Array<{ key: string; size: number; lastModified: string }>; prefixes: string[] }> {
+  async list(bucket: string, prefix: string, limit: number | null, delimiter: boolean, signal?: AbortSignal): Promise<{ objects: Array<{ key: string; size: number; lastModified: string }>; prefixes: string[] }> {
     const objects: Array<{ key: string; size: number; lastModified: string }> = []
     const prefixes: string[] = []
     let cursor: string | null = null
@@ -134,7 +137,7 @@ export class StorageClient {
       const query = new URLSearchParams({ prefix, limit: String(Math.min(1000, limit === null ? 1000 : limit - objects.length)) })
       if (cursor) query.set("cursor", cursor)
       if (delimiter) query.set("delimiter", "/")
-      const page = (await (await this.call("GET", `/v1/storage/buckets/${bucket}/o?${query}`)).json()) as { objects: typeof objects; prefixes: string[]; cursor: string | null }
+      const page = (await (await this.call("GET", `/v1/storage/buckets/${bucket}/o?${query}`, { signal })).json()) as { objects: typeof objects; prefixes: string[]; cursor: string | null }
       objects.push(...page.objects)
       prefixes.push(...page.prefixes)
       cursor = page.cursor

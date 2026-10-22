@@ -384,17 +384,29 @@ describe("kyora mcp: the process", () => {
 
   test("after guardStdout, console output and process.stdout.write go to stderr, redacted", async () => {
     const script = `import { guardStdout, redact } from ${JSON.stringify(join(import.meta.dir, "mcp.ts"))}
-const send = guardStdout((text) => redact(text, []))
+const { send, flush } = guardStdout((text) => redact(text, []))
 console.log("noise")
 console.info("info")
 process.stdout.write("more noise\\n")
 console.error("leak kyora_abcdefghijklmnopqrstuvwxyz")
-process.stderr.write("note kvms_abcdefghijklmnopqrstuvwxyz\\n")
-await send('{"jsonrpc":"2.0","id":1,"result":{}}\\n')`
+process.stderr.write("note kvms_abcd")
+process.stderr.write("efghijklmnopqrstuvwxyz\\n")
+console.table([{ token: "kysk_abcdefghijklmnopqrstuvwxyz" }])
+console.count("calls")
+console.assert(false, "kys_abcdefghijklmnopqrstuvwxyz")
+process.stderr.write("last")
+await send('{"jsonrpc":"2.0","id":1,"result":{}}\\n')
+flush()`
     const file = join(root, "guard.ts")
     await Bun.write(file, script)
     const proc = Bun.spawnSync({ cmd: [process.execPath, "--no-env-file", file], stdout: "pipe", stderr: "pipe" })
     expect(proc.stdout.toString()).toBe('{"jsonrpc":"2.0","id":1,"result":{}}\n')
-    expect(proc.stderr.toString()).toBe("noise\ninfo\nmore noise\nleak kyora_[redacted]\nnote kvms_[redacted]\n")
+    const stderr = proc.stderr.toString()
+    expect(stderr.startsWith("noise\ninfo\nmore noise\nleak kyora_[redacted]\nnote kvms_[redacted]\n")).toBe(true)
+    expect(stderr).toContain("kysk_[redacted]")
+    expect(stderr).toContain("calls: 1")
+    expect(stderr).toContain("kys_[redacted]")
+    expect(stderr.endsWith("last")).toBe(true)
+    expect(stderr).not.toMatch(/(kyora|kvms|kysk|kys)_abcdefghijkl/)
   })
 })

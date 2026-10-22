@@ -189,6 +189,23 @@ export class Tail {
 /** how long an upload or a download of a VM call may take before it is given up on */
 const TRANSFER_MS = 30 * 60_000
 const transfer = (signal: AbortSignal) => AbortSignal.any([signal, AbortSignal.timeout(TRANSFER_MS)])
+/** a storage request that moves no file */
+const STORAGE_MS = 2 * 60_000
+const quick = (signal: AbortSignal) => AbortSignal.any([signal, AbortSignal.timeout(STORAGE_MS)])
+
+/** creates sent and not answered yet: their VMs are destroyed once they come, so shutdown waits for them */
+let creating = 0
+export const createsInFlight = (): number => creating
+
+/** a create that counts as in flight until it is answered */
+async function createVm(api: VmsClient, spec: CreateSpec, args: Record<string, unknown>, signal: AbortSignal) {
+  creating++
+  try {
+    return await api.create(spec, { wait: (args.wait_seconds as number | undefined) ?? 300, graceMs: timeoutGraceMs(), signal })
+  } finally {
+    creating--
+  }
+}
 
 /** a command run to its end (or its timeout), with what it printed kept to a tail of each stream */
 async function execute(api: VmsClient, id: string, request: ExecRequest, args: Record<string, unknown>, signal: AbortSignal) {
@@ -223,11 +240,12 @@ function pulled(result: PullResult) {
   }
 }
 
-async function pullAll(api: VmsClient, id: string, paths: string[], to: string, signal: AbortSignal) {
+async function pullAll(api: VmsClient, id: string, paths: string[], to: string, cancel: AbortSignal) {
+  const signal = transfer(cancel)
   const results: unknown[] = []
   for (const path of paths) {
     try {
-      results.push(pulled(await pull(api, id, path, to, transfer(signal))))
+      results.push(pulled(await pull(api, id, path, to, signal)))
     } catch (error) {
       if (signal.aborted) throw error
       results.push({ path, error: error instanceof Error ? error.message : String(error) })
@@ -294,7 +312,7 @@ export function kyoraTools(): Tool[] {
       handler: async (args, context) => {
         const spec = specOf(args, context)
         context.signal.throwIfAborted()
-        const sandbox = await context.api.create(spec, { wait: (args.wait_seconds as number | undefined) ?? 300, graceMs: timeoutGraceMs(), signal: context.signal })
+        const sandbox = await createVm(context.api, spec, args, context.signal)
         // the create itself is not cut short (its sandbox would be lost): one that arrives after a cancel is destroyed
         if (context.signal.aborted) {
           await context.api.destroy(sandbox.id).catch((error) => context.progress(`could not destroy ${sandbox.id}: ${error instanceof Error ? error.message : String(error)}`))
@@ -340,7 +358,7 @@ export function kyoraTools(): Tool[] {
         let id: string | null = null
         let kept = false
         try {
-          const sandbox = await api.create(spec, { wait: (args.wait_seconds as number | undefined) ?? 300, graceMs: timeoutGraceMs(), signal })
+          const sandbox = await createVm(api, spec, args, signal)
           id = sandbox.id
           const pushed = await push(api, id, listing, WORK, { signal: transfer(signal) })
           const result = await execute(api, id, request, args, signal)
@@ -357,7 +375,7 @@ export function kyoraTools(): Tool[] {
       title: "Upload a directory to a VM",
       description: "Upload a local directory into a VM (git-aware like vms_run), to dest (default /work).",
       inputSchema: object({ sandbox: SANDBOX, dir: string("the local directory (default: the server's working directory)"), dest: string("where in the VM, under /work or /tmp (default /work)"), git: boolean("false: upload every file, ignoring .gitignore (default true)") }, ["sandbox"]),
-      annotations: WRITE,
+      annotations: { ...WRITE, destructiveHint: true },
       handler: async (args, context) => {
         const dest = input(() => remotePath(text(args.dest) ?? WORK))
         const id = await resolveTarget(context.api, args.sandbox as string)
@@ -467,7 +485,7 @@ export function kyoraTools(): Tool[] {
       title: "Deploy to production",
       description: "Start a production deployment of a project (default: the one `kyora link` linked this checkout to) at its production branch, a ref or a commit. Returns the deployment; deployment_logs follows it.",
       inputSchema: object({ project: string("project name or id"), ref: string("a branch or tag"), sha: string("a full 40-character commit SHA") }),
-      annotations: WRITE,
+      annotations: { ...WRITE, destructiveHint: true },
       handler: async (args, context) => {
         if (args.ref !== undefined && args.sha !== undefined) throw new ToolInputError("give ref or sha, not both")
         if (args.sha !== undefined && !/^[a-f0-9]{40}$/.test(args.sha as string)) throw new ToolInputError("sha must be a full commit SHA")
@@ -575,7 +593,7 @@ export function kyoraTools(): Tool[] {
       description: "Your private object storage buckets.",
       inputSchema: object({}),
       annotations: READ,
-      handler: async (_args, { storage }) => (await storage.call("GET", "/v1/storage/buckets")).json(),
+      handler: async (_args, { storage, signal }) => (await storage.call("GET", "/v1/storage/buckets", { signal: quick(signal) })).json(),
     },
     {
       name: "storage_ls",
@@ -583,20 +601,20 @@ export function kyoraTools(): Tool[] {
       description: "The objects in a bucket, under a prefix.",
       inputSchema: object({ bucket: string("the bucket"), prefix: string("only keys starting with this"), limit: integer("at most this many (default 1000)", 1, 10_000), delimiter: boolean("group keys by / into prefixes, like directories") }, ["bucket"]),
       annotations: READ,
-      handler: async (args, { storage }) => storage.list(args.bucket as string, text(args.prefix) ?? "", (args.limit as number | undefined) ?? 1000, Boolean(args.delimiter)),
+      handler: async (args, { storage, signal }) => storage.list(args.bucket as string, text(args.prefix) ?? "", (args.limit as number | undefined) ?? 1000, Boolean(args.delimiter), quick(signal)),
     },
     {
       name: "storage_put",
       title: "Upload an object",
       description: "Upload a local file, or the given text, to a bucket under key.",
       inputSchema: object({ bucket: string("the bucket"), key: string("the object's key"), file: string("a local file to upload"), content: string("text to upload instead of a file"), content_type: string("its content type (default: from the file's extension)") }, ["bucket", "key"]),
-      annotations: WRITE,
+      annotations: { ...WRITE, destructiveHint: true },
       handler: async (args, context) => {
         if ((args.file === undefined) === (args.content === undefined)) throw new ToolInputError("give file or content, one of them")
         const file = args.file === undefined ? null : Bun.file(local(context, args.file as string))
         if (file && !(await file.exists())) throw new ToolInputError(`no such file: ${args.file}`)
         const type = text(args.content_type) ?? (file ? file.type.split(";")[0] || null : "text/plain; charset=utf-8")
-        return context.storage.put(args.bucket as string, args.key as string, file ?? new Blob([args.content as string]), type)
+        return context.storage.put(args.bucket as string, args.key as string, file ?? new Blob([args.content as string]), type, transfer(context.signal))
       },
     },
     {
@@ -606,7 +624,7 @@ export function kyoraTools(): Tool[] {
       inputSchema: object({ bucket: string("the bucket"), key: string("the object's key"), file: string("save it to this local path, overwriting what is there"), max_bytes: integer("the most returned as text (default 100000)", 1, 1_000_000) }, ["bucket", "key"]),
       annotations: { ...WRITE, destructiveHint: true },
       handler: async (args, context) => {
-        const response = await context.storage.call("GET", context.storage.object(args.bucket as string, args.key as string))
+        const response = await context.storage.call("GET", context.storage.object(args.bucket as string, args.key as string), { signal: transfer(context.signal) })
         if (args.file !== undefined) {
           const path = local(context, args.file as string)
           return { key: args.key, file: path, size: await Bun.write(path, response) }
@@ -642,8 +660,8 @@ export function kyoraTools(): Tool[] {
       description: "Delete an object from a bucket.",
       inputSchema: object({ bucket: string("the bucket"), key: string("the object's key") }, ["bucket", "key"]),
       annotations: DESTROY,
-      handler: async (args, { storage }) => {
-        await storage.call("DELETE", storage.object(args.bucket as string, args.key as string))
+      handler: async (args, { storage, signal }) => {
+        await storage.call("DELETE", storage.object(args.bucket as string, args.key as string), { signal: quick(signal) })
         return { key: args.key, deleted: true }
       },
     },
@@ -653,15 +671,15 @@ export function kyoraTools(): Tool[] {
       description: "A URL for one object, valid for ttl_seconds (at most 900): a download, or with put an upload.",
       inputSchema: object({ bucket: string("the bucket"), key: string("the object's key"), put: boolean("a URL to upload with PUT"), ttl_seconds: integer("how long it is valid (default 300)", 1, 900), length: integer("put: the exact length to sign", 0, 5_000_000_000), inline: boolean("a download shown in the browser (media) instead of saved") }, ["bucket", "key"]),
       annotations: READ,
-      handler: async (args, { storage }) => (await storage.call("POST", `/v1/storage/buckets/${args.bucket as string}/presign`, { json: presignRequest(args.key as string, { put: Boolean(args.put), ttl: (args.ttl_seconds as number | undefined) ?? null, length: (args.length as number | undefined) ?? null, inline: Boolean(args.inline) }) })).json(),
+      handler: async (args, { storage, signal }) => (await storage.call("POST", `/v1/storage/buckets/${args.bucket as string}/presign`, { json: presignRequest(args.key as string, { put: Boolean(args.put), ttl: (args.ttl_seconds as number | undefined) ?? null, length: (args.length as number | undefined) ?? null, inline: Boolean(args.inline) }), signal: quick(signal) })).json(),
     },
     {
       name: "publish",
       title: "Publish a page",
       description: "Publish a local directory or file (an HTML report, a built app, screenshots) as a static page, and return its URL. Private (only the account's people, signed in, can open it) unless public. Publishing again with the same name replaces it at once. A single file gets an index.html that redirects to it.",
       inputSchema: object({ path: string("the local directory or file", { minLength: 1 }), name: string("the page's name, the first label of its URL (default: made from the directory's name); yours to reuse"), public: boolean("anyone with the URL can open it (default false)"), spa: boolean("serve index.html for paths with no file (single-page apps)"), bucket: string("the storage bucket the files go to (default pages)") }, ["path"]),
-      annotations: WRITE,
-      handler: async (args, context) => publishPage(context.pages, { source: local(context, args.path as string), name: text(args.name), public: Boolean(args.public), spa: Boolean(args.spa), bucket: text(args.bucket), signal: context.signal }),
+      annotations: { ...WRITE, destructiveHint: true },
+      handler: async (args, context) => publishPage(context.pages, { source: local(context, args.path as string), name: text(args.name), public: Boolean(args.public), spa: Boolean(args.spa), bucket: text(args.bucket), signal: transfer(context.signal) }),
     },
     {
       name: "pages_list",
