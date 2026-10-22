@@ -135,6 +135,21 @@ describe("kyora mcp: the tools", () => {
     }
   })
 
+  test("a cancelled vms_run destroys its VM at once, while its upload still hangs", async () => {
+    const stuck = await startFakePlatform({ part: () => new Promise<Response | null>(() => {}) })
+    try {
+      const server = serverFor(stuck.url)
+      await write(root, "stuck/a.txt", "a")
+      const pending = server.line(JSON.stringify({ jsonrpc: "2.0", id: "run-1", method: "tools/call", params: { name: "vms_run", arguments: { dir: "stuck", git: false, command: "true" } } }))
+      await waitFor(() => stuck.partPuts.length > 0, 5_000, "the upload")
+      await server.line(JSON.stringify({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: "run-1" } }))
+      await waitFor(() => stuck.destroyed.length === 1, 3_000, "the destroy")
+      expect(await pending).toEqual([])
+    } finally {
+      await stuck.stop()
+    }
+  }, 20_000)
+
   test("vms_run uploads the directory, runs, pulls `out` back and destroys the VM; vms_push and vms_pull", async () => {
     const server = serverFor(platform.url)
     const project = join(root, "project")
@@ -394,6 +409,9 @@ process.stderr.write("efghijklmnopqrstuvwxyz\\n")
 console.table([{ token: "kysk_abcdefghijklmnopqrstuvwxyz" }])
 console.count("calls")
 console.assert(false, "kys_abcdefghijklmnopqrstuvwxyz")
+console.write("raw kyora_abcdefghijklmnopqrstuvwxyz\\n")
+process.stderr.write("x".repeat(70000) + "kyora_abcd")
+process.stderr.write("efghijklmnopqrstuvwxyz\\n")
 process.stderr.write("last")
 await send('{"jsonrpc":"2.0","id":1,"result":{}}\\n')
 flush()`
@@ -406,6 +424,9 @@ flush()`
     expect(stderr).toContain("kysk_[redacted]")
     expect(stderr).toContain("calls: 1")
     expect(stderr).toContain("kys_[redacted]")
+    expect(stderr).toContain("raw kyora_[redacted]")
+    expect(stderr).toContain("(a line over 64 KB was left out)")
+    expect(stderr).not.toContain("xxxxxxxxxx")
     expect(stderr.endsWith("last")).toBe(true)
     expect(stderr).not.toMatch(/(kyora|kvms|kysk|kys)_abcdefghijkl/)
   })

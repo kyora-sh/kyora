@@ -1,6 +1,6 @@
 import { constants } from "node:fs"
 import { lstat, open, readdir, realpath } from "node:fs/promises"
-import { basename, join, relative, resolve, sep } from "node:path"
+import { basename, dirname, join, relative, resolve, sep } from "node:path"
 import { parseArgs } from "node:util"
 import { ApiError, VmsClient, type Page } from "./api"
 import { loadConfig } from "./config"
@@ -148,8 +148,10 @@ export async function pageFiles(source: string): Promise<PageFile[]> {
       if (entry.isDirectory()) await walk(path)
       else if (entry.isFile()) {
         // a directory swapped for a symlink while this ran leads outside: nothing from there
-        if (!(await realpath(path)).startsWith(`${top}${sep}`)) throw new Error(`${path} is not inside ${source} any more`)
         const stat = await lstat(path)
+        const real = await realpath(path)
+        const there = await lstat(real)
+        if (!real.startsWith(`${top}${sep}`) || there.dev !== stat.dev || there.ino !== stat.ino) throw new Error(`${path} is not inside ${source} any more`)
         bytes += stat.size
         const key = relative(root, path).split(sep).join("/")
         files.push({ key, path, inode: { dev: stat.dev, ino: stat.ino }, size: stat.size, type: contentType(key) })
@@ -224,14 +226,25 @@ async function inParallel<T>(items: T[], each: (item: T) => Promise<void>, signa
  * A file's bytes as listed: opened without following a symlink, and read only if the opened file is the
  * one listed (not one swapped in since). Read whole, through that descriptor, so nothing else is read later.
  */
-export async function listedFile(file: PageFile): Promise<Blob> {
+export async function listedFile(file: PageFile, root?: string): Promise<Blob> {
   if (!file.path) return new Blob([file.data!])
   const changed = () => new Error(`${file.path} changed while it was being published`)
+  // no directory on the way from the source to it may have become a symlink
+  if (root) for (let dir = dirname(file.path); dir.startsWith(root) && dir !== root; dir = dirname(dir)) {
+    if (!(await lstat(dir).catch(() => null))?.isDirectory()) throw changed()
+  }
   const handle = await open(file.path, constants.O_RDONLY | constants.O_NOFOLLOW).catch(() => Promise.reject(changed()))
   try {
     const now = await handle.stat()
-    if (!now.isFile() || now.dev !== file.inode?.dev || now.ino !== file.inode?.ino) throw changed()
-    return new Blob([await handle.readFile()])
+    if (!now.isFile() || now.dev !== file.inode?.dev || now.ino !== file.inode?.ino || now.size !== file.size) throw changed()
+    // exactly the bytes listed: a file that grows meanwhile is not read past them
+    const bytes = Buffer.alloc(file.size)
+    for (let read = 0; read < file.size;) {
+      const { bytesRead } = await handle.read(bytes, read, file.size - read, read)
+      if (bytesRead === 0) throw changed()
+      read += bytesRead
+    }
+    return new Blob([bytes])
   } finally {
     await handle.close()
   }
@@ -314,7 +327,7 @@ export async function publishPage(deps: PagesDeps, options: PublishOptions): Pro
   // nothing points at a fresh prefix until the switch: a failed upload deletes it
   try {
     await inParallel(files, async (file) => {
-      await storage.put(bucket, `${prefix}${file.key}`, await listedFile(file), file.type, options.signal)
+      await storage.put(bucket, `${prefix}${file.key}`, await listedFile(file, resolve(options.source)), file.type, options.signal)
     }, options.signal)
     options.signal?.throwIfAborted()
   } catch (error) {

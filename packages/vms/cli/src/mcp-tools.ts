@@ -357,16 +357,23 @@ export function kyoraTools(): Tool[] {
         signal.throwIfAborted()
         let id: string | null = null
         let kept = false
+        let destroying: Promise<unknown> | null = null
+        const destroy = () => (destroying ??= api.destroy(id!).catch((error) => context.progress(`could not destroy ${id}: ${error instanceof Error ? error.message : String(error)}`)))
+        // a cancel destroys the VM at once, not after the transfer in flight has cleaned up after itself
+        const onCancel = () => void (id && destroy())
+        signal.addEventListener("abort", onCancel, { once: true })
         try {
           const sandbox = await createVm(api, spec, args, signal)
           id = sandbox.id
+          if (signal.aborted) onCancel()
           const pushed = await push(api, id, listing, WORK, { signal: transfer(signal) })
           const result = await execute(api, id, request, args, signal)
           const downloads = outs.length ? await pullAll(api, id, outs, local(context, text(args.to) ?? dir), signal) : undefined
           kept = Boolean(args.keep)
           return { sandbox: { id, name: sandbox.name, region: sandbox.region }, kept, upload: { entries: pushed.server.entries ?? listing.entries.length, bytes: pushed.sent }, ...result, ...(downloads ? { downloads } : {}) }
         } finally {
-          if (id && !kept) await api.destroy(id).catch((error) => context.progress(`could not destroy ${id}: ${error instanceof Error ? error.message : String(error)}`))
+          signal.removeEventListener("abort", onCancel)
+          if (id && !kept) await destroy()
         }
       },
     },
@@ -401,11 +408,13 @@ export function kyoraTools(): Tool[] {
       description: "Destroy VMs by name or id. Everything in them is gone.",
       inputSchema: object({ sandboxes: strings("names or ids (an id prefix must be unique)", { minItems: 1 }) }, ["sandboxes"]),
       annotations: DESTROY,
-      handler: async (args, { api }) => {
+      handler: async (args, { api, signal }) => {
         const removed: string[] = []
         const gone: string[] = []
         for (const target of args.sandboxes as string[]) {
+          signal.throwIfAborted()
           const id = await resolveDestructiveTarget(api, target)
+          signal.throwIfAborted()
           if (await api.destroy(id)) removed.push(id)
           else gone.push(id)
         }
@@ -428,7 +437,7 @@ export function kyoraTools(): Tool[] {
       title: "Set a VM's lifetime",
       description: "Set a VM's total lifetime, counted from its creation (not from now): e.g. 4h, or none.",
       inputSchema: object({ sandbox: SANDBOX, ttl: string("e.g. 4h or 90m, or none") }, ["sandbox", "ttl"]),
-      annotations: { ...WRITE, idempotentHint: true },
+      annotations: { ...WRITE, destructiveHint: true, idempotentHint: true },
       handler: async (args, { api }) => {
         const ttlSeconds = input(() => (args.ttl === "none" ? 0 : parseSeconds(args.ttl as string, "ttl")))
         return api.update(await resolveTarget(api, args.sandbox as string), { ttlSeconds })

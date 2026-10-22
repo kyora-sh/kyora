@@ -1,4 +1,5 @@
 import { Console } from "node:console"
+import { format } from "node:util"
 import { VERSION } from "./api"
 import { createsInFlight, kyoraTools, toolContext, ToolInputError, type Tool, type ToolContext } from "./mcp-tools"
 import { note } from "./output"
@@ -251,17 +252,28 @@ export function guardStdout(clean: (text: string) => string = (text) => text): G
   }
   process.stderr.write = ((chunk: unknown, ...rest: unknown[]) => {
     held += typeof chunk === "string" ? chunk : chunk instanceof Uint8Array ? new TextDecoder().decode(chunk) : String(chunk)
-    flushLines(held.length > STDERR_HOLD)
+    flushLines(false)
+    // a line this long never ends: dropped, since a credential could straddle any cut of it
+    if (held.length > STDERR_HOLD) {
+      held = ""
+      stderr("[kyora] (a line over 64 KB was left out)\n")
+    }
     const callback = rest.find((arg) => typeof arg === "function") as (() => void) | undefined
     callback?.()
     return true
   }) as typeof process.stderr.write
   process.stdout.write = ((...args: unknown[]) => (process.stderr.write as (...args: unknown[]) => boolean)(...args)) as typeof process.stdout.write
   // a console of its own on stderr, for every method: Bun's own write to the file descriptors directly
-  const replacement = new Console({ stdout: process.stderr, stderr: process.stderr })
-  for (const method of Object.keys(console) as Array<keyof Console>) {
-    const own = (replacement as unknown as Record<string, unknown>)[method]
-    if (typeof own === "function") (console as unknown as Record<string, unknown>)[method] = own.bind(replacement)
+  const replacement = new Console({ stdout: process.stderr, stderr: process.stderr }) as unknown as Record<string, unknown>
+  const native = console as unknown as Record<string, unknown>
+  for (const method of new Set([...Object.keys(native), ...Object.getOwnPropertyNames(native), "write"])) {
+    if (method === "Console" || typeof native[method] !== "function") continue
+    const own = replacement[method]
+    // Bun's own extras (console.write, …): their arguments, as text, on stderr
+    native[method] = typeof own === "function" ? own.bind(replacement) : (...args: unknown[]) => {
+      process.stderr.write(method === "write" ? args.map((arg) => (typeof arg === "string" ? arg : arg instanceof Uint8Array ? new TextDecoder().decode(arg) : String(arg))).join("") : `${format(...args)}\n`)
+      return 0
+    }
   }
   return {
     send: (text) => new Promise((resolve) => {

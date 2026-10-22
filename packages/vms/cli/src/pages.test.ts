@@ -157,6 +157,16 @@ describe("pages", () => {
     await unlink(join(dir, "index.html"))
     await symlink(join(root, "secret.txt"), join(dir, "index.html"))
     await expect(listedFile(file!)).rejects.toThrow("changed while it was being published")
+    // a file that grew after it was listed is not read past what was listed
+    const [png] = (await pageFiles(dir)).filter((one) => one.key === "shot.png")
+    await writeFile(join(dir, "shot.png"), "png and a great deal more")
+    await expect(listedFile(png!)).rejects.toThrow("changed while it was being published")
+    // nor one under a directory that became a symlink
+    const [app] = (await pageFiles(dir)).filter((one) => one.key === "assets/app.js")
+    await rm(join(dir, "assets"), { recursive: true })
+    await write(root, "elsewhere/app.js", "console.log(1)")
+    await symlink(join(root, "elsewhere"), join(dir, "assets"))
+    await expect(listedFile(app!, dir)).rejects.toThrow("changed while it was being published")
   })
 
   test("without a name: kyora cloud names it from the directory's name, and each such publish is a new page", async () => {
