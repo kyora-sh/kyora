@@ -50,9 +50,9 @@ export function startFakeCloud(): FakeCloud {
 
       if (path === "/v1/me") return Response.json(cloud.me)
       if (path === "/v1/regions") return Response.json({ regions: [{ id: "eu", label: "Europe", default: true, jurisdiction: "EU", fallback: [], machines: 2, connected: 2, free: { vcpus: 8, memoryMb: 16384 } }], you: { region: "eu", by: "nearest" }, default: null })
-      if (path === "/v1/sandboxes" && url.searchParams.has("stats")) return Response.json({ sandboxes: [{ ...sandbox, stats: null }] })
+      if (path === "/v1/sandboxes" && url.searchParams.has("stats")) return Response.json({ account: "ada", at: Date.now(), sandboxes: [{ id: sandbox.id, name: sandbox.name, region: "eu", vcpus: 2, memoryMb: 4096, diskGb: 30, sample: null }] })
       if (path === "/v1/sandboxes") return Response.json({ sandboxes: [sandbox] })
-      if (path === `/v1/sandboxes/${sandbox.id}` && method === "GET") return Response.json(sandbox)
+      if ((path === `/v1/sandboxes/${sandbox.id}` || path === `/v1/sandboxes/${sandbox.name}`) && method === "GET") return Response.json(sandbox)
       if (path === `/v1/sandboxes/${sandbox.id}` && method === "PATCH") return Response.json({ ...sandbox, ...(body?.name ? { name: body.name } : {}), ...(body?.ttlSeconds !== undefined ? { expiresAt: "2026-10-22T04:00:00.000Z" } : {}) })
       if (path === `/v1/sandboxes/${sandbox.id}/ports` && method === "POST") return Response.json({ label: body?.name ?? "quiet-fern", port: body?.port, private: !body?.public, url: `https://${body?.name ?? "quiet-fern"}.kyora.run` }, { status: 201 })
       if (path === `/v1/sandboxes/${sandbox.id}/ports` || path === "/v1/ports") return Response.json({ ports: [{ label: "quiet-fern", port: 3000, private: true, url: "https://quiet-fern.kyora.run" }] })

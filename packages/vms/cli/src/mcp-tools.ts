@@ -226,7 +226,7 @@ async function project(args: Record<string, unknown>, context: ToolContext): Pro
   try {
     return await resolveProject(text(args.project), context.cwd)
   } catch (error) {
-    if (error instanceof DeployUsage) throw new ToolInputError(error.message.split("\n")[0]!.replace(/run kyora link/, "pass project, or run `kyora link` in the checkout"))
+    if (error instanceof DeployUsage) throw new Error(`${error.message.split(/[;\n]/)[0]}; pass project (projects_list names them), or run \`kyora link\` in the checkout`)
     throw error
   }
 }
