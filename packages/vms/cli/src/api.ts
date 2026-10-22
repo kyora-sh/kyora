@@ -370,7 +370,10 @@ export interface DnsRecord {
 /** a custom domain as `/v1/domains` shows it */
 export interface CustomDomain {
   hostname: string
+  /** the public URL name it serves, or `page:<name>` for a page */
   label: string
+  /** the page it serves, if it serves one */
+  page?: string
   /** unverified: kyora hasn't seen your ownership TXT yet, nothing is set up at Cloudflare */
   status: "unverified" | "pending" | "active" | "failed"
   reason: string | null
@@ -398,16 +401,21 @@ export interface Page {
   url: string
   private: boolean
   bucket: string
+  /** ends with / */
   prefix: string
+  region?: string
   spa: boolean
   notFound?: string | null
+  /** taken down by kyora: not served */
+  disabled?: boolean
   createdAt: string
   updatedAt: string
 }
 
-/** `POST /v1/pages`: a new page, or the caller's own name pointed at another prefix */
+/** `POST /v1/pages`: a new page, or the caller's own name pointed at another prefix; without a name, kyora cloud makes one from `hint` */
 export interface PageCreate {
   name?: string
+  hint?: string
   bucket: string
   prefix: string
   public?: boolean
@@ -1263,9 +1271,10 @@ export class VmsClient {
     return ((await response.json()) as { region: string | null }).region
   }
 
-  /** custom domains: a hostname of yours for one of your public URL names */
-  async domainAdd(hostname: string, label: string, dcv?: "http" | "txt"): Promise<CustomDomain> {
-    const response = await this.send(`add ${hostname}`, "POST", "/v1/domains", { json: { hostname, label, ...(dcv ? { dcv } : {}) }, timeout: TIMEOUTS.short })
+  /** custom domains: a hostname of yours for one of your public URL names, or (`{ page }`) one of your public pages */
+  async domainAdd(hostname: string, to: string | { page: string }, dcv?: "http" | "txt"): Promise<CustomDomain> {
+    const target = typeof to === "string" ? { label: to } : { page: to.page }
+    const response = await this.send(`add ${hostname}`, "POST", "/v1/domains", { json: { hostname, ...target, ...(dcv ? { dcv } : {}) }, timeout: TIMEOUTS.short })
     return (await response.json()) as CustomDomain
   }
 

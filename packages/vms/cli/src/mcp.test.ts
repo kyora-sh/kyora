@@ -67,7 +67,7 @@ describe("kyora mcp: the tools", () => {
       deploy: [],
       deployments_list: [],
       deployment_logs: [],
-      domains_add: ["hostname", "to"],
+      domains_add: ["hostname"],
       domains_list: [],
       domains_status: ["hostname"],
       domains_remove: ["hostname"],
@@ -170,7 +170,9 @@ describe("kyora mcp: the tools", () => {
     expect((await call(server, "unexpose", { label: "my-app" })).value).toEqual({ released: true, label: "my-app" })
     expect(cloud.requests).toContain("DELETE /v1/ports/my-app")
 
-    expect((await call(server, "domains_add", { hostname: "shop.example.com", to: "my-app" })).value).toMatchObject({ status: "unverified" })
+    expect((await call(server, "domains_add", { hostname: "shop.example.com", to: "my-app" })).value).toMatchObject({ label: "my-app", status: "unverified" })
+    expect((await call(server, "domains_add", { hostname: "docs.example.com", page: "build-report" })).value).toMatchObject({ label: "page:build-report", page: "build-report" })
+    expect((await call(server, "domains_add", { hostname: "x.example.com" }).catch((error: Error) => error)).toString()).toContain("give to (a public URL name) or page")
     expect((await call(server, "domains_list")).value.domains).toHaveLength(1)
     expect((await call(server, "domains_status", { hostname: "shop.example.com" })).value.serving).toBe(true)
     expect((await call(server, "domains_remove", { hostname: "shop.example.com" })).value.removed).toBe(true)

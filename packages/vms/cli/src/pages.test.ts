@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import { mkdir, rm, truncate, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { VmsClient } from "./api"
-import { contentType, generatedName, MAX_FILES, pageFiles, pagesMain, PagesUsage, publishedPrefix, publishId, publishPage, removePage, type PagesDeps } from "./pages"
+import { contentType, MAX_FILES, pageFiles, pagesMain, PagesUsage, publishedPrefix, publishId, publishPage, removePage, type PagesDeps } from "./pages"
 import { StorageClient } from "./storage"
 import { startFakeCloud, type FakeCloud } from "./testing/fake-cloud"
 import { TOKEN } from "./testing/fake-vmd"
@@ -50,13 +50,8 @@ describe("pages", () => {
     const id = publishId(new Date("2026-10-22T02:40:05.123Z"), Uint8Array.from([1, 2, 3, 4]))
     expect(id).toBe("20261022t024005z-01020304")
     expect(publishedPrefix(`report/${id}/`)).toBe(true)
-    for (const prefix of ["", "/", `${id}/`, "report/", `report/${id}`, `a/b/${id}/`, `Report/${id}/`, `report/${id}/x/`]) expect(publishedPrefix(prefix)).toBe(false)
-  })
-
-  test("a generated name is a slug of the directory's name and 4 hex digits, else readable words", () => {
-    expect(generatedName("/tmp/Test Report_2026", Uint8Array.from([0xab, 0xcd]))).toBe("test-report-2026-abcd")
-    expect(generatedName("/tmp/report.html", Uint8Array.from([0, 1]))).toBe("report-0001")
-    expect(generatedName("/tmp/x", Uint8Array.from([0, 1]))).toMatch(/^[a-z]+-[a-z]+-0001$/)
+    expect(publishedPrefix(`${id}/`)).toBe(true)
+    for (const prefix of ["", "/", "report/", `report/${id}`, `a/b/${id}/`, `Report/${id}/`, `report/${id}/x/`]) expect(publishedPrefix(prefix)).toBe(false)
   })
 
   test("a directory goes up without .git, each file with its content type, and the page points at it", async () => {
@@ -117,16 +112,25 @@ describe("pages", () => {
     expect(cloud.pages.get("report")!.prefix).toBe(first.page.prefix)
   })
 
-  test("without a name: one made from the directory, never one of your own pages, another when it is taken", async () => {
+  test("without a name: kyora cloud names it from the directory's name, and each such publish is a new page", async () => {
     const dir = await site("Weekly Report")
     const first = await publishPage(deps, { source: dir })
+    expect(cloud.hints).toEqual(["Weekly Report"])
+    expect(cloud.requests.filter((line) => line.startsWith("GET /v1/pages/"))).toEqual([])
     expect(first.page.name).toMatch(/^weekly-report-[0-9a-f]{4}$/)
+    expect(publishedPrefix(first.page.prefix)).toBe(true)
+    expect(first.page.prefix).toMatch(/^\d{8}t\d{6}z-[0-9a-f]{8}\/$/)
     const second = await publishPage(deps, { source: dir })
     expect(second.page.name).not.toBe(first.page.name)
     expect(cloud.pages.get(first.page.name)!.prefix).toBe(first.page.prefix)
-    // someone else's name: a generated one is retried, a given one is not
+    // then by its name: the unnamed first publish's prefix is replaced and deleted like any other
+    const third = await publishPage(deps, { source: dir, name: first.page.name })
+    expect(third.replaced).toEqual({ bucket: "pages", prefix: first.page.prefix, deleted: 5 })
+    expect(cloud.hints.at(-1)).toBeNull()
+    // someone else's name is refused, and the upload goes again
     cloud.taken.add("mine")
     await expect(publishPage(deps, { source: dir, name: "mine" })).rejects.toThrow("held by another account")
+    expect(keys("pages/mine/")).toEqual([])
   })
 
   test("a single file goes up with an index.html that redirects to it", async () => {

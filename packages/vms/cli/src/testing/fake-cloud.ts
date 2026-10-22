@@ -13,6 +13,8 @@ export interface FakeCloud {
   /** `bucket/key` → its bytes and content type */
   objects: Map<string, { data: Uint8Array<ArrayBuffer>; type: string | null }>
   pages: Map<string, Page>
+  /** the `hint` each POST /v1/pages sent (null: none) */
+  hints: Array<string | null>
   /** names another account holds */
   taken: Set<string>
   /** what POST /v1/pages answers instead, when set */
@@ -32,6 +34,7 @@ export function startFakeCloud(): FakeCloud {
     buckets: new Map(),
     objects: new Map(),
     pages: new Map(),
+    hints: [],
     taken: new Set(),
     pageFailure: null,
     me: { login: "ada", kind: "user", role: "member", token: { name: "ci", scopes: ["vms"], expiresAt: null } },
@@ -59,7 +62,7 @@ export function startFakeCloud(): FakeCloud {
       if (path.startsWith("/v1/ports/") && method === "DELETE") return new Response(null, { status: 204 })
 
       if (path === "/v1/domains" && method === "GET") return Response.json({ domains: [{ hostname: "shop.example.com", label: "my-app", status: "active" }] })
-      if (path === "/v1/domains" && method === "POST") return Response.json({ hostname: body?.hostname, label: body?.label, status: "unverified", records: [] }, { status: 201 })
+      if (path === "/v1/domains" && method === "POST") return Response.json({ hostname: body?.hostname, label: body?.page ? `page:${body.page}` : body?.label, ...(body?.page ? { page: body.page } : {}), status: "unverified", records: [] }, { status: 201 })
       if (path.startsWith("/v1/domains/") && method === "GET") return Response.json({ hostname: decodeURIComponent(path.slice(12)), status: "active", serving: true })
       if (path.startsWith("/v1/domains/") && method === "DELETE") return new Response(null, { status: 204 })
 
@@ -72,15 +75,18 @@ export function startFakeCloud(): FakeCloud {
       if (path === "/v1/pages" && method === "GET") return Response.json({ pages: [...cloud.pages.values()] })
       if (path === "/v1/pages" && method === "POST") {
         if (cloud.pageFailure) return error(cloud.pageFailure.status, cloud.pageFailure.error, cloud.pageFailure.message)
-        const name = body!.name as string
+        const slug = String(body!.hint ?? "").toLowerCase().replace(/\.[^.]*$/, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "brisk-otter"
+        const name = (body!.name as string | undefined) ?? `${slug}-${crypto.getRandomValues(new Uint16Array(1))[0]!.toString(16).padStart(4, "0")}`
         if (cloud.taken.has(name)) return error(409, "label_taken", "this name is held by another account or in its 30-day release cooldown")
         const bucket = body!.bucket as string
         const prefix = body!.prefix as string
+        if (!prefix) return error(400, "invalid_request", "prefix must not be empty")
         if (!cloud.buckets.has(bucket) || ![...cloud.objects.keys()].some((key) => key.startsWith(`${bucket}/${prefix}`))) return error(400, "invalid_request", "nothing in that bucket and prefix")
         const before = cloud.pages.get(name)
-        const page: Page = { name, url: `https://${name}.kyora.page`, private: body!.public !== true, bucket, prefix, spa: body!.spa === true, createdAt: before?.createdAt ?? "2026-10-22T00:00:00.000Z", updatedAt: new Date().toISOString() }
+        const page: Page = { name, url: `https://${name}.kyora.page`, private: body!.public !== true, bucket, prefix, region: "eu", spa: body!.spa === true, notFound: null, createdAt: before?.createdAt ?? "2026-10-22T00:00:00.000Z", updatedAt: new Date().toISOString() }
+        cloud.hints.push((body!.hint as string | undefined) ?? null)
         cloud.pages.set(name, page)
-        return Response.json(page, { status: 201 })
+        return Response.json(page, { status: before ? 200 : 201 })
       }
       const pageMatch = /^\/v1\/pages\/([^/]+)(\/login)?$/.exec(path)
       if (pageMatch) {

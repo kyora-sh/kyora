@@ -3,7 +3,6 @@ import { basename, join, relative, resolve, sep } from "node:path"
 import { parseArgs } from "node:util"
 import { ApiError, VmsClient, type Page } from "./api"
 import { loadConfig } from "./config"
-import { friendlyName } from "./names"
 import { note, printJson } from "./output"
 import { StorageClient } from "./storage"
 import { formatBytes } from "./units"
@@ -18,7 +17,7 @@ export const PAGES_HELP = `kyora publish: a directory or a file as a static page
   kyora publish <dir|file> [--name N] [--public] [--spa] [--bucket B]
                              upload it and serve it at its own URL, which it prints. Private: only you,
                              signed in, can open it; --public for everyone. --name asks for that name
-                             (else one is made from the directory's); publishing to it again puts the
+                             (else kyora makes one from the directory's); publishing to it again puts the
                              new files live at once and deletes the old ones. --spa serves index.html
                              for paths with no file; --bucket is where the files go (default pages,
                              made in your default region if missing)
@@ -30,7 +29,7 @@ export const PAGES_HELP = `kyora publish: a directory or a file as a static page
 
 A single file is published under its own name, with an index.html that redirects to it (unless it is
 index.html). At most 2000 files and 500 MB per publish. Serve a public page on your own domain with
-\`kyora vms domain add <hostname> --to <name>\`. --json for JSON.`
+\`kyora vms domain add <hostname> --page <name>\`. --json for JSON.`
 
 export class PagesUsage extends Error {}
 const usage = (message: string): never => {
@@ -48,8 +47,6 @@ const NAME = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/
 const PUBLISH_ID = /^\d{8}t\d{6}z-[0-9a-f]{8}$/
 /** never uploaded: a repository's history and the Finder's litter */
 const SKIP = new Set([".git", ".DS_Store"])
-/** a generated name that is taken is replaced by another this often at most */
-const NAME_TRIES = 5
 
 const TYPES: Record<string, string> = {
   html: "text/html; charset=utf-8",
@@ -100,17 +97,12 @@ export function publishId(now = new Date(), random = crypto.getRandomValues(new 
   return `${stamp}-${Buffer.from(random).toString("hex")}`
 }
 
-/** a prefix a publish made, `<name>/<publish id>/`: the only kind ever deleted */
+/** a prefix a publish made, `<name>/<publish id>/` (or `<publish id>/` for a first one without a name): the only kind ever deleted */
 export function publishedPrefix(prefix: string): boolean {
   const parts = prefix.split("/")
-  return parts.length === 3 && parts[2] === "" && NAME.test(parts[0]!) && PUBLISH_ID.test(parts[1]!)
-}
-
-/** a name for a page published without one: `<slug>-<4 hex>`, the slug from the directory's (or file's) name, else readable words */
-export function generatedName(source: string, random = crypto.getRandomValues(new Uint8Array(2))): string {
-  const base = basename(resolve(source)).replace(/\.[^.]*$/, "")
-  const slug = base.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40).replace(/-+$/, "")
-  return `${slug.replace(/-/g, "").length >= 4 ? slug : friendlyName()}-${Buffer.from(random).toString("hex")}`
+  if (parts.at(-1) !== "") return false
+  if (parts.length === 2) return PUBLISH_ID.test(parts[0]!)
+  return parts.length === 3 && NAME.test(parts[0]!) && PUBLISH_ID.test(parts[1]!)
 }
 
 export interface PageFile {
@@ -239,42 +231,25 @@ const ownPage = (api: PagesDeps["api"], name: string) => api.page(name).catch((e
 /**
  * Upload to a fresh prefix, point the name at it, then delete what it pointed at before. A publish that
  * fails before the switch deletes its own upload; the page keeps serving what it served. Without a name,
- * one is made that is none of yours already (so it never replaces a page), and another one if it is taken.
+ * kyora cloud makes a new one from the directory's (or file's) name.
  */
 export async function publishPage(deps: PagesDeps, options: PublishOptions): Promise<PublishResult> {
   const { api, storage } = deps
   const bucket = checkBucket(options.bucket ?? DEFAULT_BUCKET)
   const files = await pageFiles(options.source)
   const bytes = files.reduce((total, file) => total + file.size, 0)
-  let name = options.name === undefined ? null : checkName(options.name)
+  const name = options.name === undefined ? null : checkName(options.name)
   const previous = name ? await ownPage(api, name) : null
-  if (!name) {
-    for (let tries = 0; !name; tries++) {
-      const candidate = generatedName(options.source)
-      if (!(await ownPage(api, candidate))) name = candidate
-      else if (tries >= NAME_TRIES) throw new Error("could not find a free name; pass one")
-    }
-  }
   await ensureBucket(storage, bucket)
-  const prefix = `${name}/${publishId()}/`
+  const prefix = `${name ? `${name}/` : ""}${publishId()}/`
   deps.progress?.(`uploading ${files.length} file${files.length === 1 ? "" : "s"} (${formatBytes(bytes)}) to ${bucket}/${prefix}`)
   let page: Page
   try {
     await inParallel(files, async (file) => {
       await storage.put(bucket, `${prefix}${file.key}`, file.path ? Bun.file(file.path) : new Blob([file.data!]), file.type)
     }, options.signal)
-    for (let tries = 1; ; tries++) {
-      options.signal?.throwIfAborted()
-      try {
-        page = await api.pageCreate({ name: name!, bucket, prefix, ...(options.public ? { public: true } : {}), ...(options.spa ? { spa: true } : {}) })
-        break
-      } catch (error) {
-        // a generated name someone else holds: another one (the files stay where they are)
-        if (options.name !== undefined || !(error instanceof ApiError) || error.code !== "label_taken" || tries >= NAME_TRIES) throw error
-        name = generatedName(options.source)
-        if (await ownPage(api, name)) throw error
-      }
-    }
+    options.signal?.throwIfAborted()
+    page = await api.pageCreate({ ...(name ? { name } : { hint: basename(resolve(options.source)) }), bucket, prefix, ...(options.public ? { public: true } : {}), ...(options.spa ? { spa: true } : {}) })
   } catch (error) {
     await deletePrefix(storage, bucket, prefix).catch(() => deps.progress?.(`could not delete ${bucket}/${prefix} after the failed publish`))
     throw error

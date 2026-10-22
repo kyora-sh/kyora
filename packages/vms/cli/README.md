@@ -151,7 +151,7 @@ kyora publish ./dist --name my-app --public --spa
 kyora pages ls | show <name> | rm <name> | login <name>
 ```
 
-`kyora publish` uploads a directory (or one file, with an `index.html` that redirects to it) to your `pages` bucket and serves it at its own URL. Publishing to the same `--name` again switches the page to the new files at once and then deletes the old ones. A private page opens for you after `kyora pages login <name>`, a sign-in link good for 60 seconds. `kyora vms domain add <hostname> --to <name>` serves a public page on your own domain. At most 2000 files and 500 MB per publish.
+`kyora publish` uploads a directory (or one file, with an `index.html` that redirects to it) to your `pages` bucket and serves it at its own URL. Publishing to the same `--name` again switches the page to the new files at once and then deletes the old ones. A private page opens for you after `kyora pages login <name>`, a sign-in link good for 60 seconds. `kyora vms domain add <hostname> --page <name>` serves a public page on your own domain. At most 2000 files and 500 MB per publish.
 
 ## Examples
 

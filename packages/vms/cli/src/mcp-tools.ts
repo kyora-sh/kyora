@@ -474,10 +474,13 @@ export function kyoraTools(): Tool[] {
     {
       name: "domains_add",
       title: "Add a custom domain",
-      description: "Serve a public URL name or a public page on a hostname of yours. Returns the DNS records to add (an ownership TXT and a CNAME); domains_status says when it is live.",
-      inputSchema: object({ hostname: string("e.g. app.example.com"), to: string("the public URL name or page name to serve there"), dcv: string("certificate validation: http (default) or txt", { enum: ["http", "txt"] }) }, ["hostname", "to"]),
+      description: "Serve one of your public URL names (to) or public pages (page) on a hostname of yours. Returns the DNS records to add (an ownership TXT and a CNAME); domains_status says when it is live.",
+      inputSchema: object({ hostname: string("e.g. app.example.com"), to: string("the public URL name (of an exposed port) to serve there"), page: string("the public page to serve there, instead of to"), dcv: string("certificate validation: http (default) or txt", { enum: ["http", "txt"] }) }, ["hostname"]),
       annotations: WRITE,
-      handler: async (args, { api }) => api.domainAdd(args.hostname as string, args.to as string, args.dcv as "http" | "txt" | undefined),
+      handler: async (args, { api }) => {
+        if ((args.to === undefined) === (args.page === undefined)) throw new ToolInputError("give to (a public URL name) or page (a public page), one of them")
+        return api.domainAdd(args.hostname as string, args.page !== undefined ? { page: args.page as string } : (args.to as string), args.dcv as "http" | "txt" | undefined)
+      },
     },
     {
       name: "domains_list",
