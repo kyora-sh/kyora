@@ -17,6 +17,10 @@ export interface FakeCloud {
   hints: Array<string | null>
   /** names another account holds */
   taken: Set<string>
+  /** POST /v1/pages switches the page, then answers this status anyway (an answer lost on the way) */
+  pageLostAnswer: number | null
+  /** the PUT of an object, this many PUTs from now (1: the next), fails with a 500 */
+  failPut: number | null
   /** what POST /v1/pages answers instead, when set */
   pageFailure: { status: number; error: string; message: string } | null
   /** what GET /v1/me says; a test may plant the token in it */
@@ -37,6 +41,8 @@ export function startFakeCloud(): FakeCloud {
     hints: [],
     taken: new Set(),
     pageFailure: null,
+    pageLostAnswer: null,
+    failPut: null,
     me: { login: "ada", kind: "user", role: "member", token: { name: "ci", scopes: ["vms"], expiresAt: null } },
   }
   const sandbox = { id: "sb_eu_abc123_0123456789abcdef", name: "brisk-otter", status: "running", network: "none", vcpus: 2, memoryMb: 4096, diskGb: 30, expiresAt: null, createdAt: "2026-10-22T00:00:00.000Z", region: "eu" }
@@ -86,6 +92,7 @@ export function startFakeCloud(): FakeCloud {
         const page: Page = { name, url: `https://${name}.kyora.page`, private: body!.public !== true, bucket, prefix, region: "eu", spa: body!.spa === true, notFound: null, createdAt: before?.createdAt ?? "2026-10-22T00:00:00.000Z", updatedAt: new Date().toISOString() }
         cloud.hints.push((body!.hint as string | undefined) ?? null)
         cloud.pages.set(name, page)
+        if (cloud.pageLostAnswer) return new Response("<html>bad gateway</html>", { status: cloud.pageLostAnswer })
         return Response.json(page, { status: before ? 200 : 201 })
       }
       const pageMatch = /^\/v1\/pages\/([^/]+)(\/login)?$/.exec(path)
@@ -119,6 +126,7 @@ export function startFakeCloud(): FakeCloud {
         }
         const key = `${bucket}/${decodeURIComponent(object[2])}`
         if (method === "PUT") {
+          if (cloud.failPut !== null && --cloud.failPut === 0) return error(500, "internal", "the store failed")
           const data = new Uint8Array(await request.arrayBuffer())
           cloud.objects.set(key, { data, type: request.headers.get("content-type") })
           return Response.json({ key: decodeURIComponent(object[2]), size: data.length, etag: "e" })

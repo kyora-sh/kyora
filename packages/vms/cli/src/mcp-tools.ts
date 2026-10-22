@@ -15,6 +15,7 @@ import { publishPage, removePage, type PagesDeps } from "./pages"
 import { repoTop } from "./sessions/git"
 import { getSession } from "./sessions/platform"
 import { resolveState } from "./sessions/state"
+import { redact, rememberSecret } from "./redact"
 import { presignRequest, StorageClient } from "./storage"
 import { top } from "./top"
 import { pull, push, remotePath, WORK, type PullResult } from "./transfer"
@@ -48,6 +49,8 @@ export class ToolInputError extends Error {}
 
 export async function toolContext(signal: AbortSignal, env: Record<string, string | undefined> = process.env, cwd = process.cwd()): Promise<ToolContext> {
   const config = await loadConfig(env, cwd)
+  rememberSecret(config.key)
+  rememberSecret(env.KYORA_STORAGE_KEY?.trim())
   if (!config.key) throw new Error(`not logged in to ${config.url}: run \`kyora login\` in a terminal (the next call picks it up), or set KYORA_TOKEN in the MCP server's environment`)
   const progress = (message: string) => note(message)
   const api = new VmsClient(config)
@@ -141,21 +144,31 @@ function execOf(args: Record<string, unknown>): ExecRequest {
   }))
 }
 
-/** the last `limit` bytes of a stream, and how many it had in all */
+/** bytes kept in front of a tail, so a credential cut at its start is still recognised and redacted whole */
+const OVERLAP = 512
+
+/** a character cut at the start of `bytes` is dropped, not shown broken */
+function decodeTail(bytes: Uint8Array): string {
+  let start = 0
+  while (start < bytes.length && start < 3 && (bytes[start]! & 0xc0) === 0x80) start++
+  return new TextDecoder().decode(bytes.subarray(start))
+}
+
+/** the last `limit` bytes of a stream, redacted, and how many it had in all */
 export class Tail {
   private chunks: Buffer[] = []
   private kept = 0
   total = 0
 
-  constructor(private readonly limit: number) {}
+  constructor(private readonly limit: number, private readonly clean: (text: string) => string = (text) => redact(text)) {}
 
   push(data: Uint8Array | string): void {
-    const chunk = typeof data === "string" ? Buffer.from(data) : Buffer.from(data)
+    const chunk = Buffer.from(data)
     this.total += chunk.length
     this.chunks.push(chunk)
     this.kept += chunk.length
-    if (this.kept > this.limit * 2) {
-      const joined = Buffer.concat(this.chunks).subarray(-this.limit)
+    if (this.kept > (this.limit + OVERLAP) * 2) {
+      const joined = Buffer.concat(this.chunks).subarray(-(this.limit + OVERLAP))
       this.chunks = [joined]
       this.kept = joined.length
     }
@@ -166,13 +179,16 @@ export class Tail {
   }
 
   text(): string {
-    const bytes = Buffer.concat(this.chunks).subarray(-this.limit)
-    // a character cut at the start is dropped, not shown as a replacement
-    let start = 0
-    while (this.truncated && start < bytes.length && start < 3 && (bytes[start]! & 0xc0) === 0x80) start++
-    return new TextDecoder().decode(bytes.subarray(start))
+    const all = Buffer.concat(this.chunks)
+    // redacted with the overlap still in front, then cut to the limit
+    const clean = Buffer.from(this.clean(this.total > all.length ? decodeTail(all) : new TextDecoder().decode(all)))
+    return clean.length > this.limit ? decodeTail(clean.subarray(-this.limit)) : clean.toString()
   }
 }
+
+/** how long an upload or a download of a VM call may take before it is given up on */
+const TRANSFER_MS = 30 * 60_000
+const transfer = (signal: AbortSignal) => AbortSignal.any([signal, AbortSignal.timeout(TRANSFER_MS)])
 
 /** a command run to its end (or its timeout), with what it printed kept to a tail of each stream */
 async function execute(api: VmsClient, id: string, request: ExecRequest, args: Record<string, unknown>, signal: AbortSignal) {
@@ -211,7 +227,7 @@ async function pullAll(api: VmsClient, id: string, paths: string[], to: string, 
   const results: unknown[] = []
   for (const path of paths) {
     try {
-      results.push(pulled(await pull(api, id, path, to, signal)))
+      results.push(pulled(await pull(api, id, path, to, transfer(signal))))
     } catch (error) {
       if (signal.aborted) throw error
       results.push({ path, error: error instanceof Error ? error.message : String(error) })
@@ -275,7 +291,17 @@ export function kyoraTools(): Tool[] {
       description: "Start a VM and return it (its id and name). It keeps running until its ttl or idle timeout, or vms_destroy: destroy it when done. Use vms_push, vms_exec and vms_pull with it.",
       inputSchema: object(SPEC),
       annotations: WRITE,
-      handler: async (args, context) => context.api.create(specOf(args, context), { wait: (args.wait_seconds as number | undefined) ?? 300, graceMs: timeoutGraceMs(), signal: context.signal }),
+      handler: async (args, context) => {
+        const spec = specOf(args, context)
+        context.signal.throwIfAborted()
+        const sandbox = await context.api.create(spec, { wait: (args.wait_seconds as number | undefined) ?? 300, graceMs: timeoutGraceMs(), signal: context.signal })
+        // the create itself is not cut short (its sandbox would be lost): one that arrives after a cancel is destroyed
+        if (context.signal.aborted) {
+          await context.api.destroy(sandbox.id).catch((error) => context.progress(`could not destroy ${sandbox.id}: ${error instanceof Error ? error.message : String(error)}`))
+          context.signal.throwIfAborted()
+        }
+        return sandbox
+      },
     },
     {
       name: "vms_exec",
@@ -302,7 +328,7 @@ export function kyoraTools(): Tool[] {
         ...COMMAND,
         ...SPEC,
       }, ["command"]),
-      annotations: WRITE,
+      annotations: { ...WRITE, destructiveHint: true },
       handler: async (args, context) => {
         const { api, signal } = context
         const dir = local(context, text(args.dir) ?? ".")
@@ -310,12 +336,13 @@ export function kyoraTools(): Tool[] {
         const request = execOf(args)
         const outs = input(() => ((args.out as string[] | undefined) ?? []).map((path) => remotePath(path)))
         const listing = await listFiles(dir, { git: args.git !== false })
+        signal.throwIfAborted()
         let id: string | null = null
         let kept = false
         try {
           const sandbox = await api.create(spec, { wait: (args.wait_seconds as number | undefined) ?? 300, graceMs: timeoutGraceMs(), signal })
           id = sandbox.id
-          const pushed = await push(api, id, listing, WORK, { signal })
+          const pushed = await push(api, id, listing, WORK, { signal: transfer(signal) })
           const result = await execute(api, id, request, args, signal)
           const downloads = outs.length ? await pullAll(api, id, outs, local(context, text(args.to) ?? dir), signal) : undefined
           kept = Boolean(args.keep)
@@ -334,7 +361,7 @@ export function kyoraTools(): Tool[] {
       handler: async (args, context) => {
         const dest = input(() => remotePath(text(args.dest) ?? WORK))
         const id = await resolveTarget(context.api, args.sandbox as string)
-        const result = await push(context.api, id, { dir: local(context, text(args.dir) ?? "."), git: args.git !== false }, dest, { signal: context.signal })
+        const result = await push(context.api, id, { dir: local(context, text(args.dir) ?? "."), git: args.git !== false }, dest, { signal: transfer(context.signal) })
         return { sandbox: id, dest, entries: result.server.entries ?? result.listing.entries.length, bytes: result.sent, raw_bytes: result.listing.bytes, duration_ms: result.durationMs, ...(result.warnings.length ? { warnings: sample(result.warnings) } : {}) }
       },
     },
@@ -342,8 +369,8 @@ export function kyoraTools(): Tool[] {
       name: "vms_pull",
       title: "Download files from a VM",
       description: "Download paths from a VM (files or directories, relative to /work) into a local directory, laid out as under /work.",
-      inputSchema: object({ sandbox: SANDBOX, paths: strings("paths in the VM, relative to /work (or absolute under /work or /tmp)", { minItems: 1 }), to: string("the local directory (default: the server's working directory)") }, ["sandbox", "paths"]),
-      annotations: WRITE,
+      inputSchema: object({ sandbox: SANDBOX, paths: strings("paths in the VM, relative to /work (or absolute under /work or /tmp)", { minItems: 1 }), to: string("the local directory (default: the server's working directory); files there are overwritten") }, ["sandbox", "paths"]),
+      annotations: { ...WRITE, destructiveHint: true },
       handler: async (args, context) => {
         const paths = input(() => (args.paths as string[]).map((path) => remotePath(path)))
         const id = await resolveTarget(context.api, args.sandbox as string)
@@ -466,7 +493,8 @@ export function kyoraTools(): Tool[] {
         const id = text(args.deployment) ?? (await context.api.deployments(name)).deployments[0]?.id
         if (!id) throw new Error("this project has no deployments")
         const tail = new Tail((args.limit_bytes as number | undefined) ?? 20_000)
-        tail.push(await (await context.api.deploymentLogs(name, id)).text())
+        const reader = (await context.api.deploymentLogs(name, id)).body?.getReader()
+        if (reader) for (let part = await reader.read(); !part.done; part = await reader.read()) tail.push(part.value)
         const detail = await context.api.deployment(name, id)
         return { deployment: detail, logs: tail.text(), ...(tail.truncated ? { truncated: true } : {}) }
       },
@@ -574,9 +602,9 @@ export function kyoraTools(): Tool[] {
     {
       name: "storage_get",
       title: "Download an object",
-      description: "Download an object to a local file, or (without file) return it as text when it is UTF-8 and at most max_bytes.",
-      inputSchema: object({ bucket: string("the bucket"), key: string("the object's key"), file: string("save it to this local path"), max_bytes: integer("the most returned as text (default 100000)", 1, 1_000_000) }, ["bucket", "key"]),
-      annotations: READ,
+      description: "Download an object to a local file (overwriting it), or without file return it as text when it is UTF-8 and at most max_bytes.",
+      inputSchema: object({ bucket: string("the bucket"), key: string("the object's key"), file: string("save it to this local path, overwriting what is there"), max_bytes: integer("the most returned as text (default 100000)", 1, 1_000_000) }, ["bucket", "key"]),
+      annotations: { ...WRITE, destructiveHint: true },
       handler: async (args, context) => {
         const response = await context.storage.call("GET", context.storage.object(args.bucket as string, args.key as string))
         if (args.file !== undefined) {
@@ -584,8 +612,23 @@ export function kyoraTools(): Tool[] {
           return { key: args.key, file: path, size: await Bun.write(path, response) }
         }
         const limit = (args.max_bytes as number | undefined) ?? 100_000
-        const bytes = new Uint8Array(await response.arrayBuffer())
-        if (bytes.length > limit) throw new Error(`${args.key} is ${bytes.length} bytes, over max_bytes; pass file to save it`)
+        const over = () => new Error(`${args.key} is over max_bytes (${limit}); pass file to save it`)
+        if (Number(response.headers.get("content-length") ?? 0) > limit) {
+          await response.body?.cancel().catch(() => {})
+          throw over()
+        }
+        const parts: Uint8Array[] = []
+        let size = 0
+        const reader = response.body?.getReader()
+        if (reader) for (let part = await reader.read(); !part.done; part = await reader.read()) {
+          size += part.value.length
+          if (size > limit) {
+            await reader.cancel().catch(() => {})
+            throw over()
+          }
+          parts.push(part.value)
+        }
+        const bytes = Buffer.concat(parts)
         try {
           return { key: args.key, size: bytes.length, content: new TextDecoder("utf-8", { fatal: true }).decode(bytes) }
         } catch {

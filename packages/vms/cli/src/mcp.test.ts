@@ -30,7 +30,7 @@ let ids = 0
 async function request(server: McpServer, method: string, params?: unknown): Promise<Frame> {
   const frames = await server.line(JSON.stringify({ jsonrpc: "2.0", id: ++ids, method, ...(params === undefined ? {} : { params }) }))
   expect(frames).toHaveLength(1)
-  return frames[0]!
+  return frames[0] as Frame
 }
 
 /** a tool's answer: its JSON, or its error text */
@@ -118,6 +118,21 @@ describe("kyora mcp: the tools", () => {
     expect((await call(server, "vms_list")).value.sandboxes.map((s: { id: string }) => s.id)).toContain(id)
     expect((await call(server, "vms_destroy", { sandboxes: ["mcp-box"] })).value).toEqual({ removed: [id], gone: [] })
     expect(platform.destroyed).toContain(id)
+  })
+
+  test("a VM that arrives after its create was cancelled is destroyed", async () => {
+    const slow = await startFakePlatform({ latencyMs: 300 })
+    try {
+      const server = serverFor(slow.url)
+      const pending = server.line(JSON.stringify({ jsonrpc: "2.0", id: "create-1", method: "tools/call", params: { name: "vms_create", arguments: { name: "late-box" } } }))
+      await waitFor(() => slow.requests.includes("POST /v1/sandboxes"), 5_000, "the create")
+      await server.line(JSON.stringify({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: "create-1" } }))
+      expect(await pending).toEqual([])
+      const created = await waitFor(() => slow.sandboxes.size === 0 && slow.destroyed.length === 1 && slow.destroyed, 5_000, "the destroy")
+      expect(created).toHaveLength(1)
+    } finally {
+      await slow.stop()
+    }
   })
 
   test("vms_run uploads the directory, runs, pulls `out` back and destroys the VM; vms_push and vms_pull", async () => {
@@ -238,12 +253,16 @@ describe("kyora mcp: the protocol", () => {
 
   test("bad JSON, bad requests, notifications and responses", async () => {
     expect(await server().line("{nope")).toEqual([{ jsonrpc: "2.0", id: null, error: { code: -32700, message: "not JSON" } }])
-    expect((await server().line("[]"))[0]!.error?.code).toBe(-32600)
+    expect(((await server().line("[]"))[0] as Frame).error?.code).toBe(-32600)
+    expect(await server().line(JSON.stringify({ id: 1, method: "ping" }))).toEqual([{ jsonrpc: "2.0", id: 1, error: { code: -32600, message: "not JSON-RPC 2.0" } }])
+    expect(((await server().line(JSON.stringify({ jsonrpc: "2.0", id: null, method: "tools/call", params: { name: "vms_list" } })))[0] as Frame).error?.code).toBe(-32600)
+    expect(((await server().line(JSON.stringify({ jsonrpc: "2.0", id: 1.5, method: "ping" })))[0] as Frame).error?.code).toBe(-32600)
     expect(await server().line(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }))).toEqual([])
     expect(await server().line(JSON.stringify({ jsonrpc: "2.0", id: 5, result: {} }))).toEqual([])
     expect(await server().line("   ")).toEqual([])
     const batch = await server().line(JSON.stringify([{ jsonrpc: "2.0", id: "a", method: "ping" }, { jsonrpc: "2.0", method: "notifications/initialized" }]))
-    expect(batch).toEqual([{ jsonrpc: "2.0", id: "a", result: {} }])
+    // a batch's answers go back as one array
+    expect(batch).toEqual([[{ jsonrpc: "2.0", id: "a", result: {} }]])
   })
 
   test("arguments are checked against the tool's schema", async () => {
@@ -286,7 +305,7 @@ describe("kyora mcp: the protocol", () => {
     expect(await pending).toEqual([])
     expect(aborted).toBe(true)
 
-    const leaked = (await fake.line(JSON.stringify({ jsonrpc: "2.0", id: 42, method: "tools/call", params: { name: "leaky" } })))[0]!
+    const leaked = (await fake.line(JSON.stringify({ jsonrpc: "2.0", id: 42, method: "tools/call", params: { name: "leaky" } })))[0] as Frame
     expect(leaked.result).toEqual({ content: [{ type: "text", text: "refused [redacted] and kysk_[redacted]" }], isError: true })
 
     // shutdown cancels what still runs, and waits for it to clean up
@@ -295,7 +314,7 @@ describe("kyora mcp: the protocol", () => {
     await Bun.sleep(10)
     await fake.shutdown("going away", 5_000)
     expect(aborted).toBe(true)
-    expect(((await running)[0]!.result as { isError: boolean }).isError).toBe(true)
+    expect((((await running)[0] as Frame).result as { isError: boolean }).isError).toBe(true)
   })
 
   test("redact, validate and Tail", () => {
@@ -311,6 +330,15 @@ describe("kyora mcp: the protocol", () => {
     utf.push("xxé€")
     // a character cut at the start is dropped, not shown broken
     expect(utf.text()).toBe("€")
+    // a token the cut would split is redacted whole first
+    const split = new Tail(20)
+    split.push(`${"a".repeat(100)}${TOKEN}`)
+    split.push("b".repeat(10))
+    expect(split.text()).toBe("[redacted]bbbbbbbbbb")
+    for (let i = 0; i < 40; i++) split.push("c".repeat(30))
+    split.push(TOKEN.slice(0, 20))
+    split.push(`${TOKEN.slice(20)}d`)
+    expect(split.text()).not.toContain(TOKEN.slice(-12))
   })
 })
 
@@ -354,17 +382,19 @@ describe("kyora mcp: the process", () => {
     expect(errors).toContain("MCP server on stdio")
   }, 30_000)
 
-  test("after guardStdout, console.log and process.stdout.write go to stderr", async () => {
-    const script = `import { guardStdout } from ${JSON.stringify(join(import.meta.dir, "mcp.ts"))}
-const send = guardStdout()
+  test("after guardStdout, console output and process.stdout.write go to stderr, redacted", async () => {
+    const script = `import { guardStdout, redact } from ${JSON.stringify(join(import.meta.dir, "mcp.ts"))}
+const send = guardStdout((text) => redact(text, []))
 console.log("noise")
 console.info("info")
 process.stdout.write("more noise\\n")
+console.error("leak kyora_abcdefghijklmnopqrstuvwxyz")
+process.stderr.write("note kvms_abcdefghijklmnopqrstuvwxyz\\n")
 await send('{"jsonrpc":"2.0","id":1,"result":{}}\\n')`
     const file = join(root, "guard.ts")
     await Bun.write(file, script)
     const proc = Bun.spawnSync({ cmd: [process.execPath, "--no-env-file", file], stdout: "pipe", stderr: "pipe" })
     expect(proc.stdout.toString()).toBe('{"jsonrpc":"2.0","id":1,"result":{}}\n')
-    expect(proc.stderr.toString()).toBe("noise\ninfo\nmore noise\n")
+    expect(proc.stderr.toString()).toBe("noise\ninfo\nmore noise\nleak kyora_[redacted]\nnote kvms_[redacted]\n")
   })
 })

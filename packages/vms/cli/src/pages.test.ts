@@ -1,8 +1,8 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test"
-import { mkdir, rm, truncate, writeFile } from "node:fs/promises"
+import { mkdir, rm, symlink, truncate, unlink, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { VmsClient } from "./api"
-import { contentType, MAX_FILES, pageFiles, pagesMain, PagesUsage, publishedPrefix, publishId, publishPage, removePage, type PagesDeps } from "./pages"
+import { contentType, listedFile, MAX_FILES, pageFiles, pagesMain, PagesUsage, publishedPrefix, publishId, publishPage, removePage, type PagesDeps } from "./pages"
 import { StorageClient } from "./storage"
 import { startFakeCloud, type FakeCloud } from "./testing/fake-cloud"
 import { TOKEN } from "./testing/fake-vmd"
@@ -110,6 +110,40 @@ describe("pages", () => {
     await expect(publishPage(deps, { source: dir, name: "report" })).rejects.toThrow("you have 20 pages")
     expect(keys("pages/")).toEqual(keys(`pages/${first.page.prefix}`))
     expect(cloud.pages.get("report")!.prefix).toBe(first.page.prefix)
+  })
+
+  test("a switch whose answer was lost: the files stay when the page points at them, else they go", async () => {
+    const dir = await site()
+    const first = await publishPage(deps, { source: dir, name: "report" })
+    cloud.pageLostAnswer = 502
+    const second = await publishPage(deps, { source: dir, name: "report" })
+    expect(second.page.prefix).not.toBe(first.page.prefix)
+    expect(cloud.pages.get("report")!.prefix).toBe(second.page.prefix)
+    expect(keys(`pages/${second.page.prefix}`)).toHaveLength(5)
+    expect(keys(`pages/${first.page.prefix}`)).toEqual([])
+    // a 5xx that did not switch it: the upload is deleted, the page keeps serving
+    cloud.pageLostAnswer = null
+    cloud.pageFailure = { status: 500, error: "internal", message: "something broke" }
+    await expect(publishPage(deps, { source: dir, name: "report" })).rejects.toThrow("something broke")
+    expect(keys("pages/")).toEqual(keys(`pages/${second.page.prefix}`))
+  })
+
+  test("a failed upload stops the rest and leaves nothing behind", async () => {
+    for (let i = 0; i < 40; i++) await write(root, `many/${i}.txt`, String(i))
+    cloud.failPut = 3
+    await expect(publishPage(deps, { source: join(root, "many"), name: "many" })).rejects.toThrow("the store failed")
+    expect(cloud.requests.filter((line) => line.startsWith("PUT ")).length).toBeLessThan(15)
+    expect(keys("pages/")).toEqual([])
+    expect(cloud.pages.size).toBe(0)
+  })
+
+  test("a file swapped for a symlink after it was listed is not uploaded", async () => {
+    const dir = await site()
+    const [file] = (await pageFiles(dir)).filter((one) => one.key === "index.html")
+    await write(root, "secret.txt", "TOKEN=hunter2")
+    await unlink(join(dir, "index.html"))
+    await symlink(join(root, "secret.txt"), join(dir, "index.html"))
+    await expect(listedFile(file!)).rejects.toThrow("changed while it was being published")
   })
 
   test("without a name: kyora cloud names it from the directory's name, and each such publish is a new page", async () => {

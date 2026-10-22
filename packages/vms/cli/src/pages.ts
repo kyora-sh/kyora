@@ -110,6 +110,8 @@ export interface PageFile {
   key: string
   /** on disk; absent for one made here (a single file's index.html) */
   path?: string
+  /** the file as it was listed: it is uploaded only if it is still that file */
+  inode?: { dev: number; ino: number }
   data?: string
   size: number
   type: string
@@ -123,14 +125,14 @@ export async function pageFiles(source: string): Promise<PageFile[]> {
   const info = await lstat(root).catch(() => null)
   if (!info) throw new Error(`no such file or directory: ${source}`)
   if (info.isFile()) {
-    if (info.size > MAX_BYTES) throw new Error(`${source} is over ${formatBytes(MAX_BYTES)}; a page takes at most that`)
     const name = basename(root)
-    const files: PageFile[] = [{ key: name, path: root, size: info.size, type: contentType(name) }]
+    const files: PageFile[] = [{ key: name, path: root, inode: { dev: info.dev, ino: info.ino }, size: info.size, type: contentType(name) }]
     if (name !== "index.html") {
       const href = escapeHtml(`./${encodeURIComponent(name)}`)
       const data = `<!doctype html>\n<meta charset="utf-8">\n<meta http-equiv="refresh" content="0; url=${href}">\n<title>${escapeHtml(name)}</title>\n<a href="${href}">${escapeHtml(name)}</a>\n`
       files.push({ key: "index.html", data, size: Buffer.byteLength(data), type: TYPES.html! })
     }
+    if (files.reduce((total, file) => total + file.size, 0) > MAX_BYTES) throw new Error(`${source} is over ${formatBytes(MAX_BYTES)}; a page takes at most that`)
     return files
   }
   if (!info.isDirectory()) throw new Error(`${source} is neither a file nor a directory`)
@@ -142,10 +144,10 @@ export async function pageFiles(source: string): Promise<PageFile[]> {
       const path = join(dir, entry.name)
       if (entry.isDirectory()) await walk(path)
       else if (entry.isFile()) {
-        const size = (await lstat(path)).size
-        bytes += size
+        const stat = await lstat(path)
+        bytes += stat.size
         const key = relative(root, path).split(sep).join("/")
-        files.push({ key, path, size, type: contentType(key) })
+        files.push({ key, path, inode: { dev: stat.dev, ino: stat.ino }, size: stat.size, type: contentType(key) })
         if (files.length > MAX_FILES) throw new Error(`${source} has more than ${MAX_FILES} files; a page takes at most ${MAX_FILES}`)
         if (bytes > MAX_BYTES) throw new Error(`${source} is over ${formatBytes(MAX_BYTES)}; a page takes at most that`)
       }
@@ -194,15 +196,35 @@ async function ensureBucket(storage: StorageClient, bucket: string): Promise<voi
   }
 }
 
+/** `each` over the items, IN_FLIGHT at a time; the first failure stops the rest from starting, and is thrown once all in flight are done */
 async function inParallel<T>(items: T[], each: (item: T) => Promise<void>, signal?: AbortSignal): Promise<void> {
   let next = 0
-  await Promise.all(Array.from({ length: Math.min(IN_FLIGHT, items.length) }, async () => {
-    while (next < items.length) {
-      signal?.throwIfAborted()
-      await each(items[next++]!)
+  let failed = false
+  const results = await Promise.allSettled(Array.from({ length: Math.min(IN_FLIGHT, items.length) }, async () => {
+    while (next < items.length && !failed) {
+      try {
+        signal?.throwIfAborted()
+        await each(items[next++]!)
+      } catch (error) {
+        failed = true
+        throw error
+      }
     }
   }))
+  const rejected = results.find((result) => result.status === "rejected")
+  if (rejected) throw rejected.reason
 }
+
+/** a file as listed, opened only if it still is that file (not since swapped for a symlink or another file) */
+export async function listedFile(file: PageFile): Promise<Blob> {
+  if (!file.path) return new Blob([file.data!])
+  const now = await lstat(file.path).catch(() => null)
+  if (!now?.isFile() || now.dev !== file.inode?.dev || now.ino !== file.inode?.ino) throw new Error(`${file.path} changed while it was being published`)
+  return Bun.file(file.path)
+}
+
+/** a refusal from kyora cloud itself: the page was not switched */
+const refused = (error: unknown) => error instanceof ApiError && error.status >= 400 && error.status < 500
 
 /** every object under `prefix`, deleted; returns how many */
 export async function deletePrefix(storage: StorageClient, bucket: string, prefix: string): Promise<number> {
@@ -243,16 +265,29 @@ export async function publishPage(deps: PagesDeps, options: PublishOptions): Pro
   await ensureBucket(storage, bucket)
   const prefix = `${name ? `${name}/` : ""}${publishId()}/`
   deps.progress?.(`uploading ${files.length} file${files.length === 1 ? "" : "s"} (${formatBytes(bytes)}) to ${bucket}/${prefix}`)
-  let page: Page
-  try {
-    await inParallel(files, async (file) => {
-      await storage.put(bucket, `${prefix}${file.key}`, file.path ? Bun.file(file.path) : new Blob([file.data!]), file.type)
-    }, options.signal)
-    options.signal?.throwIfAborted()
-    page = await api.pageCreate({ ...(name ? { name } : { hint: basename(resolve(options.source)) }), bucket, prefix, ...(options.public ? { public: true } : {}), ...(options.spa ? { spa: true } : {}) })
-  } catch (error) {
+  const discard = async (error: unknown): Promise<never> => {
     await deletePrefix(storage, bucket, prefix).catch(() => deps.progress?.(`could not delete ${bucket}/${prefix} after the failed publish`))
     throw error
+  }
+  // nothing points at a fresh prefix until the switch: a failed upload deletes it
+  try {
+    await inParallel(files, async (file) => {
+      await storage.put(bucket, `${prefix}${file.key}`, await listedFile(file), file.type)
+    }, options.signal)
+    options.signal?.throwIfAborted()
+  } catch (error) {
+    return discard(error)
+  }
+  let page: Page
+  try {
+    page = await api.pageCreate({ ...(name ? { name } : { hint: basename(resolve(options.source)) }), bucket, prefix, ...(options.public ? { public: true } : {}), ...(options.spa ? { spa: true } : {}) })
+  } catch (error) {
+    if (refused(error)) return discard(error)
+    // no answer, or not one to go by: the switch may have happened, and then these files are live
+    const live = await api.pages().then((pages) => pages.find((one) => one.bucket === bucket && one.prefix === prefix) ?? null, () => undefined)
+    if (live === undefined) throw new Error(`${message(error)}; the page may or may not have switched to ${bucket}/${prefix}, which is kept (kyora pages ls tells)`)
+    if (live === null) return discard(error)
+    page = live
   }
   let replaced: PublishResult["replaced"] = null
   if (previous && (previous.bucket !== page.bucket || previous.prefix !== page.prefix)) {
