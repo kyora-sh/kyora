@@ -16,7 +16,7 @@ import { repoTop } from "./sessions/git"
 import { getSession } from "./sessions/platform"
 import { resolveState } from "./sessions/state"
 import { redact, rememberSecret } from "./redact"
-import { presignRequest, StorageClient } from "./storage"
+import { presignRequest, StorageClient, validBucket } from "./storage"
 import { top } from "./top"
 import { pull, push, remotePath, WORK, type PullResult } from "./transfer"
 import { diskGb, memoryMb, parseSeconds } from "./units"
@@ -110,6 +110,13 @@ const input = <T>(compute: () => T): T => {
 }
 
 const local = (context: ToolContext, path: string) => resolve(context.cwd, path)
+
+/** the bucket argument, checked: it goes into the request's path */
+function bucketOf(args: Record<string, unknown>): string {
+  const bucket = args.bucket as string
+  if (!validBucket(bucket)) throw new ToolInputError("a bucket's name is 3-63 characters of a-z, 0-9 and -")
+  return bucket
+}
 const text = (value: unknown) => (typeof value === "string" ? value : undefined)
 
 function specOf(args: Record<string, unknown>, context: ToolContext): CreateSpec {
@@ -621,7 +628,7 @@ export function kyoraTools(): Tool[] {
       description: "The objects in a bucket, under a prefix.",
       inputSchema: object({ bucket: string("the bucket"), prefix: string("only keys starting with this"), limit: integer("at most this many (default 1000)", 1, 10_000), delimiter: boolean("group keys by / into prefixes, like directories") }, ["bucket"]),
       annotations: READ,
-      handler: async (args, { storage, signal }) => storage.list(args.bucket as string, text(args.prefix) ?? "", (args.limit as number | undefined) ?? 1000, Boolean(args.delimiter), quick(signal)),
+      handler: async (args, { storage, signal }) => storage.list(bucketOf(args), text(args.prefix) ?? "", (args.limit as number | undefined) ?? 1000, Boolean(args.delimiter), quick(signal)),
     },
     {
       name: "storage_put",
@@ -634,7 +641,7 @@ export function kyoraTools(): Tool[] {
         const file = args.file === undefined ? null : Bun.file(local(context, args.file as string))
         if (file && !(await file.exists())) throw new ToolInputError(`no such file: ${args.file}`)
         const type = text(args.content_type) ?? (file ? file.type.split(";")[0] || null : "text/plain; charset=utf-8")
-        return context.storage.put(args.bucket as string, args.key as string, file ?? new Blob([args.content as string]), type, transfer(context.signal))
+        return context.storage.put(bucketOf(args), args.key as string, file ?? new Blob([args.content as string]), type, transfer(context.signal))
       },
     },
     {
@@ -644,7 +651,7 @@ export function kyoraTools(): Tool[] {
       inputSchema: object({ bucket: string("the bucket"), key: string("the object's key"), file: string("save it to this local path, overwriting what is there"), max_bytes: integer("the most returned as text (default 100000)", 1, 1_000_000) }, ["bucket", "key"]),
       annotations: { ...WRITE, destructiveHint: true },
       handler: async (args, context) => {
-        const response = await context.storage.call("GET", context.storage.object(args.bucket as string, args.key as string), { signal: transfer(context.signal) })
+        const response = await context.storage.call("GET", context.storage.object(bucketOf(args), args.key as string), { signal: transfer(context.signal) })
         if (args.file !== undefined) {
           const path = local(context, args.file as string)
           return { key: args.key, file: path, size: await Bun.write(path, response) }
@@ -681,7 +688,7 @@ export function kyoraTools(): Tool[] {
       inputSchema: object({ bucket: string("the bucket"), key: string("the object's key") }, ["bucket", "key"]),
       annotations: DESTROY,
       handler: async (args, { storage, signal }) => {
-        await storage.call("DELETE", storage.object(args.bucket as string, args.key as string), { signal: quick(signal) })
+        await storage.call("DELETE", storage.object(bucketOf(args), args.key as string), { signal: quick(signal) })
         return { key: args.key, deleted: true }
       },
     },
@@ -691,7 +698,7 @@ export function kyoraTools(): Tool[] {
       description: "A URL for one object, valid for ttl_seconds (at most 900): a download, or with put an upload.",
       inputSchema: object({ bucket: string("the bucket"), key: string("the object's key"), put: boolean("a URL to upload with PUT"), ttl_seconds: integer("how long it is valid (default 300)", 1, 900), length: integer("put: the exact length to sign", 0, 5_000_000_000), inline: boolean("a download shown in the browser (media) instead of saved") }, ["bucket", "key"]),
       annotations: READ,
-      handler: async (args, { storage, signal }) => (await storage.call("POST", `/v1/storage/buckets/${args.bucket as string}/presign`, { json: presignRequest(args.key as string, { put: Boolean(args.put), ttl: (args.ttl_seconds as number | undefined) ?? null, length: (args.length as number | undefined) ?? null, inline: Boolean(args.inline) }), signal: quick(signal) })).json(),
+      handler: async (args, { storage, signal }) => (await storage.call("POST", `/v1/storage/buckets/${bucketOf(args)}/presign`, { json: presignRequest(args.key as string, { put: Boolean(args.put), ttl: (args.ttl_seconds as number | undefined) ?? null, length: (args.length as number | undefined) ?? null, inline: Boolean(args.inline) }), signal: quick(signal) })).json(),
     },
     {
       name: "publish",

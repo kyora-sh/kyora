@@ -65,6 +65,9 @@ const SINGLE_PUT = 90 * 1000 * 1000
 const PART_SIZE = 64 * 1024 * 1024
 const BUCKET = /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/
 
+/** a bucket's name, as kyora cloud takes it: nothing else may go into a storage request's path */
+export const validBucket = (name: string): boolean => BUCKET.test(name)
+
 export const encodeKey = (key: string): string => key.split("/").map((segment) => encodeURIComponent(segment)).join("/")
 
 interface CallOptions {
@@ -102,6 +105,8 @@ export class StorageClient {
   }
 
   object(bucket: string, key: string, query = ""): string {
+    // a . or .. segment would be resolved away, and the request would go to some other path
+    if (key.split("/").some((segment) => segment === "." || segment === "..")) throw new ApiError("storage: a key's segments can't be . or ..", 0, "invalid_request")
     return `/v1/storage/buckets/${bucket}/o/${encodeKey(key)}${query}`
   }
 

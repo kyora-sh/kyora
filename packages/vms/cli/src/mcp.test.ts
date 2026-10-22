@@ -228,7 +228,8 @@ describe("kyora mcp: the tools", () => {
         const before = cloud.requests.length
         const id = `cancel-${name}`
         const pending = server.line(JSON.stringify({ jsonrpc: "2.0", id, method: "tools/call", params: { name, arguments: args } }))
-        await Bun.sleep(50)
+        // cancelled while the lookup's answer is held back
+        await waitFor(() => cloud.requests.length > before, 5_000, "the lookup")
         await server.line(JSON.stringify({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: id } }))
         expect(await pending).toEqual([])
         expect(cloud.requests.slice(before).filter((line) => !line.startsWith("GET "))).toEqual([])
@@ -252,6 +253,11 @@ describe("kyora mcp: the tools", () => {
     expect(await readFile(join(root, "saved/a.txt"), "utf8")).toBe("hello")
     expect((await call(server, "storage_presign", { bucket: "assets", key: "pic.png", ttl_seconds: 60 })).value.url).toContain("X-Signature")
     expect((await call(server, "storage_rm", { bucket: "assets", key: "pic.png" })).value.deleted).toBe(true)
+    // nothing but a bucket and an object key goes into the path
+    const before = cloud.requests.length
+    expect((await call(server, "storage_rm", { bucket: "../../pages/report#", key: "x" }).catch((error: Error) => error)).toString()).toContain("a bucket's name is")
+    expect(await call(server, "storage_rm", { bucket: "assets", key: "../../../pages/report" })).toMatchObject({ isError: true })
+    expect(cloud.requests.length).toBe(before)
 
     await write(root, "report/index.html", "<h1>done</h1>")
     const published = await call(server, "publish", { path: "report", name: "build-report" })
