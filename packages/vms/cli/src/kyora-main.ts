@@ -7,6 +7,7 @@ import { supportCommand } from "./support"
 import { deployCommand } from "./deploys"
 import { exitFlushed, failureCode, note } from "./output"
 import { SESSION_HELP, sessionMain } from "./sessions/cli"
+import { pagesMain, PagesUsage } from "./pages"
 import { usageHint, vmsMain } from "./vms"
 
 /**
@@ -27,6 +28,9 @@ usage:
   kyora session …     the same, with finer control (kyora session --help)
   kyora switch …      hot-swap coding-agent logins between accounts (kyora switch --help)
   kyora top [--once|--json]   live usage of your running VMs (--interval 2, --region ID)
+  kyora publish <dir|file>    a directory or file as a static page at its own URL, private unless --public
+  kyora pages ls | show | rm | login                   your pages (kyora pages --help)
+  kyora mcp           the CLI as an MCP server on stdio: claude mcp add kyora -- kyora mcp
   kyora support new | ls | show | reply                contact support (kyora support --help)
   kyora projects create | ls | show | rm               connect and manage deploy projects
   kyora link [N]                                      select this checkout's project
@@ -51,6 +55,17 @@ async function main(argv: string[]): Promise<number> {
   if (group === "projects" || group === "link" || group === "deploy" || group === "deployments") return deployCommand(new VmsClient(await loadConfig()), group, rest)
   if (group === "support") return supportCommand(new VmsClient(await loadConfig()), rest)
   if (group === "top") return topCommand(rest)
+  if (group === "publish") return pagesMain(["publish", ...rest])
+  if (group === "pages") return pagesMain(rest)
+  if (group === "mcp") {
+    if (rest.length > 0 && rest[0] !== "--help" && rest[0] !== "-h") throw new KyoraUsage("kyora mcp takes no arguments")
+    const { MCP_HELP, mcpMain } = await import("./mcp")
+    if (rest.length > 0) {
+      console.log(MCP_HELP)
+      return 0
+    }
+    return mcpMain()
+  }
   if (group === "session") return sessionMain(rest)
   if (group === "detach" || group === "back") return sessionMain([group, ...rest])
   if (group === "image") {
@@ -95,7 +110,7 @@ export function runKyora(argv: string[]): void {
   }
   main(argv).then(exit, async (error: unknown) => {
     note(error instanceof Error ? error.message : String(error))
-    const hint = error instanceof KyoraUsage ? "run `kyora --help` for usage" : usageHint(error)
+    const hint = error instanceof KyoraUsage ? "run `kyora --help` for usage" : error instanceof PagesUsage ? "run `kyora pages --help` for usage" : usageHint(error)
     if (hint) note(hint)
     await exit(failureCode(error))
   })
