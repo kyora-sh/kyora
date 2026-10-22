@@ -220,6 +220,24 @@ describe("kyora mcp: the tools", () => {
     expect((await call(server, "deploy", { project: "web", ref: "main", sha: "a".repeat(40) }).catch((error: Error) => error)).toString()).toContain("give ref or sha")
   })
 
+  test("a call cancelled while it looks something up changes nothing", async () => {
+    const server = serverFor(cloud.url)
+    cloud.delayMs = 200
+    try {
+      for (const [name, args] of [["expose", { sandbox: "brisk-otter", port: 3000 }], ["unexpose", { sandbox: "brisk-otter", label: "x" }], ["vms_ttl", { sandbox: "brisk-otter", ttl: "1s" }]] as const) {
+        const before = cloud.requests.length
+        const id = `cancel-${name}`
+        const pending = server.line(JSON.stringify({ jsonrpc: "2.0", id, method: "tools/call", params: { name, arguments: args } }))
+        await Bun.sleep(50)
+        await server.line(JSON.stringify({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: id } }))
+        expect(await pending).toEqual([])
+        expect(cloud.requests.slice(before).filter((line) => !line.startsWith("GET "))).toEqual([])
+      }
+    } finally {
+      cloud.delayMs = 0
+    }
+  })
+
   test("storage and pages", async () => {
     const server = serverFor(cloud.url)
     cloud.buckets.set("assets", "eu")

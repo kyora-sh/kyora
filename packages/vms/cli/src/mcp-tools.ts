@@ -330,6 +330,7 @@ export function kyoraTools(): Tool[] {
       handler: async (args, { api, signal }) => {
         const request = execOf(args)
         const id = await resolveTarget(api, args.sandbox as string)
+        signal.throwIfAborted()
         return { sandbox: id, ...(await execute(api, id, request, args, signal)) }
       },
     },
@@ -386,6 +387,7 @@ export function kyoraTools(): Tool[] {
       handler: async (args, context) => {
         const dest = input(() => remotePath(text(args.dest) ?? WORK))
         const id = await resolveTarget(context.api, args.sandbox as string)
+        context.signal.throwIfAborted()
         const result = await push(context.api, id, { dir: local(context, text(args.dir) ?? "."), git: args.git !== false }, dest, { signal: transfer(context.signal) })
         return { sandbox: id, dest, entries: result.server.entries ?? result.listing.entries.length, bytes: result.sent, raw_bytes: result.listing.bytes, duration_ms: result.durationMs, ...(result.warnings.length ? { warnings: sample(result.warnings) } : {}) }
       },
@@ -399,6 +401,7 @@ export function kyoraTools(): Tool[] {
       handler: async (args, context) => {
         const paths = input(() => (args.paths as string[]).map((path) => remotePath(path)))
         const id = await resolveTarget(context.api, args.sandbox as string)
+        context.signal.throwIfAborted()
         return { sandbox: id, downloads: await pullAll(context.api, id, paths, local(context, text(args.to) ?? "."), context.signal) }
       },
     },
@@ -502,7 +505,9 @@ export function kyoraTools(): Tool[] {
       handler: async (args, context) => {
         if (args.ref !== undefined && args.sha !== undefined) throw new ToolInputError("give ref or sha, not both")
         if (args.sha !== undefined && !/^[a-f0-9]{40}$/.test(args.sha as string)) throw new ToolInputError("sha must be a full commit SHA")
-        return context.api.deploymentCreate(await project(args, context), { environment: "production", ...(args.ref ? { ref: args.ref as string } : {}), ...(args.sha ? { sha: args.sha as string } : {}) })
+        const name = await project(args, context)
+        context.signal.throwIfAborted()
+        return context.api.deploymentCreate(name, { environment: "production", ...(args.ref ? { ref: args.ref as string } : {}), ...(args.sha ? { sha: args.sha as string } : {}) })
       },
     },
     {
@@ -574,8 +579,9 @@ export function kyoraTools(): Tool[] {
       description: "A URL for a port a VM listens on. Private (only you, signed in) unless public; returns the URL.",
       inputSchema: object({ sandbox: SANDBOX, port: integer("the port in the VM", 1, 65_535), name: string("the URL's name (default: generated)"), public: boolean("anyone with the URL can open it"), trusted: boolean("pass the visitor's kyora identity headers through") }, ["sandbox", "port"]),
       annotations: WRITE,
-      handler: async (args, { api }) => {
+      handler: async (args, { api, signal }) => {
         const id = await resolveTarget(api, args.sandbox as string)
+        signal.throwIfAborted()
         return api.call("expose port", "POST", ports(id), { json: { port: args.port, ...(args.name ? { name: args.name } : {}), ...(args.public ? { public: true } : {}), ...(args.trusted ? { trusted: true } : {}) } })
       },
     },
@@ -593,9 +599,10 @@ export function kyoraTools(): Tool[] {
       description: "Release a public URL name (it then has a 30-day cooldown for other accounts).",
       inputSchema: object({ label: string("the URL's name"), sandbox: string("the VM it belongs to (optional)") }, ["label"]),
       annotations: DESTROY,
-      handler: async (args, { api }) => {
+      handler: async (args, { api, signal }) => {
         const label = encodeURIComponent(args.label as string)
         const path = args.sandbox === undefined ? `/v1/ports/${label}` : `${ports(await resolveTarget(api, args.sandbox as string))}/${label}`
+        signal.throwIfAborted()
         await api.call("unexpose port", "DELETE", path, { accept: [204] })
         return { released: true, label: args.label }
       },

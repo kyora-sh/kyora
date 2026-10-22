@@ -23,6 +23,8 @@ export interface FakeCloud {
   failPut: number | null
   /** what POST /v1/pages answers instead, when set */
   pageFailure: { status: number; error: string; message: string } | null
+  /** every GET waits this long first */
+  delayMs: number
   /** what GET /v1/me says; a test may plant the token in it */
   me: Record<string, unknown>
   stop: () => void
@@ -43,6 +45,7 @@ export function startFakeCloud(): FakeCloud {
     pageFailure: null,
     pageLostAnswer: null,
     failPut: null,
+    delayMs: 0,
     me: { login: "ada", kind: "user", role: "member", token: { name: "ci", scopes: ["vms"], expiresAt: null } },
   }
   const sandbox = { id: "sb_eu_abc123_0123456789abcdef", name: "brisk-otter", status: "running", network: "none", vcpus: 2, memoryMb: 4096, diskGb: 30, expiresAt: null, createdAt: "2026-10-22T00:00:00.000Z", region: "eu" }
@@ -54,6 +57,7 @@ export function startFakeCloud(): FakeCloud {
       const path = url.pathname
       const method = request.method
       cloud.requests.push(`${method} ${path}${url.search}`)
+      if (method === "GET" && cloud.delayMs) await Bun.sleep(cloud.delayMs)
       if (request.headers.get("authorization") !== `Bearer ${TOKEN}`) return error(401, "unauthorized", "no such token")
       const body = method === "POST" || method === "PATCH" ? await request.clone().json().catch(() => null) as Record<string, unknown> | null : null
 
