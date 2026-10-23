@@ -5,6 +5,8 @@ import { dirname, join } from "node:path"
 import { KEY, TOKEN } from "./fake-vmd"
 
 export const ENTRY = join(import.meta.dir, "..", "index.ts")
+/** the `kyora` bin; `kyora vms <args…>` is what ENTRY (`kyora-vms`) runs */
+export const KYORA_ENTRY = join(import.meta.dir, "..", "kyora.ts")
 
 /**
  * The CLI under test gets a HOME of its own even when the package's test preload
@@ -91,6 +93,8 @@ export interface CliOptions {
   stdin?: string
   /** run without --no-env-file, the way `bun src/index.ts` would */
   loadDotenv?: boolean
+  /** the script to run instead of ENTRY */
+  entry?: string
 }
 
 /** every stdout and stderr any test saw, checked for the key at the end */
@@ -108,7 +112,7 @@ export function platformEnv(url: string, extra: Record<string, string | undefine
 
 export function spawnCli(args: string[], options: CliOptions & { env: Record<string, string | undefined> }) {
   const proc = Bun.spawn({
-    cmd: [process.execPath, ...(options.loadDotenv ? [] : ["--no-env-file"]), ENTRY, ...args],
+    cmd: [process.execPath, ...(options.loadDotenv ? [] : ["--no-env-file"]), options.entry ?? ENTRY, ...args],
     cwd: options.cwd,
     env: Object.fromEntries(Object.entries(options.env).filter(([, value]) => value !== undefined)) as Record<string, string>,
     stdin: options.stdin !== undefined ? Buffer.from(options.stdin) : "ignore",
