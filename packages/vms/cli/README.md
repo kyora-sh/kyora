@@ -64,7 +64,7 @@ bun add -g kyora
 kyora vms login
 ```
 
-Or without installing: `bunx --package kyora kyora-vms health`. From a checkout: `bun --no-env-file --config=/dev/null packages/vms/cli/src/index.ts`.
+Or without installing: `bunx kyora vms health`. From a checkout: `bun --no-env-file --config=/dev/null packages/vms/cli/src/kyora.ts vms`.
 
 ## Configure
 
