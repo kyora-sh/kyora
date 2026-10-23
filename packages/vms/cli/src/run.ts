@@ -15,7 +15,7 @@ export interface RunOptions {
   /** --git, --git-depth, --git-base: the history goes up too, and .git is set up around it */
   history?: HistoryOptions | null
   spec: CreateSpec
-  /** kyora cloud: seconds the create may wait in line when no machine has room (0: fail at once) */
+  /** kyora cloud: seconds the create may wait in line when there is no room (0: fail at once) */
   wait: number
   exec: ExecRequest
   outs: string[]

@@ -244,6 +244,12 @@ describe("the rest of kyora cloud", () => {
     const admin = await cli(["nodes"], { cwd: root, env: env() })
     expect(admin.stdout).toMatch(/NAME\s+STATUS\s+VCPU FREE\s+MEM FREE\s+DISK FREE\s+SANDBOXES\s+VERSION\s+SEEN\nbox-1\s+draining\s+12\/16\s+40G\/48G\s+150G\/200G\s+2\s+0.2.0\s+0m ago\nbox-2\s+offline\s/)
     expect(admin.stdout).toContain("0 of 2 taking sandboxes")
+
+    // anyone else gets no machines, and the way to the room per region
+    cloud.options.nodes = []
+    const member = await cli(["nodes"], { cwd: root, env: env() })
+    expect(member.code).toBe(0)
+    expect(member.stdout).toBe("no machines listed: only admins see machines; `kyora vms regions` shows the room in each region\n")
   })
 
   test("kyora cloud's own verbs explain themselves against a kyora-vmd", async () => {
@@ -281,7 +287,7 @@ describe("waiting in line for room on kyora cloud", () => {
     expect(cloud.created[0]).toMatchObject({ wait: 900 })
     const [ticket] = [...cloud.tickets.keys()]
     expect(cloud.requests.filter((request) => request === `GET /v1/queue/${ticket}`)).toHaveLength(3)
-    expect(result.stderr).toContain("no machine has room right now; queued: 2 ahead… (waiting up to 15m00s; --no-wait fails at once instead)")
+    expect(result.stderr).toContain("no room right now; queued: 2 ahead… (waiting up to 15m00s; --no-wait fails at once instead)")
     expect(result.stderr).toContain("[kyora-vms] queued: 1 ahead…")
     expect(result.stderr).toContain("[kyora-vms] queued: next in line…")
     const events = result.stdout.trim().split("\n").map((line) => JSON.parse(line))

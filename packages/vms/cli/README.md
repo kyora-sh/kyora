@@ -77,7 +77,7 @@ kyora vms login           # opens the browser; approve the code it shows there
 kyora vms health          # ok · https://cloud.kyora.sh · kyora cloud
 ```
 
-The token is kept in `~/.config/kyora/credentials.json` (mode 0600, one entry per server). `KYORA_TOKEN=kyora_…`, a token made on the dashboard, works instead, in CI for example. `kyora vms whoami` says whose token is in use, `kyora vms nodes` lists the machines and what is free on them, and `kyora vms logout` deletes the token here (revoke it on the dashboard to end it everywhere). `login --url` signs in to another kyora cloud; point `KYORA_VMS_URL` at it to use that login.
+The token is kept in `~/.config/kyora/credentials.json` (mode 0600, one entry per server). `KYORA_TOKEN=kyora_…`, a token made on the dashboard, works instead, in CI for example. `kyora vms whoami` says whose token is in use, `kyora vms regions` shows the room free in each region, and `kyora vms logout` deletes the token here (revoke it on the dashboard to end it everywhere). `login --url` signs in to another kyora cloud; point `KYORA_VMS_URL` at it to use that login.
 
 An organization is a shared kyora cloud account: its members' sandboxes, snapshots, URLs and tokens belong to the org, under its caps. `kyora vms org ls` lists yours, `kyora vms org use acme` makes commands act as it , and `kyora vms org use personal` switches back. With no access of your own, sign in for the org directly: `kyora vms login --org acme`.
 
@@ -236,7 +236,7 @@ Limits:
 | 128 + n | the command died of signal n (137 = SIGKILL, e.g. out of memory) |
 | 130 / 143 | you interrupted kyora vms (Ctrl-C / SIGTERM) |
 | 123 | requested image unavailable on reachable machines (HTTP 409 `image_unavailable`); the message names its available regions |
-| 125 | kyora itself failed: config, network, API error (no machine had room within `--wait`, or at once with `--no-wait`), a command whose stream broke and could not be reattached (see [When the connection breaks](#when-the-connection-breaks)), or an `--out` that was missing or unsafe after a successful command |
+| 125 | kyora itself failed: config, network, API error (no room came up within `--wait`, or at once with `--no-wait`), a command whose stream broke and could not be reattached (see [When the connection breaks](#when-the-connection-breaks)), or an `--out` that was missing or unsafe after a successful command |
 
 ## Commands
 
@@ -252,7 +252,7 @@ kyora vms screenshot <id> [-o file.png]   a screenshot of a desktop sandbox (--i
 kyora vms computer <id> <action> [args…]  drive its desktop: a click, typing, keys, scrolling (below)
 kyora vms shell <id> [-- cmd…]            a terminal in the sandbox that outlives its connection (below)
 kyora vms health                          is the host up, is the key accepted
-kyora vms nodes                           kyora cloud's machines and what is free on them
+kyora vms nodes                           kyora cloud's machines (admins only)
 kyora vms regions [default <id>|global]   kyora cloud's regions, what is free in each, where your creates go
 kyora vms login [--url URL]               sign in to kyora cloud through the browser
 kyora vms login --org ORG                 a token that acts as an org you're in

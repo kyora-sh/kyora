@@ -20,7 +20,7 @@ export function queueNotes(waitSeconds: number): (ticket: { ahead: number }) => 
   return (ticket) => {
     if (ticket.ahead === last) return
     const place = ticket.ahead === 0 ? "next in line" : `${ticket.ahead} ahead`
-    note(last === null ? `no machine has room right now; queued: ${place}… (waiting up to ${formatMs(waitSeconds * 1000)}; --no-wait fails at once instead)` : `queued: ${place}…`)
+    note(last === null ? `no room right now; queued: ${place}… (waiting up to ${formatMs(waitSeconds * 1000)}; --no-wait fails at once instead)` : `queued: ${place}…`)
     last = ticket.ahead
   }
 }
@@ -28,7 +28,7 @@ export function queueNotes(waitSeconds: number): (ticket: { ahead: number }) => 
 /** a create that found no room in the region it asked for, and runs in the next one */
 export function regionNote(sandbox: { id: string; region?: string; requestedRegion?: string }): void {
   if (sandbox.region && sandbox.requestedRegion && sandbox.region !== sandbox.requestedRegion) {
-    note(`no machine in ${sandbox.requestedRegion} had room; ${sandbox.id} runs in ${sandbox.region} (--region ${sandbox.requestedRegion} keeps a create there)`)
+    note(`no room in ${sandbox.requestedRegion}; ${sandbox.id} runs in ${sandbox.region} (--region ${sandbox.requestedRegion} keeps a create there)`)
   }
 }
 

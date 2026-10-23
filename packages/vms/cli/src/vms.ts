@@ -86,7 +86,7 @@ more commands (every sandbox argument accepts a name, id or unique id prefix):
   kyora vms image ls | versions <name> | rm <name@N|img_…> | usage
                                             your images by name, one name's versions, delete one, storage
   kyora vms image push <file.ext4> --name N [--region R]   store an ext4 you built yourself as name's next version
-  kyora vms nodes                           kyora cloud's machines and what is free on them
+  kyora vms nodes                           kyora cloud's machines (admins only)
   kyora vms session …                       move a Claude Code session to a VM and back
                                             (also \`kyora session …\`; \`kyora vms session --help\`)
   kyora vms storage …                       private object storage: buckets, put, get, ls, rm,
