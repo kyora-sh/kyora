@@ -50,7 +50,7 @@
     },
     "packages/vms/cli": {
       "name": "kyora",
-      "version": "0.1.1",
+      "version": "0.2.0",
       "bin": {
         "kyora-vms": "./dist/index.js",
         "kyora": "./dist/kyora.js",
