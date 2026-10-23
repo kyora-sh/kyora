@@ -128,6 +128,24 @@ test("completion scripts and five-second cache include sandbox names", async () 
   expect(await completionNames(api, cacheKey)).toEqual(["brisk-otter"])
 })
 
+test("images completes like image, under kyora and kyora vms", async () => {
+  const script = `${completion("bash")}
+for words in "kyora image ch" "kyora images ch" "kyora vms image ch" "kyora vms images ch" "kyora-vms images ch"; do
+  read -ra COMP_WORDS <<< "$words"
+  COMP_CWORD=$((\${#COMP_WORDS[@]} - 1))
+  _kyora
+  printf '%s\\n' "\${COMPREPLY[*]}"
+done
+`
+  const proc = Bun.spawn(["bash", "-c", script], { stdout: "pipe", stderr: "pipe" })
+  const [out, err, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited])
+  expect([out, err, code]).toEqual(["check\n".repeat(5), "", 0])
+  expect(completion("zsh")).toContain("$words[2] == (image|images)")
+  expect(completion("zsh")).toContain("$words[n] == (image|images)")
+  expect(completion("fish")).toContain("__fish_seen_subcommand_from image images; and not __fish_seen_subcommand_from vms")
+  expect(completion("fish")).toContain("__fish_seen_subcommand_from vms; and __fish_seen_subcommand_from image images'")
+})
+
 test("real terminal: bare hints, new creates and attaches, attach picks the only sandbox", async () => {
   if (!Bun.which("python3")) return
   await setup()

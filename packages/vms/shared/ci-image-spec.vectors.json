@@ -3,7 +3,7 @@
   "note": "kyora.yml in, parseKyoraYml's result and ciImageKey per label (\"\" is the top level) out; run by ci-image-spec.test.ts and every other reader",
   "vectors": [
     {
-      "name": "flow packages (the #575 form)",
+      "name": "flow packages",
       "yml": "packages: [libvips-dev, 'libpq-dev', \"ffmpeg\"]  # for sharp\n",
       "base": "gha-runner-20261020-1",
       "expect": {
