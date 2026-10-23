@@ -25,7 +25,7 @@ export function resolveSandbox(sandboxes: Sandbox[], input: string): Sandbox {
   throw new Error(`no sandbox named ${input}; run kyora vms ls`)
 }
 
-export const isFullId = (input: string): boolean => /^(?:sb_[0-9a-f]{16}|sb_(?:[a-z][a-z0-9-]{1,23}_)?[a-z0-9]{6}_[A-Za-z0-9_-]{16})$/.test(input)
+export const isFullId = (input: string): boolean => /^(?:sb_[0-9a-f]{16}|sb_(?:[a-z][a-z0-9-]{1,23}_)?[a-z0-9]{6}_[A-Za-z0-9_-]{16}|sb_(?:[a-z][a-z0-9-]{1,23}_)?[a-z2-7]{26})$/.test(input)
 
 /** Names resolve only on the server; a stale list cannot resurrect a missing alias. */
 export async function namedSandbox(api: { get(input: string): Promise<Sandbox> }, input: string): Promise<Sandbox | null> {

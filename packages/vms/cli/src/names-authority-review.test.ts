@@ -36,3 +36,16 @@ test("full IDs and unique ID prefixes retain their direct and list paths", async
   expect(reads).toEqual(["list", "list"])
   expect(await selectSandbox(api, undefined, false)).toBe(sandbox)
 })
+
+test("a sealed id (region only, no machine) is a full id too; its prefix still lists", async () => {
+  const sandbox = { id: `sb_eu_${"k".repeat(26)}`, name: "sealed" } as Sandbox
+  const reads: string[] = []
+  const api = {
+    get: async (input: string) => { reads.push(input); return sandbox },
+    list: async () => { reads.push("list"); return [sandbox] },
+  }
+  expect(await resolveTarget(api, sandbox.id)).toBe(sandbox.id)
+  expect(reads).toEqual([])
+  expect(await resolveTarget(api, "sb_eu_kkk")).toBe(sandbox.id)
+  expect(reads).toEqual(["list"])
+})
