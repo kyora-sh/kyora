@@ -1,0 +1,4630 @@
+{
+  "format": 1,
+  "note": "kyora.yml in, parseKyoraYml's result and ciImageKey per label (\"\" is the top level) out; run by ci-image-spec.test.ts and every other reader",
+  "vectors": [
+    {
+      "name": "flow packages (the #575 form)",
+      "yml": "packages: [libvips-dev, 'libpq-dev', \"ffmpeg\"]  # for sharp\n",
+      "base": "gha-runner-20261020-1",
+      "expect": {
+        "spec": {
+          "packages": [
+            "ffmpeg",
+            "libpq-dev",
+            "libvips-dev"
+          ],
+          "setup": null
+        },
+        "ref": null,
+        "packages": [
+          "ffmpeg",
+          "libpq-dev",
+          "libvips-dev"
+        ],
+        "labels": {},
+        "warnings": []
+      },
+      "keys": {
+        "": "cik_bc7d8fd84d3a18a9fa9194997042dd5a90de9c5ef91965efafd1c8d028ba080e"
+      }
+    },
+    {
+      "name": "block packages with comments",
+      "yml": "# kyora ci\npackages:\n  - libvips-dev   # sharp\n  # not this\n  - libpq-dev\n",
+      "base": "gha-runner-20261020-1",
+      "expect": {
+        "spec": {
+          "packages": [
+            "libpq-dev",
+            "libvips-dev"
+          ],
+          "setup": null
+        },
+        "ref": null,
+        "packages": [
+          "libpq-dev",
+          "libvips-dev"
+        ],
+        "labels": {},
+        "warnings": []
+      },
+      "keys": {
+        "": "cik_3571977073dfaa4ff88c2516338bf2bbaa5b2fbbe1c6483c8175274c4034f7d4"
+      }
+    },
+    {
+      "name": "block list at the key's indentation",
+      "yml": "packages:\n- libvips-dev\n- libpq-dev\n",
+      "base": "gha-runner-20261020-1",
+      "expect": {
+        "spec": {
+          "packages": [
+            "libpq-dev",
+            "libvips-dev"
+          ],
+          "setup": null
+        },
+        "ref": null,
+        "packages": [
+          "libpq-dev",
+          "libvips-dev"
+        ],
+        "labels": {},
+        "warnings": []
+      },
+      "keys": {
+        "": "cik_3571977073dfaa4ff88c2516338bf2bbaa5b2fbbe1c6483c8175274c4034f7d4"
+      }
+    },
+    {
+      "name": "empty file",
+      "yml": "",
+      "base": "gha-runner-20261020-1",
+      "expect": {
+        "spec": null,
+        "ref": null,
+        "packages": [],
+        "labels": {},
+        "warnings": []
+      },
+      "keys": {
+        "": null
+      }
+    },
+    {
+      "name": "comments and a document start only",
+      "yml": "---\n# nothing\n",
+      "base": "gha-runner-20261020-1",
+      "expect": {
+        "spec": null,
+        "ref": null,
+        "packages": [],
+        "labels": {},
+        "warnings": []
+      },
+      "keys": {
+        "": null
+      }
+    },
+    {
+      "name": "image with packages and setup, merged with the top level",
+      "yml": "packages: [libvips-dev]\nimage:\n  packages: [protobuf-compiler, libvips-dev]\n  setup: |\n    curl -fsSL https://example.com/x.sh | sh\n\n    echo done   # stays: block scalars keep comments\n",
+      "base": "gha-runner-20261020-1",
+      "expect": {
+        "spec": {
+          "packages": [
+            "libvips-dev",
+            "protobuf-compiler"
+          ],
+          "setup": "curl -fsSL https://example.com/x.sh | sh\n\necho done   # stays: block scalars keep comments\n"
+        },
+        "ref": null,
+        "packages": [
+          "libvips-dev"
+        ],
+        "labels": {},
+        "warnings": []
+      },
+      "keys": {
+        "": "cik_3123b7cf959b88c00f643e77e59209024d40908ab23afac27a22eb97d34fcdb3"
+      }
+    },
+    {
+      "name": "image by name",
+      "yml": "packages: [jq]\nimage: acme-ci\n",
+      "base": "gha-runner-20261020-1",
+      "expect": {
+        "spec": null,
+        "ref": "acme-ci",
+        "packages": [
+          "jq"
+        ],
+        "labels": {},
+        "warnings": []
+      },
+      "keys": {
+        "": null
+      }
+    },
+    {
+      "name": "image by name and version",
+      "yml": "image: acme-ci@3\n",
+      "base": "gha-runner-20261020-1",
+      "expect": {
+        "spec": null,
+        "ref": "acme-ci@3",
+        "packages": [],
+        "labels": {},
+        "warnings": []
+      },
+      "keys": {
+        "": null
+      }
+    },
+    {
+      "name": "image by id",
+      "yml": "image: img_0123456789abcdef\n",
+      "base": "gha-runner-20261020-1",
+      "expect": {
+        "spec": null,
+        "ref": "img_0123456789abcdef",
+        "packages": [],
+        "labels": {},
+        "warnings": []
+      },
+      "keys": {
+        "": null
+      }
+    },
+    {
+      "name": "bad image reference",
+      "yml": "image: Acme_CI\n",
+      "base": "gha-runner-20261020-1",
+      "expect": {
+        "spec": null,
+        "ref": null,
+        "packages": [],
+        "labels": {},
+        "warnings": [
+          "image: not an image name or id: \"Acme_CI\""
+        ]
+      },
+      "keys": {
+        "": null
+      }
+    },
+    {
+      "name": "labels override, flow mappings",
+      "yml": "packages: [libvips-dev]\nimage:\n  packages: [protobuf-compiler]\nlabels:\n  kyora-8x16: { image: { packages: [clang] } }\n  kyora-2x4: {packages: [jq]}\n  ubuntu-latest:\n    image: null\n  self-hosted:\n    image: acme-ci\n",
+      "base": "gha-runner-20261020-1",
+      "expect": {
+        "spec": {
+          "packages": [
+            "libvips-dev",
+            "protobuf-compiler"
+          ],
+          "setup": null
+        },
+        "ref": null,
+        "packages": [
+          "libvips-dev"
+        ],
+        "labels": {
+          "kyora-8x16": {
+            "spec": {
+              "packages": [
+                "clang",
+                "libvips-dev"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "kyora-2x4": {
+            "spec": {
+              "packages": [
+                "jq",
+                "libvips-dev",
+                "protobuf-compiler"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "ubuntu-latest": {
+            "spec": {
+              "packages": [
+                "libvips-dev"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "self-hosted": {
+            "spec": null,
+            "ref": "acme-ci"
+          }
+        },
+        "warnings": []
+      },
+      "keys": {
+        "": "cik_795e80d0dc99c349c7efdd31ac8ea326956f7a7be25693351541ff89ae76a72d",
+        "kyora-8x16": "cik_09376b2bb8cb3417e8004e436509644cfbb960cb12609a4cdfd10b13b6c9715b",
+        "kyora-2x4": "cik_06afd550670f96e1062dc6ef372d3ff7704b5dcf28073522c50e7bdf9c1d90c4",
+        "ubuntu-latest": "cik_6a1870d4f79c297981407db20e208fb98badb47f8ca6de304e8d28ff6434a43f",
+        "self-hosted": null
+      }
+    },
+    {
+      "name": "labels not a mapping",
+      "yml": "labels: [a, b]\n",
+      "base": "gha-runner-20261020-1",
+      "expect": {
+        "spec": null,
+        "ref": null,
+        "packages": [],
+        "labels": {},
+        "warnings": [
+          "labels: must be a mapping of runs-on labels"
+        ]
+      },
+      "keys": {
+        "": null
+      }
+    },
+    {
+      "name": "block scalar chomping",
+      "yml": "image:\n  setup: |-\n    a\n      b\n\n\n",
+      "base": "gha-runner-20261020-1",
+      "expect": {
+        "spec": {
+          "packages": [],
+          "setup": "a\n  b"
+        },
+        "ref": null,
+        "packages": [],
+        "labels": {},
+        "warnings": []
+      },
+      "keys": {
+        "": "cik_97a81cff0dda2c1eba9417f661e8eef052a48f5579e5c1146fa376451763bd5a"
+      }
+    },
+    {
+      "name": "block scalar keep",
+      "yml": "image:\n  setup: |+\n    a\n\nlabels:\n  l:\n    image:\n      setup: |\n        \tindented with a tab\n        # a comment line in the script\n",
+      "base": "gha-runner-20261020-1",
+      "expect": {
+        "spec": {
+          "packages": [],
+          "setup": "a\n\n"
+        },
+        "ref": null,
+        "packages": [],
+        "labels": {
+          "l": {
+            "spec": {
+              "packages": [],
+              "setup": "\tindented with a tab\n# a comment line in the script\n"
+            },
+            "ref": null
+          }
+        },
+        "warnings": []
+      },
+      "keys": {
+        "": "cik_2518afb0b98ef30410bd5ad4f8b2ff22f4be867736f38bc6a371abce8fc7fb95",
+        "l": "cik_d1846efb4c6d27c412cfd73a0b9092c104aa07ce644741fec8a3108654bdf429"
+      }
+    },
+    {
+      "name": "multi-line flow list with comments",
+      "yml": "packages: [\n  libvips-dev,  # sharp\n  libpq-dev,\n]\n",
+      "base": "gha-runner-20261020-1",
+      "expect": {
+        "spec": {
+          "packages": [
+            "libpq-dev",
+            "libvips-dev"
+          ],
+          "setup": null
+        },
+        "ref": null,
+        "packages": [
+          "libpq-dev",
+          "libvips-dev"
+        ],
+        "labels": {},
+        "warnings": []
+      },
+      "keys": {
+        "": "cik_3571977073dfaa4ff88c2516338bf2bbaa5b2fbbe1c6483c8175274c4034f7d4"
+      }
+    },
+    {
+      "name": "quoted strings and escapes",
+      "yml": "image:\n  setup: \"echo \\u00e9 \\\"q\\\" \\\\ \\t end\\n\"\n  packages: ['it''s-not-a-name']\n\"labels\": {'x y': {image: {setup: 'echo ü'}}}\n",
+      "base": "gha-runner-20261020-1",
+      "expect": {
+        "spec": {
+          "packages": [],
+          "setup": "echo é \"q\" \\ \t end\n"
+        },
+        "ref": null,
+        "packages": [],
+        "labels": {
+          "x y": {
+            "spec": {
+              "packages": [],
+              "setup": "echo ü"
+            },
+            "ref": null
+          }
+        },
+        "warnings": [
+          "image.packages: not a package name: \"it's-not-a-name\""
+        ]
+      },
+      "keys": {
+        "": "cik_908f45dc555399d03e470a004148450aba5b1e3098041923232ce597f67c8127",
+        "x y": "cik_db38662ce061e14f143c7c1b357ef61e9408ab5b94424bc930740786ca58909b"
+      }
+    },
+    {
+      "name": "crlf line endings",
+      "yml": "packages:\r\n  - jq\r\nimage:\r\n  setup: |\r\n    echo hi\r\n",
+      "base": "gha-runner-20261020-1",
+      "expect": {
+        "spec": {
+          "packages": [
+            "jq"
+          ],
+          "setup": "echo hi\n"
+        },
+        "ref": null,
+        "packages": [
+          "jq"
+        ],
+        "labels": {},
+        "warnings": []
+      },
+      "keys": {
+        "": "cik_3d60f72e223ae4964cc46a134ba313e448a42f5ea2a6a71123b815274b093eca"
+      }
+    },
+    {
+      "name": "tabs refused",
+      "yml": "packages:\n\t- jq\n",
+      "base": "gha-runner-20261020-1",
+      "expect": {
+        "spec": null,
+        "ref": null,
+        "packages": [],
+        "labels": {},
+        "warnings": [
+          "kyora.yml: line 2: tabs can't indent"
+        ]
+      },
+      "keys": {
+        "": null
+      }
+    },
+    {
+      "name": "anchors refused",
+      "yml": "packages: &p [jq]\n",
+      "base": "gha-runner-20261020-1",
+      "expect": {
+        "spec": null,
+        "ref": null,
+        "packages": [],
+        "labels": {},
+        "warnings": [
+          "kyora.yml: line 1: anchors, aliases and tags are not supported"
+        ]
+      },
+      "keys": {
+        "": null
+      }
+    },
+    {
+      "name": "folded scalar refused",
+      "yml": "image:\n  setup: >\n    echo\n",
+      "base": "gha-runner-20261020-1",
+      "expect": {
+        "spec": null,
+        "ref": null,
+        "packages": [],
+        "labels": {},
+        "warnings": [
+          "kyora.yml: line 2: folded scalars (>) are not supported: use |"
+        ]
+      },
+      "keys": {
+        "": null
+      }
+    },
+    {
+      "name": "lists of mappings refused",
+      "yml": "packages:\n  - name: jq\n",
+      "base": "gha-runner-20261020-1",
+      "expect": {
+        "spec": null,
+        "ref": null,
+        "packages": [],
+        "labels": {},
+        "warnings": [
+          "kyora.yml: line 2: lists of mappings are not supported"
+        ]
+      },
+      "keys": {
+        "": null
+      }
+    },
+    {
+      "name": "unclosed bracket",
+      "yml": "packages: [jq, libpq-dev\n",
+      "base": "gha-runner-20261020-1",
+      "expect": {
+        "spec": null,
+        "ref": null,
+        "packages": [],
+        "labels": {},
+        "warnings": [
+          "kyora.yml: line 1: [ is not closed"
+        ]
+      },
+      "keys": {
+        "": null
+      }
+    },
+    {
+      "name": "duplicate key",
+      "yml": "packages: [jq]\npackages: [git]\n",
+      "base": "gha-runner-20261020-1",
+      "expect": {
+        "spec": null,
+        "ref": null,
+        "packages": [],
+        "labels": {},
+        "warnings": [
+          "kyora.yml: line 2: duplicate key \"packages\""
+        ]
+      },
+      "keys": {
+        "": null
+      }
+    },
+    {
+      "name": "not a mapping",
+      "yml": "- jq\n",
+      "base": "gha-runner-20261020-1",
+      "expect": {
+        "spec": null,
+        "ref": null,
+        "packages": [],
+        "labels": {},
+        "warnings": [
+          "kyora.yml: line 1: the file must be a mapping (packages:, image:, labels:)"
+        ]
+      },
+      "keys": {
+        "": null
+      }
+    },
+    {
+      "name": "unexpected indentation",
+      "yml": "packages: [jq]\n  image: x\n",
+      "base": "gha-runner-20261020-1",
+      "expect": {
+        "spec": null,
+        "ref": null,
+        "packages": [],
+        "labels": {},
+        "warnings": [
+          "kyora.yml: line 2: unexpected indentation"
+        ]
+      },
+      "keys": {
+        "": null
+      }
+    },
+    {
+      "name": "null image and empty packages",
+      "yml": "packages:\nimage: ~\n",
+      "base": "gha-runner-20261020-1",
+      "expect": {
+        "spec": null,
+        "ref": null,
+        "packages": [],
+        "labels": {},
+        "warnings": []
+      },
+      "keys": {
+        "": null
+      }
+    },
+    {
+      "name": "__proto__ refused",
+      "yml": "labels:\n  __proto__: {image: acme-ci}\n",
+      "base": "gha-runner-20261020-1",
+      "expect": {
+        "spec": null,
+        "ref": null,
+        "packages": [],
+        "labels": {},
+        "warnings": [
+          "kyora.yml: line 2: __proto__ is not a key"
+        ]
+      },
+      "keys": {
+        "": null
+      }
+    },
+    {
+      "name": "__proto__ refused in flow",
+      "yml": "labels: {__proto__: {image: acme-ci}}\n",
+      "base": "gha-runner-20261020-1",
+      "expect": {
+        "spec": null,
+        "ref": null,
+        "packages": [],
+        "labels": {},
+        "warnings": [
+          "kyora.yml: line 1: __proto__ is not a key"
+        ]
+      },
+      "keys": {
+        "": null
+      }
+    },
+    {
+      "name": "nesting at the limit",
+      "yml": "k0:\n k1:\n  k2:\n   k3:\n    k4:\n     k5:\n      k6:\n       k7:\n        k8:\n         k9:\n          k10:\n           k11:\n            k12:\n             k13:\n              k14:\n               k15:\n                k16:\n                 k17:\n                  k18:\n                   k19:\n                    k20:\n                     k21:\n                      k22:\n                       k23:\n                        k24:\n                         k25:\n                          k26:\n                           k27:\n                            k28:\n                             k29:\n                              k30:\n                               - x\n",
+      "base": "gha-runner-20261020-1",
+      "expect": {
+        "spec": null,
+        "ref": null,
+        "packages": [],
+        "labels": {},
+        "warnings": [
+          "unknown key \"k0\" (ignored)"
+        ]
+      },
+      "keys": {
+        "": null
+      }
+    },
+    {
+      "name": "nested deeper than the limit",
+      "yml": "k0:\n k1:\n  k2:\n   k3:\n    k4:\n     k5:\n      k6:\n       k7:\n        k8:\n         k9:\n          k10:\n           k11:\n            k12:\n             k13:\n              k14:\n               k15:\n                k16:\n                 k17:\n                  k18:\n                   k19:\n                    k20:\n                     k21:\n                      k22:\n                       k23:\n                        k24:\n                         k25:\n                          k26:\n                           k27:\n                            k28:\n                             k29:\n                              k30:\n                               k31:\n                                k32:\n                                 v\n",
+      "base": "gha-runner-20261020-1",
+      "expect": {
+        "spec": null,
+        "ref": null,
+        "packages": [],
+        "labels": {},
+        "warnings": [
+          "kyora.yml: line 34: nested deeper than 32"
+        ]
+      },
+      "keys": {
+        "": null
+      }
+    },
+    {
+      "name": "flow nested deeper than the limit",
+      "yml": "packages: [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]\n",
+      "base": "gha-runner-20261020-1",
+      "expect": {
+        "spec": null,
+        "ref": null,
+        "packages": [],
+        "labels": {},
+        "warnings": [
+          "kyora.yml: line 1: nested deeper than 32"
+        ]
+      },
+      "keys": {
+        "": null
+      }
+    },
+    {
+      "name": "unpaired surrogate escape refused",
+      "yml": "image: {setup: \"echo \\ud800\"}\n",
+      "base": "gha-runner-20261020-1",
+      "expect": {
+        "spec": null,
+        "ref": null,
+        "packages": [],
+        "labels": {},
+        "warnings": [
+          "kyora.yml: line 1: an unpaired surrogate in a quoted string"
+        ]
+      },
+      "keys": {
+        "": null
+      }
+    },
+    {
+      "name": "surrogate pair escape",
+      "yml": "image: {setup: \"echo \\ud83d\\ude00\"}\n",
+      "base": "gha-runner-20261020-1",
+      "expect": {
+        "spec": {
+          "packages": [],
+          "setup": "echo 😀"
+        },
+        "ref": null,
+        "packages": [],
+        "labels": {},
+        "warnings": []
+      },
+      "keys": {
+        "": "cik_ee0927083f9d1c6d193995e661aec43d6838a01639234972efd0835e2bc5797c"
+      }
+    },
+    {
+      "name": "a newline in a package name",
+      "yml": "packages: [\"jq\\n\", git]\nimage: \"acme\\n\"\n",
+      "base": "gha-runner-20261020-1",
+      "expect": {
+        "spec": {
+          "packages": [
+            "git"
+          ],
+          "setup": null
+        },
+        "ref": null,
+        "packages": [
+          "git"
+        ],
+        "labels": {},
+        "warnings": [
+          "packages: not a package name: \"jq\\n\"",
+          "image: not an image name or id: \"acme\\n\""
+        ]
+      },
+      "keys": {
+        "": "cik_22c2fc1ef08a2805c5e6092858ca3bb01a85d3f089919265885846290cc210b7"
+      }
+    },
+    {
+      "name": "at most 512 packages per list",
+      "yml": "packages: [p0, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15, p16, p17, p18, p19, p20, p21, p22, p23, p24, p25, p26, p27, p28, p29, p30, p31, p32, p33, p34, p35, p36, p37, p38, p39, p40, p41, p42, p43, p44, p45, p46, p47, p48, p49, p50, p51, p52, p53, p54, p55, p56, p57, p58, p59, p60, p61, p62, p63, p64, p65, p66, p67, p68, p69, p70, p71, p72, p73, p74, p75, p76, p77, p78, p79, p80, p81, p82, p83, p84, p85, p86, p87, p88, p89, p90, p91, p92, p93, p94, p95, p96, p97, p98, p99, p100, p101, p102, p103, p104, p105, p106, p107, p108, p109, p110, p111, p112, p113, p114, p115, p116, p117, p118, p119, p120, p121, p122, p123, p124, p125, p126, p127, p128, p129, p130, p131, p132, p133, p134, p135, p136, p137, p138, p139, p140, p141, p142, p143, p144, p145, p146, p147, p148, p149, p150, p151, p152, p153, p154, p155, p156, p157, p158, p159, p160, p161, p162, p163, p164, p165, p166, p167, p168, p169, p170, p171, p172, p173, p174, p175, p176, p177, p178, p179, p180, p181, p182, p183, p184, p185, p186, p187, p188, p189, p190, p191, p192, p193, p194, p195, p196, p197, p198, p199, p200, p201, p202, p203, p204, p205, p206, p207, p208, p209, p210, p211, p212, p213, p214, p215, p216, p217, p218, p219, p220, p221, p222, p223, p224, p225, p226, p227, p228, p229, p230, p231, p232, p233, p234, p235, p236, p237, p238, p239, p240, p241, p242, p243, p244, p245, p246, p247, p248, p249, p250, p251, p252, p253, p254, p255, p256, p257, p258, p259, p260, p261, p262, p263, p264, p265, p266, p267, p268, p269, p270, p271, p272, p273, p274, p275, p276, p277, p278, p279, p280, p281, p282, p283, p284, p285, p286, p287, p288, p289, p290, p291, p292, p293, p294, p295, p296, p297, p298, p299, p300, p301, p302, p303, p304, p305, p306, p307, p308, p309, p310, p311, p312, p313, p314, p315, p316, p317, p318, p319, p320, p321, p322, p323, p324, p325, p326, p327, p328, p329, p330, p331, p332, p333, p334, p335, p336, p337, p338, p339, p340, p341, p342, p343, p344, p345, p346, p347, p348, p349, p350, p351, p352, p353, p354, p355, p356, p357, p358, p359, p360, p361, p362, p363, p364, p365, p366, p367, p368, p369, p370, p371, p372, p373, p374, p375, p376, p377, p378, p379, p380, p381, p382, p383, p384, p385, p386, p387, p388, p389, p390, p391, p392, p393, p394, p395, p396, p397, p398, p399, p400, p401, p402, p403, p404, p405, p406, p407, p408, p409, p410, p411, p412, p413, p414, p415, p416, p417, p418, p419, p420, p421, p422, p423, p424, p425, p426, p427, p428, p429, p430, p431, p432, p433, p434, p435, p436, p437, p438, p439, p440, p441, p442, p443, p444, p445, p446, p447, p448, p449, p450, p451, p452, p453, p454, p455, p456, p457, p458, p459, p460, p461, p462, p463, p464, p465, p466, p467, p468, p469, p470, p471, p472, p473, p474, p475, p476, p477, p478, p479, p480, p481, p482, p483, p484, p485, p486, p487, p488, p489, p490, p491, p492, p493, p494, p495, p496, p497, p498, p499, p500, p501, p502, p503, p504, p505, p506, p507, p508, p509, p510, p511, p512, p513]\n",
+      "base": "gha-runner-20261020-1",
+      "expect": {
+        "spec": {
+          "packages": [
+            "p0",
+            "p1",
+            "p10",
+            "p100",
+            "p101",
+            "p102",
+            "p103",
+            "p104",
+            "p105",
+            "p106",
+            "p107",
+            "p108",
+            "p109",
+            "p11",
+            "p110",
+            "p111",
+            "p112",
+            "p113",
+            "p114",
+            "p115",
+            "p116",
+            "p117",
+            "p118",
+            "p119",
+            "p12",
+            "p120",
+            "p121",
+            "p122",
+            "p123",
+            "p124",
+            "p125",
+            "p126",
+            "p127",
+            "p128",
+            "p129",
+            "p13",
+            "p130",
+            "p131",
+            "p132",
+            "p133",
+            "p134",
+            "p135",
+            "p136",
+            "p137",
+            "p138",
+            "p139",
+            "p14",
+            "p140",
+            "p141",
+            "p142",
+            "p143",
+            "p144",
+            "p145",
+            "p146",
+            "p147",
+            "p148",
+            "p149",
+            "p15",
+            "p150",
+            "p151",
+            "p152",
+            "p153",
+            "p154",
+            "p155",
+            "p156",
+            "p157",
+            "p158",
+            "p159",
+            "p16",
+            "p160",
+            "p161",
+            "p162",
+            "p163",
+            "p164",
+            "p165",
+            "p166",
+            "p167",
+            "p168",
+            "p169",
+            "p17",
+            "p170",
+            "p171",
+            "p172",
+            "p173",
+            "p174",
+            "p175",
+            "p176",
+            "p177",
+            "p178",
+            "p179",
+            "p18",
+            "p180",
+            "p181",
+            "p182",
+            "p183",
+            "p184",
+            "p185",
+            "p186",
+            "p187",
+            "p188",
+            "p189",
+            "p19",
+            "p190",
+            "p191",
+            "p192",
+            "p193",
+            "p194",
+            "p195",
+            "p196",
+            "p197",
+            "p198",
+            "p199",
+            "p2",
+            "p20",
+            "p200",
+            "p201",
+            "p202",
+            "p203",
+            "p204",
+            "p205",
+            "p206",
+            "p207",
+            "p208",
+            "p209",
+            "p21",
+            "p210",
+            "p211",
+            "p212",
+            "p213",
+            "p214",
+            "p215",
+            "p216",
+            "p217",
+            "p218",
+            "p219",
+            "p22",
+            "p220",
+            "p221",
+            "p222",
+            "p223",
+            "p224",
+            "p225",
+            "p226",
+            "p227",
+            "p228",
+            "p229",
+            "p23",
+            "p230",
+            "p231",
+            "p232",
+            "p233",
+            "p234",
+            "p235",
+            "p236",
+            "p237",
+            "p238",
+            "p239",
+            "p24",
+            "p240",
+            "p241",
+            "p242",
+            "p243",
+            "p244",
+            "p245",
+            "p246",
+            "p247",
+            "p248",
+            "p249",
+            "p25",
+            "p250",
+            "p251",
+            "p252",
+            "p253",
+            "p254",
+            "p255",
+            "p256",
+            "p257",
+            "p258",
+            "p259",
+            "p26",
+            "p260",
+            "p261",
+            "p262",
+            "p263",
+            "p264",
+            "p265",
+            "p266",
+            "p267",
+            "p268",
+            "p269",
+            "p27",
+            "p270",
+            "p271",
+            "p272",
+            "p273",
+            "p274",
+            "p275",
+            "p276",
+            "p277",
+            "p278",
+            "p279",
+            "p28",
+            "p280",
+            "p281",
+            "p282",
+            "p283",
+            "p284",
+            "p285",
+            "p286",
+            "p287",
+            "p288",
+            "p289",
+            "p29",
+            "p290",
+            "p291",
+            "p292",
+            "p293",
+            "p294",
+            "p295",
+            "p296",
+            "p297",
+            "p298",
+            "p299",
+            "p3",
+            "p30",
+            "p300",
+            "p301",
+            "p302",
+            "p303",
+            "p304",
+            "p305",
+            "p306",
+            "p307",
+            "p308",
+            "p309",
+            "p31",
+            "p310",
+            "p311",
+            "p312",
+            "p313",
+            "p314",
+            "p315",
+            "p316",
+            "p317",
+            "p318",
+            "p319",
+            "p32",
+            "p320",
+            "p321",
+            "p322",
+            "p323",
+            "p324",
+            "p325",
+            "p326",
+            "p327",
+            "p328",
+            "p329",
+            "p33",
+            "p330",
+            "p331",
+            "p332",
+            "p333",
+            "p334",
+            "p335",
+            "p336",
+            "p337",
+            "p338",
+            "p339",
+            "p34",
+            "p340",
+            "p341",
+            "p342",
+            "p343",
+            "p344",
+            "p345",
+            "p346",
+            "p347",
+            "p348",
+            "p349",
+            "p35",
+            "p350",
+            "p351",
+            "p352",
+            "p353",
+            "p354",
+            "p355",
+            "p356",
+            "p357",
+            "p358",
+            "p359",
+            "p36",
+            "p360",
+            "p361",
+            "p362",
+            "p363",
+            "p364",
+            "p365",
+            "p366",
+            "p367",
+            "p368",
+            "p369",
+            "p37",
+            "p370",
+            "p371",
+            "p372",
+            "p373",
+            "p374",
+            "p375",
+            "p376",
+            "p377",
+            "p378",
+            "p379",
+            "p38",
+            "p380",
+            "p381",
+            "p382",
+            "p383",
+            "p384",
+            "p385",
+            "p386",
+            "p387",
+            "p388",
+            "p389",
+            "p39",
+            "p390",
+            "p391",
+            "p392",
+            "p393",
+            "p394",
+            "p395",
+            "p396",
+            "p397",
+            "p398",
+            "p399",
+            "p4",
+            "p40",
+            "p400",
+            "p401",
+            "p402",
+            "p403",
+            "p404",
+            "p405",
+            "p406",
+            "p407",
+            "p408",
+            "p409",
+            "p41",
+            "p410",
+            "p411",
+            "p412",
+            "p413",
+            "p414",
+            "p415",
+            "p416",
+            "p417",
+            "p418",
+            "p419",
+            "p42",
+            "p420",
+            "p421",
+            "p422",
+            "p423",
+            "p424",
+            "p425",
+            "p426",
+            "p427",
+            "p428",
+            "p429",
+            "p43",
+            "p430",
+            "p431",
+            "p432",
+            "p433",
+            "p434",
+            "p435",
+            "p436",
+            "p437",
+            "p438",
+            "p439",
+            "p44",
+            "p440",
+            "p441",
+            "p442",
+            "p443",
+            "p444",
+            "p445",
+            "p446",
+            "p447",
+            "p448",
+            "p449",
+            "p45",
+            "p450",
+            "p451",
+            "p452",
+            "p453",
+            "p454",
+            "p455",
+            "p456",
+            "p457",
+            "p458",
+            "p459",
+            "p46",
+            "p460",
+            "p461",
+            "p462",
+            "p463",
+            "p464",
+            "p465",
+            "p466",
+            "p467",
+            "p468",
+            "p469",
+            "p47",
+            "p470",
+            "p471",
+            "p472",
+            "p473",
+            "p474",
+            "p475",
+            "p476",
+            "p477",
+            "p478",
+            "p479",
+            "p48",
+            "p480",
+            "p481",
+            "p482",
+            "p483",
+            "p484",
+            "p485",
+            "p486",
+            "p487",
+            "p488",
+            "p489",
+            "p49",
+            "p490",
+            "p491",
+            "p492",
+            "p493",
+            "p494",
+            "p495",
+            "p496",
+            "p497",
+            "p498",
+            "p499",
+            "p5",
+            "p50",
+            "p500",
+            "p501",
+            "p502",
+            "p503",
+            "p504",
+            "p505",
+            "p506",
+            "p507",
+            "p508",
+            "p509",
+            "p51",
+            "p510",
+            "p511",
+            "p52",
+            "p53",
+            "p54",
+            "p55",
+            "p56",
+            "p57",
+            "p58",
+            "p59",
+            "p6",
+            "p60",
+            "p61",
+            "p62",
+            "p63",
+            "p64",
+            "p65",
+            "p66",
+            "p67",
+            "p68",
+            "p69",
+            "p7",
+            "p70",
+            "p71",
+            "p72",
+            "p73",
+            "p74",
+            "p75",
+            "p76",
+            "p77",
+            "p78",
+            "p79",
+            "p8",
+            "p80",
+            "p81",
+            "p82",
+            "p83",
+            "p84",
+            "p85",
+            "p86",
+            "p87",
+            "p88",
+            "p89",
+            "p9",
+            "p90",
+            "p91",
+            "p92",
+            "p93",
+            "p94",
+            "p95",
+            "p96",
+            "p97",
+            "p98",
+            "p99"
+          ],
+          "setup": null
+        },
+        "ref": null,
+        "packages": [
+          "p0",
+          "p1",
+          "p10",
+          "p100",
+          "p101",
+          "p102",
+          "p103",
+          "p104",
+          "p105",
+          "p106",
+          "p107",
+          "p108",
+          "p109",
+          "p11",
+          "p110",
+          "p111",
+          "p112",
+          "p113",
+          "p114",
+          "p115",
+          "p116",
+          "p117",
+          "p118",
+          "p119",
+          "p12",
+          "p120",
+          "p121",
+          "p122",
+          "p123",
+          "p124",
+          "p125",
+          "p126",
+          "p127",
+          "p128",
+          "p129",
+          "p13",
+          "p130",
+          "p131",
+          "p132",
+          "p133",
+          "p134",
+          "p135",
+          "p136",
+          "p137",
+          "p138",
+          "p139",
+          "p14",
+          "p140",
+          "p141",
+          "p142",
+          "p143",
+          "p144",
+          "p145",
+          "p146",
+          "p147",
+          "p148",
+          "p149",
+          "p15",
+          "p150",
+          "p151",
+          "p152",
+          "p153",
+          "p154",
+          "p155",
+          "p156",
+          "p157",
+          "p158",
+          "p159",
+          "p16",
+          "p160",
+          "p161",
+          "p162",
+          "p163",
+          "p164",
+          "p165",
+          "p166",
+          "p167",
+          "p168",
+          "p169",
+          "p17",
+          "p170",
+          "p171",
+          "p172",
+          "p173",
+          "p174",
+          "p175",
+          "p176",
+          "p177",
+          "p178",
+          "p179",
+          "p18",
+          "p180",
+          "p181",
+          "p182",
+          "p183",
+          "p184",
+          "p185",
+          "p186",
+          "p187",
+          "p188",
+          "p189",
+          "p19",
+          "p190",
+          "p191",
+          "p192",
+          "p193",
+          "p194",
+          "p195",
+          "p196",
+          "p197",
+          "p198",
+          "p199",
+          "p2",
+          "p20",
+          "p200",
+          "p201",
+          "p202",
+          "p203",
+          "p204",
+          "p205",
+          "p206",
+          "p207",
+          "p208",
+          "p209",
+          "p21",
+          "p210",
+          "p211",
+          "p212",
+          "p213",
+          "p214",
+          "p215",
+          "p216",
+          "p217",
+          "p218",
+          "p219",
+          "p22",
+          "p220",
+          "p221",
+          "p222",
+          "p223",
+          "p224",
+          "p225",
+          "p226",
+          "p227",
+          "p228",
+          "p229",
+          "p23",
+          "p230",
+          "p231",
+          "p232",
+          "p233",
+          "p234",
+          "p235",
+          "p236",
+          "p237",
+          "p238",
+          "p239",
+          "p24",
+          "p240",
+          "p241",
+          "p242",
+          "p243",
+          "p244",
+          "p245",
+          "p246",
+          "p247",
+          "p248",
+          "p249",
+          "p25",
+          "p250",
+          "p251",
+          "p252",
+          "p253",
+          "p254",
+          "p255",
+          "p256",
+          "p257",
+          "p258",
+          "p259",
+          "p26",
+          "p260",
+          "p261",
+          "p262",
+          "p263",
+          "p264",
+          "p265",
+          "p266",
+          "p267",
+          "p268",
+          "p269",
+          "p27",
+          "p270",
+          "p271",
+          "p272",
+          "p273",
+          "p274",
+          "p275",
+          "p276",
+          "p277",
+          "p278",
+          "p279",
+          "p28",
+          "p280",
+          "p281",
+          "p282",
+          "p283",
+          "p284",
+          "p285",
+          "p286",
+          "p287",
+          "p288",
+          "p289",
+          "p29",
+          "p290",
+          "p291",
+          "p292",
+          "p293",
+          "p294",
+          "p295",
+          "p296",
+          "p297",
+          "p298",
+          "p299",
+          "p3",
+          "p30",
+          "p300",
+          "p301",
+          "p302",
+          "p303",
+          "p304",
+          "p305",
+          "p306",
+          "p307",
+          "p308",
+          "p309",
+          "p31",
+          "p310",
+          "p311",
+          "p312",
+          "p313",
+          "p314",
+          "p315",
+          "p316",
+          "p317",
+          "p318",
+          "p319",
+          "p32",
+          "p320",
+          "p321",
+          "p322",
+          "p323",
+          "p324",
+          "p325",
+          "p326",
+          "p327",
+          "p328",
+          "p329",
+          "p33",
+          "p330",
+          "p331",
+          "p332",
+          "p333",
+          "p334",
+          "p335",
+          "p336",
+          "p337",
+          "p338",
+          "p339",
+          "p34",
+          "p340",
+          "p341",
+          "p342",
+          "p343",
+          "p344",
+          "p345",
+          "p346",
+          "p347",
+          "p348",
+          "p349",
+          "p35",
+          "p350",
+          "p351",
+          "p352",
+          "p353",
+          "p354",
+          "p355",
+          "p356",
+          "p357",
+          "p358",
+          "p359",
+          "p36",
+          "p360",
+          "p361",
+          "p362",
+          "p363",
+          "p364",
+          "p365",
+          "p366",
+          "p367",
+          "p368",
+          "p369",
+          "p37",
+          "p370",
+          "p371",
+          "p372",
+          "p373",
+          "p374",
+          "p375",
+          "p376",
+          "p377",
+          "p378",
+          "p379",
+          "p38",
+          "p380",
+          "p381",
+          "p382",
+          "p383",
+          "p384",
+          "p385",
+          "p386",
+          "p387",
+          "p388",
+          "p389",
+          "p39",
+          "p390",
+          "p391",
+          "p392",
+          "p393",
+          "p394",
+          "p395",
+          "p396",
+          "p397",
+          "p398",
+          "p399",
+          "p4",
+          "p40",
+          "p400",
+          "p401",
+          "p402",
+          "p403",
+          "p404",
+          "p405",
+          "p406",
+          "p407",
+          "p408",
+          "p409",
+          "p41",
+          "p410",
+          "p411",
+          "p412",
+          "p413",
+          "p414",
+          "p415",
+          "p416",
+          "p417",
+          "p418",
+          "p419",
+          "p42",
+          "p420",
+          "p421",
+          "p422",
+          "p423",
+          "p424",
+          "p425",
+          "p426",
+          "p427",
+          "p428",
+          "p429",
+          "p43",
+          "p430",
+          "p431",
+          "p432",
+          "p433",
+          "p434",
+          "p435",
+          "p436",
+          "p437",
+          "p438",
+          "p439",
+          "p44",
+          "p440",
+          "p441",
+          "p442",
+          "p443",
+          "p444",
+          "p445",
+          "p446",
+          "p447",
+          "p448",
+          "p449",
+          "p45",
+          "p450",
+          "p451",
+          "p452",
+          "p453",
+          "p454",
+          "p455",
+          "p456",
+          "p457",
+          "p458",
+          "p459",
+          "p46",
+          "p460",
+          "p461",
+          "p462",
+          "p463",
+          "p464",
+          "p465",
+          "p466",
+          "p467",
+          "p468",
+          "p469",
+          "p47",
+          "p470",
+          "p471",
+          "p472",
+          "p473",
+          "p474",
+          "p475",
+          "p476",
+          "p477",
+          "p478",
+          "p479",
+          "p48",
+          "p480",
+          "p481",
+          "p482",
+          "p483",
+          "p484",
+          "p485",
+          "p486",
+          "p487",
+          "p488",
+          "p489",
+          "p49",
+          "p490",
+          "p491",
+          "p492",
+          "p493",
+          "p494",
+          "p495",
+          "p496",
+          "p497",
+          "p498",
+          "p499",
+          "p5",
+          "p50",
+          "p500",
+          "p501",
+          "p502",
+          "p503",
+          "p504",
+          "p505",
+          "p506",
+          "p507",
+          "p508",
+          "p509",
+          "p51",
+          "p510",
+          "p511",
+          "p52",
+          "p53",
+          "p54",
+          "p55",
+          "p56",
+          "p57",
+          "p58",
+          "p59",
+          "p6",
+          "p60",
+          "p61",
+          "p62",
+          "p63",
+          "p64",
+          "p65",
+          "p66",
+          "p67",
+          "p68",
+          "p69",
+          "p7",
+          "p70",
+          "p71",
+          "p72",
+          "p73",
+          "p74",
+          "p75",
+          "p76",
+          "p77",
+          "p78",
+          "p79",
+          "p8",
+          "p80",
+          "p81",
+          "p82",
+          "p83",
+          "p84",
+          "p85",
+          "p86",
+          "p87",
+          "p88",
+          "p89",
+          "p9",
+          "p90",
+          "p91",
+          "p92",
+          "p93",
+          "p94",
+          "p95",
+          "p96",
+          "p97",
+          "p98",
+          "p99"
+        ],
+        "labels": {},
+        "warnings": [
+          "packages: at most 512 packages (the rest ignored)"
+        ]
+      },
+      "keys": {
+        "": "cik_c6d8d00ada2ae31b1d01f2af9904bc489c3dc08959b86274769f8b07034da0d2"
+      }
+    },
+    {
+      "name": "at most 256 labels",
+      "yml": "packages: [jq]\nlabels:\n  l0: {}\n  l1: {}\n  l2: {}\n  l3: {}\n  l4: {}\n  l5: {}\n  l6: {}\n  l7: {}\n  l8: {}\n  l9: {}\n  l10: {}\n  l11: {}\n  l12: {}\n  l13: {}\n  l14: {}\n  l15: {}\n  l16: {}\n  l17: {}\n  l18: {}\n  l19: {}\n  l20: {}\n  l21: {}\n  l22: {}\n  l23: {}\n  l24: {}\n  l25: {}\n  l26: {}\n  l27: {}\n  l28: {}\n  l29: {}\n  l30: {}\n  l31: {}\n  l32: {}\n  l33: {}\n  l34: {}\n  l35: {}\n  l36: {}\n  l37: {}\n  l38: {}\n  l39: {}\n  l40: {}\n  l41: {}\n  l42: {}\n  l43: {}\n  l44: {}\n  l45: {}\n  l46: {}\n  l47: {}\n  l48: {}\n  l49: {}\n  l50: {}\n  l51: {}\n  l52: {}\n  l53: {}\n  l54: {}\n  l55: {}\n  l56: {}\n  l57: {}\n  l58: {}\n  l59: {}\n  l60: {}\n  l61: {}\n  l62: {}\n  l63: {}\n  l64: {}\n  l65: {}\n  l66: {}\n  l67: {}\n  l68: {}\n  l69: {}\n  l70: {}\n  l71: {}\n  l72: {}\n  l73: {}\n  l74: {}\n  l75: {}\n  l76: {}\n  l77: {}\n  l78: {}\n  l79: {}\n  l80: {}\n  l81: {}\n  l82: {}\n  l83: {}\n  l84: {}\n  l85: {}\n  l86: {}\n  l87: {}\n  l88: {}\n  l89: {}\n  l90: {}\n  l91: {}\n  l92: {}\n  l93: {}\n  l94: {}\n  l95: {}\n  l96: {}\n  l97: {}\n  l98: {}\n  l99: {}\n  l100: {}\n  l101: {}\n  l102: {}\n  l103: {}\n  l104: {}\n  l105: {}\n  l106: {}\n  l107: {}\n  l108: {}\n  l109: {}\n  l110: {}\n  l111: {}\n  l112: {}\n  l113: {}\n  l114: {}\n  l115: {}\n  l116: {}\n  l117: {}\n  l118: {}\n  l119: {}\n  l120: {}\n  l121: {}\n  l122: {}\n  l123: {}\n  l124: {}\n  l125: {}\n  l126: {}\n  l127: {}\n  l128: {}\n  l129: {}\n  l130: {}\n  l131: {}\n  l132: {}\n  l133: {}\n  l134: {}\n  l135: {}\n  l136: {}\n  l137: {}\n  l138: {}\n  l139: {}\n  l140: {}\n  l141: {}\n  l142: {}\n  l143: {}\n  l144: {}\n  l145: {}\n  l146: {}\n  l147: {}\n  l148: {}\n  l149: {}\n  l150: {}\n  l151: {}\n  l152: {}\n  l153: {}\n  l154: {}\n  l155: {}\n  l156: {}\n  l157: {}\n  l158: {}\n  l159: {}\n  l160: {}\n  l161: {}\n  l162: {}\n  l163: {}\n  l164: {}\n  l165: {}\n  l166: {}\n  l167: {}\n  l168: {}\n  l169: {}\n  l170: {}\n  l171: {}\n  l172: {}\n  l173: {}\n  l174: {}\n  l175: {}\n  l176: {}\n  l177: {}\n  l178: {}\n  l179: {}\n  l180: {}\n  l181: {}\n  l182: {}\n  l183: {}\n  l184: {}\n  l185: {}\n  l186: {}\n  l187: {}\n  l188: {}\n  l189: {}\n  l190: {}\n  l191: {}\n  l192: {}\n  l193: {}\n  l194: {}\n  l195: {}\n  l196: {}\n  l197: {}\n  l198: {}\n  l199: {}\n  l200: {}\n  l201: {}\n  l202: {}\n  l203: {}\n  l204: {}\n  l205: {}\n  l206: {}\n  l207: {}\n  l208: {}\n  l209: {}\n  l210: {}\n  l211: {}\n  l212: {}\n  l213: {}\n  l214: {}\n  l215: {}\n  l216: {}\n  l217: {}\n  l218: {}\n  l219: {}\n  l220: {}\n  l221: {}\n  l222: {}\n  l223: {}\n  l224: {}\n  l225: {}\n  l226: {}\n  l227: {}\n  l228: {}\n  l229: {}\n  l230: {}\n  l231: {}\n  l232: {}\n  l233: {}\n  l234: {}\n  l235: {}\n  l236: {}\n  l237: {}\n  l238: {}\n  l239: {}\n  l240: {}\n  l241: {}\n  l242: {}\n  l243: {}\n  l244: {}\n  l245: {}\n  l246: {}\n  l247: {}\n  l248: {}\n  l249: {}\n  l250: {}\n  l251: {}\n  l252: {}\n  l253: {}\n  l254: {}\n  l255: {}\n  l256: {}\n  l257: {}\n",
+      "base": "gha-runner-20261020-1",
+      "expect": {
+        "spec": {
+          "packages": [
+            "jq"
+          ],
+          "setup": null
+        },
+        "ref": null,
+        "packages": [
+          "jq"
+        ],
+        "labels": {
+          "l0": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l1": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l2": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l3": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l4": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l5": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l6": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l7": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l8": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l9": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l10": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l11": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l12": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l13": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l14": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l15": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l16": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l17": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l18": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l19": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l20": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l21": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l22": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l23": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l24": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l25": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l26": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l27": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l28": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l29": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l30": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l31": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l32": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l33": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l34": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l35": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l36": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l37": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l38": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l39": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l40": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l41": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l42": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l43": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l44": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l45": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l46": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l47": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l48": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l49": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l50": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l51": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l52": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l53": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l54": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l55": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l56": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l57": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l58": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l59": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l60": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l61": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l62": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l63": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l64": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l65": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l66": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l67": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l68": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l69": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l70": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l71": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l72": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l73": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l74": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l75": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l76": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l77": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l78": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l79": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l80": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l81": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l82": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l83": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l84": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l85": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l86": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l87": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l88": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l89": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l90": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l91": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l92": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l93": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l94": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l95": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l96": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l97": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l98": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l99": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l100": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l101": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l102": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l103": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l104": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l105": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l106": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l107": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l108": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l109": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l110": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l111": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l112": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l113": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l114": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l115": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l116": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l117": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l118": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l119": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l120": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l121": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l122": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l123": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l124": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l125": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l126": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l127": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l128": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l129": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l130": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l131": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l132": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l133": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l134": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l135": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l136": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l137": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l138": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l139": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l140": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l141": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l142": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l143": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l144": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l145": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l146": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l147": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l148": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l149": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l150": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l151": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l152": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l153": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l154": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l155": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l156": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l157": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l158": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l159": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l160": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l161": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l162": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l163": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l164": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l165": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l166": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l167": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l168": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l169": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l170": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l171": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l172": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l173": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l174": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l175": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l176": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l177": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l178": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l179": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l180": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l181": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l182": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l183": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l184": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l185": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l186": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l187": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l188": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l189": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l190": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l191": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l192": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l193": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l194": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l195": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l196": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l197": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l198": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l199": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l200": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l201": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l202": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l203": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l204": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l205": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l206": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l207": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l208": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l209": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l210": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l211": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l212": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l213": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l214": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l215": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l216": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l217": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l218": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l219": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l220": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l221": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l222": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l223": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l224": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l225": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l226": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l227": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l228": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l229": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l230": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l231": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l232": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l233": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l234": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l235": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l236": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l237": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l238": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l239": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l240": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l241": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l242": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l243": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l244": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l245": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l246": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l247": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l248": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l249": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l250": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l251": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l252": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l253": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l254": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          },
+          "l255": {
+            "spec": {
+              "packages": [
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          }
+        },
+        "warnings": [
+          "labels: at most 256 labels (the rest ignored)"
+        ]
+      },
+      "keys": {
+        "": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l0": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l1": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l2": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l3": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l4": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l5": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l6": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l7": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l8": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l9": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l10": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l11": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l12": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l13": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l14": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l15": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l16": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l17": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l18": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l19": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l20": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l21": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l22": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l23": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l24": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l25": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l26": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l27": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l28": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l29": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l30": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l31": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l32": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l33": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l34": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l35": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l36": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l37": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l38": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l39": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l40": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l41": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l42": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l43": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l44": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l45": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l46": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l47": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l48": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l49": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l50": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l51": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l52": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l53": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l54": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l55": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l56": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l57": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l58": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l59": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l60": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l61": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l62": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l63": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l64": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l65": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l66": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l67": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l68": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l69": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l70": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l71": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l72": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l73": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l74": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l75": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l76": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l77": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l78": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l79": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l80": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l81": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l82": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l83": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l84": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l85": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l86": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l87": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l88": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l89": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l90": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l91": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l92": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l93": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l94": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l95": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l96": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l97": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l98": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l99": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l100": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l101": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l102": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l103": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l104": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l105": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l106": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l107": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l108": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l109": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l110": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l111": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l112": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l113": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l114": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l115": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l116": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l117": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l118": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l119": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l120": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l121": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l122": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l123": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l124": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l125": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l126": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l127": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l128": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l129": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l130": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l131": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l132": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l133": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l134": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l135": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l136": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l137": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l138": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l139": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l140": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l141": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l142": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l143": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l144": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l145": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l146": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l147": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l148": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l149": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l150": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l151": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l152": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l153": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l154": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l155": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l156": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l157": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l158": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l159": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l160": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l161": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l162": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l163": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l164": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l165": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l166": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l167": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l168": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l169": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l170": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l171": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l172": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l173": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l174": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l175": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l176": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l177": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l178": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l179": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l180": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l181": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l182": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l183": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l184": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l185": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l186": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l187": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l188": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l189": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l190": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l191": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l192": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l193": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l194": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l195": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l196": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l197": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l198": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l199": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l200": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l201": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l202": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l203": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l204": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l205": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l206": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l207": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l208": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l209": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l210": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l211": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l212": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l213": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l214": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l215": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l216": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l217": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l218": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l219": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l220": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l221": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l222": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l223": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l224": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l225": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l226": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l227": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l228": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l229": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l230": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l231": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l232": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l233": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l234": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l235": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l236": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l237": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l238": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l239": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l240": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l241": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l242": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l243": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l244": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l245": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l246": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l247": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l248": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l249": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l250": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l251": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l252": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l253": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l254": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5",
+        "l255": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5"
+      }
+    },
+    {
+      "name": "empty image mapping still builds",
+      "yml": "packages: [jq, git, jq]\nimage: {}\n",
+      "base": "gha-runner-20261020-1",
+      "expect": {
+        "spec": {
+          "packages": [
+            "git",
+            "jq"
+          ],
+          "setup": null
+        },
+        "ref": null,
+        "packages": [
+          "git",
+          "jq"
+        ],
+        "labels": {},
+        "warnings": []
+      },
+      "keys": {
+        "": "cik_8dd87108924e90ce0b7b1b83c0e7269844677aeba4f9479c72ce816d4a3a3d3d"
+      }
+    },
+    {
+      "name": "labels capped in source order, numeric labels too",
+      "yml": "labels:\n  l0:\n  l1:\n  l2:\n  l3:\n  l4:\n  l5:\n  l6:\n  l7:\n  l8:\n  l9:\n  l10:\n  l11:\n  l12:\n  l13:\n  l14:\n  l15:\n  l16:\n  l17:\n  l18:\n  l19:\n  l20:\n  l21:\n  l22:\n  l23:\n  l24:\n  l25:\n  l26:\n  l27:\n  l28:\n  l29:\n  l30:\n  l31:\n  l32:\n  l33:\n  l34:\n  l35:\n  l36:\n  l37:\n  l38:\n  l39:\n  l40:\n  l41:\n  l42:\n  l43:\n  l44:\n  l45:\n  l46:\n  l47:\n  l48:\n  l49:\n  l50:\n  l51:\n  l52:\n  l53:\n  l54:\n  l55:\n  l56:\n  l57:\n  l58:\n  l59:\n  l60:\n  l61:\n  l62:\n  l63:\n  l64:\n  l65:\n  l66:\n  l67:\n  l68:\n  l69:\n  l70:\n  l71:\n  l72:\n  l73:\n  l74:\n  l75:\n  l76:\n  l77:\n  l78:\n  l79:\n  l80:\n  l81:\n  l82:\n  l83:\n  l84:\n  l85:\n  l86:\n  l87:\n  l88:\n  l89:\n  l90:\n  l91:\n  l92:\n  l93:\n  l94:\n  l95:\n  l96:\n  l97:\n  l98:\n  l99:\n  l100:\n  l101:\n  l102:\n  l103:\n  l104:\n  l105:\n  l106:\n  l107:\n  l108:\n  l109:\n  l110:\n  l111:\n  l112:\n  l113:\n  l114:\n  l115:\n  l116:\n  l117:\n  l118:\n  l119:\n  l120:\n  l121:\n  l122:\n  l123:\n  l124:\n  l125:\n  l126:\n  l127:\n  l128:\n  l129:\n  l130:\n  l131:\n  l132:\n  l133:\n  l134:\n  l135:\n  l136:\n  l137:\n  l138:\n  l139:\n  l140:\n  l141:\n  l142:\n  l143:\n  l144:\n  l145:\n  l146:\n  l147:\n  l148:\n  l149:\n  l150:\n  l151:\n  l152:\n  l153:\n  l154:\n  l155:\n  l156:\n  l157:\n  l158:\n  l159:\n  l160:\n  l161:\n  l162:\n  l163:\n  l164:\n  l165:\n  l166:\n  l167:\n  l168:\n  l169:\n  l170:\n  l171:\n  l172:\n  l173:\n  l174:\n  l175:\n  l176:\n  l177:\n  l178:\n  l179:\n  l180:\n  l181:\n  l182:\n  l183:\n  l184:\n  l185:\n  l186:\n  l187:\n  l188:\n  l189:\n  l190:\n  l191:\n  l192:\n  l193:\n  l194:\n  l195:\n  l196:\n  l197:\n  l198:\n  l199:\n  l200:\n  l201:\n  l202:\n  l203:\n  l204:\n  l205:\n  l206:\n  l207:\n  l208:\n  l209:\n  l210:\n  l211:\n  l212:\n  l213:\n  l214:\n  l215:\n  l216:\n  l217:\n  l218:\n  l219:\n  l220:\n  l221:\n  l222:\n  l223:\n  l224:\n  l225:\n  l226:\n  l227:\n  l228:\n  l229:\n  l230:\n  l231:\n  l232:\n  l233:\n  l234:\n  l235:\n  l236:\n  l237:\n  l238:\n  l239:\n  l240:\n  l241:\n  l242:\n  l243:\n  l244:\n  l245:\n  l246:\n  l247:\n  l248:\n  l249:\n  l250:\n  l251:\n  l252:\n  l253:\n  l254:\n  l255: {image: acme-a}\n  1: {image: acme-b}\n",
+      "base": "gha-runner-20261020-1",
+      "expect": {
+        "spec": null,
+        "ref": null,
+        "packages": [],
+        "labels": {
+          "l255": {
+            "spec": null,
+            "ref": "acme-a"
+          }
+        },
+        "warnings": [
+          "labels: at most 256 labels (the rest ignored)"
+        ]
+      },
+      "keys": {
+        "": null,
+        "l255": null
+      }
+    },
+    {
+      "name": "unknown keys warned in source order, numeric keys too",
+      "yml": "zeta: 1\n10: 2\nimage: {10: a, setup: 'true', 3: b}\nlabels:\n  b: {x: 1}\n  2: {y: 1}\n",
+      "base": "gha-runner-20261020-1",
+      "expect": {
+        "spec": {
+          "packages": [],
+          "setup": "true"
+        },
+        "ref": null,
+        "packages": [],
+        "labels": {
+          "2": {
+            "spec": {
+              "packages": [],
+              "setup": "true"
+            },
+            "ref": null
+          },
+          "b": {
+            "spec": {
+              "packages": [],
+              "setup": "true"
+            },
+            "ref": null
+          }
+        },
+        "warnings": [
+          "unknown key \"zeta\" (ignored)",
+          "unknown key \"10\" (ignored)",
+          "image: unknown key \"10\" (ignored)",
+          "image: unknown key \"3\" (ignored)",
+          "labels.b: unknown key \"x\" (ignored)",
+          "labels.2: unknown key \"y\" (ignored)"
+        ]
+      },
+      "keys": {
+        "2": "cik_994287614d5ffbbcbee4ab8fc790e7e02e6c80f2c851a1c24749b0ffaad89822",
+        "": "cik_994287614d5ffbbcbee4ab8fc790e7e02e6c80f2c851a1c24749b0ffaad89822",
+        "b": "cik_994287614d5ffbbcbee4ab8fc790e7e02e6c80f2c851a1c24749b0ffaad89822"
+      }
+    },
+    {
+      "name": "warnings capped in number and size, cut at code points",
+      "yml": "image: \"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\"\nlabels:\n  a: {packages: [jq, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, X, git]}\n",
+      "base": "gha-runner-20261020-1",
+      "expect": {
+        "spec": null,
+        "ref": null,
+        "packages": [],
+        "labels": {
+          "a": {
+            "spec": {
+              "packages": [
+                "git",
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          }
+        },
+        "warnings": [
+          "image: not an image name or id: \"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀...",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "labels.a.packages: not a package name: \"X\"",
+          "at most 64 warnings (the rest not shown)"
+        ]
+      },
+      "keys": {
+        "": null,
+        "a": "cik_8dd87108924e90ce0b7b1b83c0e7269844677aeba4f9479c72ce816d4a3a3d3d"
+      }
+    },
+    {
+      "name": "a document start's comment takes U+2028 and U+2029 as text",
+      "yml": "--- #   and   are text, not line breaks\npackages: [jq]\n",
+      "base": "gha-runner-20261020-1",
+      "expect": {
+        "spec": {
+          "packages": [
+            "jq"
+          ],
+          "setup": null
+        },
+        "ref": null,
+        "packages": [
+          "jq"
+        ],
+        "labels": {},
+        "warnings": []
+      },
+      "keys": {
+        "": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5"
+      }
+    },
+    {
+      "name": "unknown keys and bad package names",
+      "yml": "packages: [ok-pkg, Bad_Pkg, x, [nested]]\nextra: 1\nimage:\n  packages: libfoo\n  steps: [a]\n  setup: \"  \"\nlabels:\n  a: [1]\n  b:\n    runs: x\n",
+      "base": "gha-runner-20261020-1",
+      "expect": {
+        "spec": {
+          "packages": [
+            "ok-pkg"
+          ],
+          "setup": null
+        },
+        "ref": null,
+        "packages": [
+          "ok-pkg"
+        ],
+        "labels": {
+          "b": {
+            "spec": {
+              "packages": [
+                "ok-pkg"
+              ],
+              "setup": null
+            },
+            "ref": null
+          }
+        },
+        "warnings": [
+          "unknown key \"extra\" (ignored)",
+          "packages: not a package name: \"Bad_Pkg\"",
+          "packages: not a package name: \"x\"",
+          "packages[3]: must be a package name",
+          "image: unknown key \"steps\" (ignored)",
+          "image.setup: must be a script",
+          "image.packages: must be a list of package names",
+          "labels.a: must be a mapping of image and packages",
+          "labels.b: unknown key \"runs\" (ignored)"
+        ]
+      },
+      "keys": {
+        "": "cik_c58b58b262a93f613712f279939a45ad5dae6c92d1887185c0b065100f555204",
+        "b": "cik_c58b58b262a93f613712f279939a45ad5dae6c92d1887185c0b065100f555204"
+      }
+    },
+    {
+      "name": "image.dockerfile is refused: the top level's packages, no setup",
+      "yml": "packages: [jq]\nimage:\n  dockerfile: .github/ci.Dockerfile\n  setup: make deps\n",
+      "base": "gha-runner-20261020-1",
+      "expect": {
+        "spec": {
+          "packages": [
+            "jq"
+          ],
+          "setup": null
+        },
+        "ref": null,
+        "packages": [
+          "jq"
+        ],
+        "labels": {},
+        "warnings": [
+          "image.dockerfile is not supported yet; use image.setup"
+        ]
+      },
+      "keys": {
+        "": "cik_658731cb566cc246672b06b4bf94fd2db97509f86bd9d4d89b7f3477f4b1a3f5"
+      }
+    },
+    {
+      "name": "a label's image.dockerfile is refused: the label gets the packages alone",
+      "yml": "packages: [jq]\nimage: {setup: make}\nlabels:\n  big:\n    packages: [clang]\n    image: {dockerfile: Dockerfile}\n",
+      "base": "gha-runner-20261020-1",
+      "expect": {
+        "spec": {
+          "packages": [
+            "jq"
+          ],
+          "setup": "make"
+        },
+        "ref": null,
+        "packages": [
+          "jq"
+        ],
+        "labels": {
+          "big": {
+            "spec": {
+              "packages": [
+                "clang",
+                "jq"
+              ],
+              "setup": null
+            },
+            "ref": null
+          }
+        },
+        "warnings": [
+          "labels.big.image.dockerfile is not supported yet; use labels.big.image.setup"
+        ]
+      },
+      "keys": {
+        "": "cik_c533be21da0ef58cb0c68a442b9abaea32a43aab9c9acd80baf200a6723cb54e",
+        "big": "cik_f1a4592debd3ea9a5a40278ecc605552a8936951e74c967b27196b055b724d7d"
+      }
+    }
+  ]
+}

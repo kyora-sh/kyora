@@ -6,7 +6,7 @@ import { pushImage, type AccountImage, type PushOptions } from "./account-images
 import { collectExec, runExec } from "./exec"
 import { BUILDER_FILES, BUILDER_HASH } from "./image-builder-assets"
 import { digestOf, refOf } from "./image-refs"
-import { contentKey, FileChanged, loadSpec, readChecked, type ImageSpec } from "./image-spec"
+import { checkSpec, contentKey, FileChanged, loadSpec, readChecked, type ImageSpec } from "./image-spec"
 import { FAILED } from "./output"
 import { pull, push } from "./transfer"
 import { formatBytes, formatMs } from "./units"
@@ -82,6 +82,8 @@ export interface BuildBackend {
 
 export interface BuildOptions {
   specPath: string
+  /** a spec made here rather than read from specPath (`--from`): checked the same way, specPath naming it */
+  raw?: Record<string, unknown>
   name?: string
   region?: string
   /** progress (stderr in the CLI) */
@@ -230,7 +232,8 @@ export async function buildImage(backend: BuildBackend, options: BuildOptions): 
   const now = options.now ?? Date.now
   const started = now()
   const log = options.log
-  const spec = await loadSpec(options.specPath, options.name ? { name: options.name } : {})
+  const overrides = options.name ? { name: options.name } : {}
+  const spec = options.raw ? await checkSpec(options.raw, options.specPath, overrides) : await loadSpec(options.specPath, overrides)
   const region = options.region ?? (await backend.defaultRegion())
   log(`${spec.name}: base ${spec.base}, ${spec.files.length} file(s), in ${region ?? "your default region"}`)
 

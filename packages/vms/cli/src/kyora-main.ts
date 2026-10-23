@@ -33,6 +33,9 @@ usage:
   kyora deploy [--prod] [--project N] [--follow]        deploy to production
   kyora deployments ls | logs [dpl] [--follow]         deployment status and logs
   kyora image build [kyora.image.json]                 build your image from a spec, stored as name@N
+  kyora image build <name> --from gha-runner [--file setup.sh] [--package P]...
+                                                       the same from a setup script or packages
+  kyora image check [dir]                              what CI makes of dir/.github/kyora.yml; 1 when it refuses some
   kyora image lock | ls | versions <name> | rm <name@N> | usage
                                                        pin it, list, delete
   kyora image push <file.ext4> --name N [--region R]   store an ext4 you built yourself
@@ -53,7 +56,7 @@ async function main(argv: string[]): Promise<number> {
   if (group === "top") return topCommand(rest)
   if (group === "session") return sessionMain(rest)
   if (group === "detach" || group === "back") return sessionMain([group, ...rest])
-  if (group === "image") {
+  if (group === "image" || group === "images") {
     let parsed: ReturnType<typeof parseImageArgs>
     try {
       parsed = parseImageArgs(rest)
@@ -77,7 +80,7 @@ async function main(argv: string[]): Promise<number> {
 class KyoraUsage extends Error {}
 class ImageUsage extends KyoraUsage {}
 
-const parseImageArgs = (args: string[]) => parseArgs({ args, options: { name: { type: "string" }, region: { type: "string" }, json: { type: "boolean" } }, allowPositionals: true, strict: true })
+const parseImageArgs = (args: string[]) => parseArgs({ args, options: { name: { type: "string" }, region: { type: "string" }, from: { type: "string" }, file: { type: "string" }, package: { type: "string", multiple: true }, json: { type: "boolean" } }, allowPositionals: true, strict: true })
 
 function exit(code: number): Promise<never> {
   return exitFlushed(code)

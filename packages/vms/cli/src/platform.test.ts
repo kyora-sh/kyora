@@ -546,7 +546,7 @@ describe("fleet image commands", () => {
       expect(JSON.parse(build.stdout)).toMatchObject({ builds: [{ machine: "box-1", accepted: true }] })
     }
     const invalid = await cli(["images", "build", "office"], { cwd: root, env: env() })
-    expect(invalid.code).toBe(125)
+    expect(invalid.code).toBe(2)
   })
 })
 

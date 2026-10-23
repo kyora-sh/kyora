@@ -33,7 +33,7 @@ export async function completionNames(api: VmsClient, key: string): Promise<stri
 
 /** kyora's own commands; `kyora vms` takes SUBCOMMANDS, and `kyora-vms` is `kyora vms` */
 export const COMMANDS = "vms run tui detach back session switch top support projects link deploy deployments image login logout whoami org help"
-const IMAGE = "build lock ls versions rm push usage"
+const IMAGE = "build check lock ls versions rm push usage"
 
 /**
  * One completion function for `kyora` and `kyora-vms`: `n` is where the sandbox verb sits, 1 for
