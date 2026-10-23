@@ -202,10 +202,15 @@ export const isImageId = (value: string): boolean => IMAGE_ID.test(value)
 export interface ImageCommandValues {
   name?: string
   region?: string
+  from?: string
+  file?: string
+  package?: string[]
 }
 
 const USAGE = `usage: kyora vms image build [kyora.image.json] [--name N] [--region R] [--json]
+       kyora vms image build <name> --from gha-runner [--file setup.sh] [--package P]... [--region R]
        kyora vms image lock [kyora.image.json] [--name N]        pin the newest version in kyora.image.lock
+       kyora vms image check [dir] [--json]                     what CI makes of dir/.github/kyora.yml; 1 when it refuses some
        kyora vms image ls | versions <name> | rm <name@N|img_…> | usage
        kyora vms image push <file.ext4> --name N [--region R]`
 
@@ -231,11 +236,17 @@ const ago = (iso: string | null) => (iso ? iso.replace("T", " ").replace(/\.\d+Z
 export async function imageCommand(api: VmsClient, positionals: string[], values: ImageCommandValues, asJson: boolean, usage: (message: string) => never): Promise<number> {
   const [sub, arg, extra] = positionals
   const line = (text: string) => write(process.stdout, `${text}\n`)
+  if (sub !== "build" && (values.from !== undefined || values.file !== undefined || (values.package ?? []).length > 0)) usage("--from, --file and --package go with image build")
   switch (sub) {
     case "build": {
       if (extra) usage(USAGE)
       const { buildCommand } = await import("./image-commands")
-      return buildCommand(api, { spec: arg, name: values.name, region: values.region, json: asJson }, usage)
+      return buildCommand(api, { spec: arg, name: values.name, region: values.region, json: asJson, from: values.from, file: values.file, packages: values.package }, usage)
+    }
+    case "check": {
+      if (extra || values.name || values.region) usage("usage: kyora vms image check [dir] [--json]")
+      const { checkCommand } = await import("./image-commands")
+      return checkCommand({ dir: arg, json: asJson })
     }
     case "lock": {
       if (extra || values.region) usage("usage: kyora vms image lock [kyora.image.json] [--name N]")

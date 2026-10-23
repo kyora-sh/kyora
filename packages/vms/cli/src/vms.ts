@@ -81,6 +81,11 @@ more commands (every sandbox argument accepts a name, id or unique id prefix):
   kyora vms image build [kyora.image.json]  build your image from a spec in a throwaway sandbox and store it
                                             as name@N (the same spec, files and base: reused at once); --json,
                                             --name N, --region R; create --image name[@N] boots it
+  kyora vms images build <name> --from gha-runner [--file setup.sh] [--package P]...
+                                            the same from a setup script or packages on a kyora image: a CI
+                                            class image or --image; images is image for every subcommand
+  kyora vms image check [dir]               what CI makes of dir/.github/kyora.yml: each warning, exit 1 when
+                                            it refuses some (a Dockerfile, a file it can't read); --json
   kyora vms image lock [kyora.image.json]   pin the newest version in kyora.image.lock: create --image name
                                             here boots the pinned one
   kyora vms image ls | versions <name> | rm <name@N|img_…> | usage
@@ -257,6 +262,9 @@ const OPTIONS = {
   modifiers: { type: "string" },
   repeat: { type: "string" },
   name: { type: "string" },
+  from: { type: "string" },
+  file: { type: "string" },
+  package: { type: "string", multiple: true },
   private: { type: "boolean" },
   public: { type: "boolean" },
   trusted: { type: "boolean" },
@@ -297,8 +305,8 @@ const VERBS: Record<string, Option[]> = {
   pull: ["to"],
   rm: ["all", "yes"],
   health: [],
-  images: ["node", "all"],
-  image: ["name", "region"],
+  images: ["node", "all", "name", "region", "from", "file", "package"],
+  image: ["name", "region", "from", "file", "package"],
   nodes: [],
   regions: [],
   screenshot: ["out", "region", "scale"],
@@ -723,6 +731,13 @@ export async function vmsMain(argv: string[]): Promise<number> {
       return health(api, config, asJson)
     case "images": {
       const [sub, profile, extra] = positionals
+      // `images <sub>` is `image <sub>`, but for the fleet's list and the admin rebuild of a profile on machines
+      const fleet = sub === undefined || (sub === "build" && (values.node !== undefined || values.all))
+      if (!fleet) {
+        if (values.node !== undefined || values.all) usage("--node and --all go with images build <profile>")
+        return imageCommand(api, positionals, { name: values.name, region: values.region, from: values.from, file: values.file, package: values.package }, asJson, usage)
+      }
+      if (values.name !== undefined || values.region !== undefined || values.from !== undefined || values.file !== undefined || values.package !== undefined) usage("usage: kyora vms images [--json], or images build <profile> --node <name> | --all")
       if (sub === "build") {
         if (!profile || extra || (Boolean(values.node) === Boolean(values.all))) usage("usage: kyora vms images build <profile> --node <name> | --all")
         const response = await api.buildImage(profile, values.node)
@@ -731,7 +746,6 @@ export async function vmsMain(argv: string[]): Promise<number> {
         else for (const build of result.builds) await write(process.stdout, `${build.machine}: ${build.accepted ? "build accepted" : JSON.stringify(build.error)}\n`)
         return result.builds.every((build) => build.accepted) ? 0 : FAILED
       }
-      if (sub !== undefined) usage("usage: kyora vms images [--json], or images build <profile> --node <name> | --all")
       const response = await api.images()
       const result = await response.json() as { images: Array<{ name: string; regions: Array<{ region: string; available: boolean; building: boolean; unknown: boolean; machines?: Array<{ machine: string; present: boolean | null; version: string | null; hash: string | null; builtAt: string | null; building: boolean }> }> }> }
       if (asJson) await json(result)
@@ -742,7 +756,7 @@ export async function vmsMain(argv: string[]): Promise<number> {
       return 0
     }
     case "image":
-      return imageCommand(api, positionals, { name: values.name, region: values.region }, asJson, usage)
+      return imageCommand(api, positionals, { name: values.name, region: values.region, from: values.from, file: values.file, package: values.package }, asJson, usage)
     case "nodes":
       if (positionals.length > 0) usage(`nodes takes no arguments, got ${positionals.join(" ")}`)
       return nodes(api, asJson)

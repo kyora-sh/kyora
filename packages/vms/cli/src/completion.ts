@@ -32,8 +32,8 @@ export async function completionNames(api: VmsClient, key: string): Promise<stri
 }
 
 /** kyora's own commands; `kyora vms` takes SUBCOMMANDS, and `kyora-vms` is `kyora vms` */
-export const COMMANDS = "vms run tui detach back session switch top support projects link deploy deployments image login logout whoami org help"
-const IMAGE = "build lock ls versions rm push usage"
+export const COMMANDS = "vms run tui detach back session switch top support projects link deploy deployments image images login logout whoami org help"
+const IMAGE = "build check lock ls versions rm push usage"
 
 /**
  * One completion function for `kyora` and `kyora-vms`: `n` is where the sandbox verb sits, 1 for
@@ -47,7 +47,7 @@ _kyora() {
     n=0
     if [ "$COMP_CWORD" -eq 1 ]; then words="${COMMANDS}"
     elif [ "\${COMP_WORDS[1]}" = "vms" ]; then n=2
-    elif [ "\${COMP_WORDS[1]}" = "image" ] && [ "$COMP_CWORD" -eq 2 ]; then words="${IMAGE}"
+    elif { [ "\${COMP_WORDS[1]}" = "image" ] || [ "\${COMP_WORDS[1]}" = "images" ]; } && [ "$COMP_CWORD" -eq 2 ]; then words="${IMAGE}"
     fi
   fi
   if [ "$n" -gt 0 ]; then
@@ -62,7 +62,7 @@ _kyora() {
           elif [ "\${COMP_WORDS[COMP_CWORD-1]}" = "--scope" ]; then words="${TOKEN_SCOPES}"
           elif [ "\${COMP_WORDS[n+1]}" = "create" ]; then words="${TOKEN_FLAGS}"
           fi ;;
-        image) words="${IMAGE}" ;;
+        image|images) words="${IMAGE}" ;;
         ${TARGETS.split(" ").join("|")}) words="$(kyora vms __complete 2>/dev/null)" ;;
       esac
     fi
@@ -84,7 +84,7 @@ _kyora() {
     n=0
     if (( CURRENT == 2 )); then candidates=(${COMMANDS})
     elif [[ $words[2] == vms ]]; then n=3
-    elif [[ $words[2] == image ]] && (( CURRENT == 3 )); then candidates=(${IMAGE})
+    elif [[ $words[2] == (image|images) ]] && (( CURRENT == 3 )); then candidates=(${IMAGE})
     fi
   fi
   if (( n > 0 )); then
@@ -97,7 +97,7 @@ _kyora() {
       elif [[ $words[CURRENT-1] == --scope ]]; then candidates=(${TOKEN_SCOPES})
       elif [[ $words[n+1] == create ]]; then candidates=(${TOKEN_FLAGS})
       fi
-    elif [[ $words[n] == image ]] && (( CURRENT == n + 1 )); then
+    elif [[ $words[n] == (image|images) ]] && (( CURRENT == n + 1 )); then
       candidates=(${IMAGE})
     elif [[ " ${TARGETS} " == *" $words[n] "* ]]; then
       candidates=(\${(f)"$(kyora vms __complete 2>/dev/null)"})
@@ -113,11 +113,11 @@ complete -c ${command} -n '${seen}; and __fish_seen_subcommand_from completion' 
 complete -c ${command} -n '${seen}; and __fish_seen_subcommand_from tokens' -a 'create ls revoke'
 complete -c ${command} -n '${seen}; and __fish_seen_subcommand_from tokens; and __fish_seen_subcommand_from create' -l scope -r -a '${TOKEN_SCOPES}'
 complete -c ${command} -n '${seen}; and __fish_seen_subcommand_from tokens; and __fish_seen_subcommand_from create' -l project -r
-complete -c ${command} -n '${seen}; and __fish_seen_subcommand_from image' -a '${IMAGE}'`
+complete -c ${command} -n '${seen}; and __fish_seen_subcommand_from image images' -a '${IMAGE}'`
     return `# kyora vms completion fish | source
 complete -c kyora -f
 complete -c kyora -n '__fish_use_subcommand' -a '${COMMANDS}'
-complete -c kyora -n '__fish_seen_subcommand_from image; and not __fish_seen_subcommand_from vms' -a '${IMAGE}'
+complete -c kyora -n '__fish_seen_subcommand_from image images; and not __fish_seen_subcommand_from vms' -a '${IMAGE}'
 ${vms("kyora", "__fish_seen_subcommand_from vms")}
 complete -c kyora-vms -f
 ${vms("kyora-vms", "true")}`
