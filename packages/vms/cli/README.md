@@ -77,7 +77,7 @@ kyora vms login           # opens the browser; approve the code it shows there
 kyora vms health          # ok · https://cloud.kyora.sh · kyora cloud
 ```
 
-The token is kept in `~/.config/kyora/credentials.json` (mode 0600, one entry per server). `KYORA_TOKEN=kyora_…`, a token made on the dashboard, works instead, in CI for example. `kyora vms whoami` says whose token is in use, `kyora vms nodes` lists the machines and what is free on them, and `kyora vms logout` deletes the token here (revoke it on the dashboard to end it everywhere). `login --url` signs in to another kyora cloud; point `KYORA_VMS_URL` at it to use that login.
+The token is kept in `~/.config/kyora/credentials.json` (mode 0600, one entry per server). `KYORA_TOKEN=kyora_…`, a token made on the dashboard, works instead, in CI for example. `kyora vms whoami` says whose token is in use, `kyora vms regions` shows the room free in each region, and `kyora vms logout` deletes the token here (revoke it on the dashboard to end it everywhere). `login --url` signs in to another kyora cloud; point `KYORA_VMS_URL` at it to use that login.
 
 An organization is a shared kyora cloud account: its members' sandboxes, snapshots, URLs and tokens belong to the org, under its caps. `kyora vms org ls` lists yours, `kyora vms org use acme` makes commands act as it , and `kyora vms org use personal` switches back. With no access of your own, sign in for the org directly: `kyora vms login --org acme`.
 
