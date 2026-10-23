@@ -281,7 +281,7 @@ describe("waiting in line for room on kyora cloud", () => {
     expect(cloud.created[0]).toMatchObject({ wait: 900 })
     const [ticket] = [...cloud.tickets.keys()]
     expect(cloud.requests.filter((request) => request === `GET /v1/queue/${ticket}`)).toHaveLength(3)
-    expect(result.stderr).toContain("no machine has room right now; queued: 2 ahead… (waiting up to 15m00s; --no-wait fails at once instead)")
+    expect(result.stderr).toContain("no room right now; queued: 2 ahead… (waiting up to 15m00s; --no-wait fails at once instead)")
     expect(result.stderr).toContain("[kyora-vms] queued: 1 ahead…")
     expect(result.stderr).toContain("[kyora-vms] queued: next in line…")
     const events = result.stdout.trim().split("\n").map((line) => JSON.parse(line))

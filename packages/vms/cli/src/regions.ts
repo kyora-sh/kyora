@@ -3,9 +3,8 @@ import { printJson } from "./output"
 import { memory, printTable } from "./session"
 
 /**
- * `kyora vms regions`: kyora cloud's regions, their machines and what is free on the connected
- * ones, and where a create from here goes; `regions default <id>` makes one yours, `auto` goes
- * back to where you are.
+ * `kyora vms regions`: kyora cloud's regions, the room free in each, and where a create from here
+ * goes; `regions default <id>` makes one yours, `auto` goes back to where you are.
  */
 export async function regions(api: VmsClient, args: string[], asJson: boolean): Promise<number> {
   if ((await api.kind()) !== "platform") throw new Error(`${api.url} does not support regions. Use kyora cloud to choose a region`)

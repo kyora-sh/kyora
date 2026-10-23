@@ -107,7 +107,7 @@ describe("--region", () => {
     expect(result.code).toBe(0)
     expect(result.stdout.trim()).toBe("sb_k1abcd_AAAAAAAAAAAAAAAA")
     expect(result.stderr).toContain("on box-1 in eu")
-    expect(result.stderr).toContain("no machine in us had room; sb_k1abcd_AAAAAAAAAAAAAAAA runs in eu (--region us keeps a create there)")
+    expect(result.stderr).toContain("no room in us; sb_k1abcd_AAAAAAAAAAAAAAAA runs in eu (--region us keeps a create there)")
   })
 })
 

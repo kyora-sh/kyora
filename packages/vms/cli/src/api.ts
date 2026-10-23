@@ -179,12 +179,12 @@ export interface QueueTicket {
   ahead: number
   depth: number
   enqueuedAt: string
-  /** it fails with no_capacity if no machine had room by then */
+  /** it fails with no_capacity if no room came up by then */
   waitUntil: string
 }
 
 export interface CreateOptions {
-  /** kyora cloud: seconds to wait in line when no machine has room (0 or unset: fail at once); a kyora-vmd has no line */
+  /** kyora cloud: seconds to wait in line when there is no room (0 or unset: fail at once); a kyora-vmd has no line */
   wait?: number
   /**
    * ms past `wait` the client keeps polling before it gives up on a line that never answers and
@@ -251,8 +251,6 @@ export interface Health {
   ok: boolean
   version?: string
   capacity?: { vcpusFree?: number; memoryMbFree?: number }
-  /** connected machines (kyora cloud) */
-  nodes?: number
   /** what a kyora-vmd can do (`tty`: terminals); kyora cloud says nothing */
   features?: string[]
 }
@@ -399,8 +397,9 @@ export interface RegionInfo {
   default: boolean
   jurisdiction: string | null
   fallback: string[]
-  machines: number
-  connected: number
+  /** admins only: how many machines the region has, and how many are connected */
+  machines?: number
+  connected?: number
   free: Room
 }
 
@@ -461,7 +460,7 @@ const HINTS: Record<Kind, Record<number, string>> = {
     403: "this account may not do that (--network open is for admins; an admin grants vms access)",
     409: "the sandbox is busy with an exclusive operation or still starting; older sandboxes take one exec at a time",
     429: "you are at your limit of concurrent sandboxes; `kyora vms ls`, then `kyora vms rm <id>`",
-    503: "no capacity is available for that right now; `kyora vms nodes` shows available capacity; ask for less or retry later",
+    503: "no capacity is available for that right now; `kyora vms regions` shows the room in each region; ask for less or retry later",
   },
 }
 

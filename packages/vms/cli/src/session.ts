@@ -255,7 +255,7 @@ function machineStatus(node: NodeInfo, now = Date.now()): string {
   return node.connected || now - seen < MACHINE_SILENT_MS ? "draining" : "offline"
 }
 
-/** kyora cloud's machines and what is free on them; admins also see sizes, versions and load */
+/** kyora cloud's machines, their sizes, versions and load: an admin's view (anyone else gets none) */
 export async function nodes(api: VmsClient, asJson: boolean): Promise<number> {
   if ((await api.kind()) !== "platform") {
     throw new Error(`${api.url} does not support nodes. Run \`kyora vms health\` to check capacity`)
@@ -266,7 +266,7 @@ export async function nodes(api: VmsClient, asJson: boolean): Promise<number> {
     return 0
   }
   if (machines.length === 0) {
-    console.log("no machines yet; an admin adds them on the dashboard")
+    console.log("no machines listed: only admins see machines; `kyora vms regions` shows the room in each region")
     return 0
   }
   const admin = machines.some((node) => node.capacity !== undefined)

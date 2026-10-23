@@ -236,7 +236,7 @@ Limits:
 | 128 + n | the command died of signal n (137 = SIGKILL, e.g. out of memory) |
 | 130 / 143 | you interrupted kyora vms (Ctrl-C / SIGTERM) |
 | 123 | requested image unavailable on reachable machines (HTTP 409 `image_unavailable`); the message names its available regions |
-| 125 | kyora itself failed: config, network, API error (no machine had room within `--wait`, or at once with `--no-wait`), a command whose stream broke and could not be reattached (see [When the connection breaks](#when-the-connection-breaks)), or an `--out` that was missing or unsafe after a successful command |
+| 125 | kyora itself failed: config, network, API error (no room came up within `--wait`, or at once with `--no-wait`), a command whose stream broke and could not be reattached (see [When the connection breaks](#when-the-connection-breaks)), or an `--out` that was missing or unsafe after a successful command |
 
 ## Commands
 
@@ -252,7 +252,7 @@ kyora vms screenshot <id> [-o file.png]   a screenshot of a desktop sandbox (--i
 kyora vms computer <id> <action> [args…]  drive its desktop: a click, typing, keys, scrolling (below)
 kyora vms shell <id> [-- cmd…]            a terminal in the sandbox that outlives its connection (below)
 kyora vms health                          is the host up, is the key accepted
-kyora vms nodes                           kyora cloud's machines and what is free on them
+kyora vms nodes                           kyora cloud's machines (admins only)
 kyora vms regions [default <id>|global]   kyora cloud's regions, what is free in each, where your creates go
 kyora vms login [--url URL]               sign in to kyora cloud through the browser
 kyora vms login --org ORG                 a token that acts as an org you're in
