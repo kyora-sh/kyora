@@ -193,7 +193,7 @@ export interface Snapshot {
 
 export interface Exposure { label: string; port: number; private: boolean; trusted?: boolean; url: string; sandboxId?: string; running?: boolean }
 
-export interface ListOptions { labels?: Record<string, string>; limit?: number; cursor?: string; signal?: AbortSignal }
+export interface ListOptions { labels?: Record<string, string>; signal?: AbortSignal }
 
 export interface CreateOptions {
   /** kyora cloud: seconds to wait in line when there is no room (0 or unset: fail at once); a kyora-vmd has no line */
@@ -491,6 +491,10 @@ const SHARED_CODE_HINTS: Record<string, string> = {
   exec_limit: "the sandbox has reached its concurrent exec limit; wait for a command to finish or cancel it",
   share_disabled: "sharing is fixed when a sandbox is created (--no-share), and its snapshots and session sandboxes keep it",
   vmd_update_required: "update the machine software, then retry",
+  snapshot_quota: "delete snapshots you no longer need: `kyora vms snapshot ls`, then `kyora vms snapshot rm <snap>`",
+  full_snapshots_not_allowed: "take a filesystem snapshot (leave out --full), or ask an admin to allow full snapshots",
+  snapshot_busy: "a snapshot of that sandbox is being taken; `kyora vms snapshot ls` shows when it is done",
+  snapshot_not_ready: "the snapshot is still being taken; `kyora vms snapshot show <snap>` shows when it is ready",
 }
 
 const TIMEOUTS = { short: 30_000, create: 120_000, exec: 120_000, computer: 120_000 }
@@ -582,7 +586,7 @@ async function apiError(action: string, response: Response, kind: Kind, hints = 
   const hint = hints
     ? code === "image_unavailable"
       ? kind === "platform" ? "`kyora vms images` shows availability; choose an available region or ask an admin to build the profile" : "build this profile on the host before retrying"
-      : ((kind === "platform" && code ? CODE_HINTS[code] : undefined) ?? (code ? SHARED_CODE_HINTS[code] : undefined) ?? HINTS[kind][response.status])
+      : ((code === "quota_exceeded" && action.startsWith("snapshot ") ? SHARED_CODE_HINTS.snapshot_quota : undefined) ?? (kind === "platform" && code ? CODE_HINTS[code] : undefined) ?? (code ? SHARED_CODE_HINTS[code] : undefined) ?? HINTS[kind][response.status])
     : undefined
   return new ApiError(`${action}: ${message}${hint ? `; ${hint}` : ""}`, response.status, code, after ?? retryAfterMs(response.headers.get("retry-after")))
 }
@@ -948,7 +952,6 @@ export class VmsClient {
   async list(options: ListOptions = {}): Promise<Sandbox[]> {
     const params = new URLSearchParams()
     for (const [key, value] of Object.entries(options.labels ?? {})) params.append("label", `${key}=${value}`)
-    if (options.limit !== undefined) params.set("limit", String(options.limit))
     const sandboxes = await this.pages<Sandbox>("list sandboxes", "/v1/sandboxes", "sandboxes", params, options)
     if (!options.labels) return sandboxes
     const labels = options.labels
@@ -1000,7 +1003,9 @@ export class VmsClient {
     if (options.name !== undefined) body.name = options.name
     if (options.ttlDays !== undefined) body.ttlDays = options.ttlDays
     if (options.stop !== undefined) body.stop = options.stop
-    const response = await this.send(`snapshot ${id}`, "POST", `${sandboxPath(id)}/snapshots`, { json: body, timeout: TIMEOUTS.create, ...(options.signal ? { signal: options.signal } : {}), ...(options.idempotencyKey ? { headers: { "Idempotency-Key": options.idempotencyKey } } : {}) })
+    if (options.signal?.aborted) throw options.signal.reason
+    // like a create, never cut off once sent: a snapshot taken under an id nobody heard of would hold the sandbox busy
+    const response = await this.send(`snapshot ${id}`, "POST", `${sandboxPath(id)}/snapshots`, { json: body, timeout: TIMEOUTS.create, ...(options.idempotencyKey ? { headers: { "Idempotency-Key": options.idempotencyKey } } : {}) })
     const snapshot = (await response.json()) as Snapshot
     if (options.wait === false) return snapshot
     return this.poll(snapshot, () => this.getSnapshot(snapshot.id, options.signal), (current) => {
@@ -1026,8 +1031,8 @@ export class VmsClient {
     let wait = delay
     let failures = 0
     for (;;) {
-      if (Date.now() >= deadline) throw options.late()
       await pause(Math.min(wait, deadline - Date.now()), options.signal)
+      if (Date.now() >= deadline) throw options.late()
       delay = Math.min(5_000, delay * 2)
       wait = delay
       try {
@@ -1050,20 +1055,22 @@ export class VmsClient {
     return this.pages<Snapshot>("list snapshots", "/v1/snapshots", "snapshots", new URLSearchParams())
   }
 
-  /** every page of a listing, following `next_cursor`; a caller that names a `cursor` gets that one page */
-  private async pages<T>(action: string, path: string, field: string, params: URLSearchParams, options: { cursor?: string; signal?: AbortSignal } = {}): Promise<T[]> {
+  /** every page of a listing, following `next_cursor` */
+  private async pages<T>(action: string, path: string, field: string, params: URLSearchParams, options: { signal?: AbortSignal } = {}): Promise<T[]> {
     let rows: T[] = []
-    let cursor = options.cursor
-    for (let pages = 1; ; pages++) {
+    let cursor: string | undefined
+    const cursors = new Set<string>()
+    for (;;) {
       const query = new URLSearchParams(params)
       if (cursor !== undefined) query.set("cursor", cursor)
       const text = query.toString()
       const response = await this.send(action, "GET", text ? `${path}?${text}` : path, { timeout: TIMEOUTS.short, ...(options.signal ? { signal: options.signal } : {}) })
       const body = (await response.json()) as Record<string, unknown>
       rows = rows.concat((body[field] as T[] | undefined) ?? [])
-      if (options.cursor !== undefined || typeof body.next_cursor !== "string" || !body.next_cursor) return rows
+      if (typeof body.next_cursor !== "string" || !body.next_cursor) return rows
       // never a partial listing passed off as the whole: rm --all and name lookups act on it
-      if (pages >= MAX_PAGES) throw new ApiError(`${action}: still more after ${MAX_PAGES} pages; ${this.url} kept answering next_cursor`, 0, "too_many_pages")
+      if (cursors.has(body.next_cursor) || cursors.size + 1 >= MAX_PAGES) throw new ApiError(`${action}: ${this.url} kept answering next_cursor (${cursors.size + 1} pages)`, 0, "too_many_pages")
+      cursors.add(body.next_cursor)
       cursor = body.next_cursor
     }
   }
@@ -1091,16 +1098,25 @@ export class VmsClient {
     if (options.graceMs !== undefined) createOptions.graceMs = options.graceMs
     if (options.signal !== undefined) createOptions.signal = options.signal
     if (options.onQueued !== undefined) createOptions.onQueued = options.onQueued
+    if (options.signal?.aborted) throw options.signal.reason
     const sandbox = await this.create({ ...spec, fromSnapshot: snapshotId }, createOptions)
     if (options.wait === false) return sandbox
-    return this.poll(sandbox, () => this.get(sandbox.id, options.signal), (current) => {
-      if (current.status === "failed" || current.status === "lost" || current.status === "destroyed") throw new ApiError(`restore of ${snapshotId} into ${sandbox.id} failed (status ${current.status})`, 0, "restore_failed")
-      return current.status === "running"
-    }, {
-      ...options,
-      gone: () => new ApiError(`restore of ${snapshotId} into ${sandbox.id} failed (sandbox not found)`, 0, "restore_failed"),
-      late: () => new ApiError(`restore of ${snapshotId} into ${sandbox.id} timed out; ${sandbox.id} may still finish`, 0, "restore_timeout"),
-    })
+    try {
+      if (options.signal?.aborted) throw options.signal.reason
+      return await this.poll(sandbox, () => this.get(sandbox.id, options.signal), (current) => {
+        if (current.status === "failed" || current.status === "lost" || current.status === "destroyed") throw new ApiError(`restore of ${snapshotId} into ${sandbox.id} failed (status ${current.status})`, 0, "restore_failed")
+        return current.status === "running"
+      }, {
+        ...options,
+        gone: () => new ApiError(`restore of ${snapshotId} into ${sandbox.id} failed (sandbox not found)`, 0, "restore_failed"),
+        late: () => new ApiError(`restore of ${snapshotId} into ${sandbox.id} timed out`, 0, "restore_timeout"),
+      })
+    } catch (error) {
+      // nothing half-restored is left behind, aborted or failed: the caller may never have heard its id
+      const destroyed = await this.destroy(sandbox.id).then(() => true, () => false)
+      if (!(error instanceof ApiError)) throw error
+      throw new ApiError(`${error.message}; ${destroyed ? `${sandbox.id} was destroyed` : `destroy ${sandbox.id} yourself (kyora vms rm ${sandbox.id}), it may still start`}`, error.status, error.code, error.retryAfterMs)
+    }
   }
 
   async expose(id: string, port: number, options: { name?: string; public?: boolean; trusted?: boolean; idempotencyKey?: string } = {}): Promise<Exposure> {

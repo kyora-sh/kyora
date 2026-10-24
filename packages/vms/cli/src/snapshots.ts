@@ -29,12 +29,20 @@ function checkGiven(args: SnapshotCommandArgs, allowed: Set<string>, label: stri
   for (const flag of args.given) if (flag !== "json" && !allowed.has(flag)) usage(`${label} does not take --${flag}`)
 }
 
-async function resolveSnapshotRef(api: VmsClient, ref: string, usage: (message: string) => never): Promise<string> {
+/** one listing per command, however many names it resolves */
+function snapshotLister(api: VmsClient): () => Promise<Snapshot[]> {
+  let listed: Promise<Snapshot[]> | undefined
+  return () => listed ??= api.snapshots()
+}
+
+async function resolveSnapshotRef(list: () => Promise<Snapshot[]>, ref: string, usage: (message: string) => never): Promise<string> {
   if (ref.startsWith("snap_")) return ref
-  const matches = (await api.snapshots()).filter((snapshot) => snapshot.name === ref)
+  const named = (await list()).filter((snapshot) => snapshot.name === ref)
+  // a name used again after a failed snapshot means the one that worked
+  const matches = named.length > 1 ? named.filter((snapshot) => snapshot.status === "ready") : named
   if (matches.length === 1) return matches[0]!.id
-  if (matches.length === 0) usage(`no snapshot named ${ref}`)
-  return usage(`more than one snapshot named ${ref}: ${matches.map((snapshot) => snapshot.id).join(", ")}`)
+  if (named.length === 0) usage(`no snapshot named ${ref}`)
+  return usage(`more than one snapshot named ${ref}: ${named.map((snapshot) => snapshot.id).join(", ")}`)
 }
 
 async function createSnapshot(api: VmsClient, args: SnapshotCommandArgs, target: string | undefined, usage: (message: string) => never): Promise<number> {
@@ -72,7 +80,7 @@ async function createSnapshot(api: VmsClient, args: SnapshotCommandArgs, target:
     return 0
   } catch (error) {
     if (interrupt.interrupted) {
-      note(seen ? `stopped waiting; snapshot ${seen.id} continues server side (kyora vms snapshot show ${seen.id})` : "stopped waiting; the snapshot continues server side")
+      note(seen ? `stopped waiting; snapshot ${seen.id} continues server side (kyora vms snapshot show ${seen.id})` : "stopped before the snapshot was asked for; nothing was taken")
       return interrupt.code!
     }
     throw error
@@ -102,7 +110,7 @@ async function listSnapshots(api: VmsClient, args: SnapshotCommandArgs, usage: (
 async function showSnapshot(api: VmsClient, args: SnapshotCommandArgs, ref: string | undefined, extra: string | undefined, usage: (message: string) => never): Promise<number> {
   checkGiven(args, new Set(), "snapshot show", usage)
   if (!ref || extra !== undefined) usage("usage: kyora vms snapshot show <snapshot> [--json]")
-  const snapshot = await api.getSnapshot(await resolveSnapshotRef(api, ref, usage))
+  const snapshot = await api.getSnapshot(await resolveSnapshotRef(snapshotLister(api), ref, usage))
   if (args.json) {
     printJson(snapshot)
     return 0
@@ -129,21 +137,29 @@ async function removeSnapshots(api: VmsClient, args: SnapshotCommandArgs, refs: 
   checkGiven(args, new Set(), "snapshot rm", usage)
   if (refs.length === 0) usage("usage: kyora vms snapshot rm <snapshot>... [--json]")
   // every name resolves before anything is deleted: a bad one fails the command with nothing done
+  const list = snapshotLister(api)
   const ids: string[] = []
-  for (const ref of refs) ids.push(await resolveSnapshotRef(api, ref, usage))
+  for (const ref of refs) ids.push(await resolveSnapshotRef(list, ref, usage))
   const deleted: string[] = []
   const missing: string[] = []
+  const failed: Array<{ id: string; error: string }> = []
   for (const id of new Set(ids)) {
-    if (await api.deleteSnapshot(id)) {
-      deleted.push(id)
-      if (!args.json) console.log(id)
-    } else {
-      missing.push(id)
-      note(`${id}: no such snapshot`)
+    try {
+      if (await api.deleteSnapshot(id)) {
+        deleted.push(id)
+        if (!args.json) console.log(id)
+      } else {
+        missing.push(id)
+        note(`${id}: no such snapshot`)
+      }
+    } catch (error) {
+      // one refusal (a snapshot still being taken) doesn't stop the others, and the report says what went
+      failed.push({ id, error: error instanceof Error ? error.message : String(error) })
+      note(`${id}: ${failed.at(-1)!.error}`)
     }
   }
-  if (args.json) printJson({ deleted, missing })
-  return missing.length ? 1 : 0
+  if (args.json) printJson({ deleted, missing, ...(failed.length ? { failed } : {}) })
+  return missing.length || failed.length ? 1 : 0
 }
 
 async function restoreSnapshot(api: VmsClient, args: SnapshotCommandArgs, refs: string[], usage: (message: string) => never): Promise<number> {
@@ -151,15 +167,13 @@ async function restoreSnapshot(api: VmsClient, args: SnapshotCommandArgs, refs: 
   checkGiven(args, RESTORE_GIVEN, "restore", usage)
   const [ref, extra] = refs
   if (!ref || extra !== undefined) usage("usage: kyora vms restore <snapshot> [create options] [--no-resume] [--json]")
-  const id = await resolveSnapshotRef(api, ref, usage)
+  const id = await resolveSnapshotRef(snapshotLister(api), ref, usage)
   const spec: CreateSpec = { ...(args.spec ?? {}), ...(args.noResume ? { resume: false } : {}) }
-  delete (spec as { image?: unknown }).image
   const wait = args.wait ?? 0
   const interrupt = new Interrupt()
-  let created: { id: string } | undefined
   try {
-    const sandbox = await api.restore(id, spec, { wait, graceMs: timeoutGraceMs(), signal: interrupt.signal, onQueued: queueNotes(wait), onProgress: (current) => { created = current } })
-    created = sandbox
+    // a restore that fails or is cut off after the create destroys its sandbox itself
+    const sandbox = await api.restore(id, spec, { wait, graceMs: timeoutGraceMs(), signal: interrupt.signal, onQueued: queueNotes(wait) })
     if (interrupt.interrupted) {
       await destroyQuietly(api, sandbox.id)
       return interrupt.code!
@@ -174,10 +188,7 @@ async function restoreSnapshot(api: VmsClient, args: SnapshotCommandArgs, refs: 
     }
     return 0
   } catch (error) {
-    if (interrupt.interrupted) {
-      if (created) await destroyQuietly(api, created.id)
-      return interrupt.code!
-    }
+    if (interrupt.interrupted) return interrupt.code!
     throw error
   } finally {
     interrupt.dispose()

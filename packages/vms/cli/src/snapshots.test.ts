@@ -28,6 +28,7 @@ let snapshotPaging: boolean
 let endlessPaging: boolean
 let busyPolls: number
 let sandboxExtra: Record<string, unknown>
+let busySnapshots: Set<string>
 
 beforeEach(async () => {
   root = await tempDir("snapshots")
@@ -46,6 +47,7 @@ beforeEach(async () => {
   endlessPaging = false
   busyPolls = 0
   sandboxExtra = {}
+  busySnapshots = new Set()
   process.env.KYORA_VMS_POLL_MS = "1"
   server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
     const url = new URL(request.url)
@@ -53,7 +55,7 @@ beforeEach(async () => {
     const body = request.method === "POST" ? await request.json().catch(() => null) : null
     calls.push({ method: request.method, path, query: url.searchParams, body, headers: Object.fromEntries(request.headers.entries()) })
     if (request.method === "POST" && /^\/v1\/sandboxes\/[^/]+\/snapshots$/.test(path)) {
-      if (snapshotError) return Response.json(snapshotError.body, { status: snapshotError.status })
+      if (snapshotError) return Response.json(snapshotError.body, { status: snapshotError.status, headers: { "retry-after": "5" } })
       return Response.json(makeSnapshot({ status: "creating", bytes: null, name: (body as { name?: string } | null)?.name ?? null, kind: (body as { kind?: string } | null)?.kind ?? "fs" }), { status: 202 })
     }
     if (request.method === "GET" && path === "/v1/snapshots") {
@@ -72,6 +74,7 @@ beforeEach(async () => {
       return Response.json(makeSnapshot(snapshotPolls <= creatingPolls ? { status: "creating", bytes: null } : {}))
     }
     if (request.method === "DELETE" && /^\/v1\/snapshots\/[^/]+$/.test(path)) {
+      if (busySnapshots.has(path.split("/").at(-1)!)) return Response.json({ error: "snapshot_busy", message: "it is being taken" }, { status: 409 })
       if (missingSnapshots.has(path.split("/").at(-1)!)) return Response.json({ error: "not_found", message: "no such snapshot" }, { status: 404 })
       return new Response(null, { status: 204 })
     }
@@ -90,6 +93,7 @@ beforeEach(async () => {
       if (restoreOutcome === "failed") return Response.json(makeSandbox({ status: "failed" }))
       return Response.json(makeSandbox({ ...(restorePolls <= 1 ? { status: "starting" } : {}), ...sandboxExtra }))
     }
+    if (request.method === "DELETE" && /^\/v1\/sandboxes\/[^/]+$/.test(path)) return new Response(null, { status: 204 })
     return Response.json({ error: "not_found", message: `no route ${request.method} ${path}` }, { status: 404 })
   } })
 })
@@ -302,4 +306,54 @@ test("a listing that never stops paging fails instead of passing off a partial l
   const error = await client().snapshots().catch((caught: unknown) => caught)
   expect(error).toMatchObject({ code: "too_many_pages" })
   expect(calls.filter((call) => call.path === "/v1/snapshots")).toHaveLength(100)
+})
+
+test("a snapshot quota or refusal points at snapshots, never at sandboxes", async () => {
+  for (const code of ["snapshot_quota", "quota_exceeded"]) {
+    snapshotError = { status: 429, body: { error: code, message: "you have 3 snapshots" } }
+    const result = await run(["snapshot", SANDBOX_ID])
+    expect(result.code).not.toBe(0)
+    expect(result.stderr).toContain("kyora vms snapshot rm <snap>")
+    expect(result.stderr).not.toContain("concurrent sandboxes")
+  }
+  snapshotError = { status: 403, body: { error: "full_snapshots_not_allowed", message: "no full snapshots" } }
+  const full = await run(["snapshot", SANDBOX_ID, "--full"])
+  expect(full.stderr).toContain("leave out --full")
+  expect(full.stderr).not.toContain("--network open")
+})
+
+test("a restore that fails after the create destroys its sandbox", async () => {
+  restoreOutcome = "failed"
+  const result = await run(["restore", "snap_x"])
+  expect(result.code).not.toBe(0)
+  expect(result.stderr).toContain("sb_restored1 was destroyed")
+  expect(calls.some((call) => call.method === "DELETE" && call.path === "/v1/sandboxes/sb_restored1")).toBe(true)
+})
+
+test("the client destroys a restore it was told to stop, and never creates one when told before", async () => {
+  const before = new AbortController()
+  before.abort()
+  await expect(client().restore("snap_x", {}, { signal: before.signal })).rejects.toBeDefined()
+  expect(calls.filter((call) => call.method === "POST")).toHaveLength(0)
+  const during = new AbortController()
+  await expect(client().restore("snap_x", {}, { signal: during.signal, onProgress: () => during.abort() })).rejects.toBeDefined()
+  expect(calls.some((call) => call.method === "DELETE" && call.path === "/v1/sandboxes/sb_restored1")).toBe(true)
+})
+
+test("snapshot rm keeps going past a refusal and reports it", async () => {
+  busySnapshots = new Set(["snap_busy"])
+  const result = await run(["snapshot", "rm", "snap_a", "snap_busy", "snap_c", "--json"])
+  expect(result.code).toBe(1)
+  const report = JSON.parse(result.stdout)
+  expect(report.deleted).toEqual(["snap_a", "snap_c"])
+  expect(report.missing).toEqual([])
+  expect(report.failed[0].id).toBe("snap_busy")
+})
+
+test("ls --label __proto__=x is sent as a label, not dropped", async () => {
+  sandboxesList = [makeSandbox({ id: "sb_plain11", name: "plain", labels: {} })]
+  const result = await run(["ls", "--label", "__proto__=x"])
+  expect(result.code).toBe(0)
+  expect(result.stdout).not.toContain("plain")
+  expect(calls.find((call) => call.path === "/v1/sandboxes")!.query.getAll("label")).toEqual(["__proto__=x"])
 })

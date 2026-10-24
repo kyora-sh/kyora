@@ -362,7 +362,7 @@ function parseEnv(pairs: string[] = []): Record<string, string> | undefined {
   return env
 }
 
-function sandboxSpec(values: Values): CreateSpec {
+function sandboxSpec(values: Values, { image: withImage = true } = {}): CreateSpec {
   const network = values.network as Network | undefined
   if (network !== undefined && !NETWORKS.includes(network)) usage(`--network must be one of ${NETWORKS.join(", ")}`)
   const spec: CreateSpec = {}
@@ -392,7 +392,7 @@ function sandboxSpec(values: Values): CreateSpec {
   if (values.ttl) spec.ttlSeconds = values.ttl === "none" ? 0 : parseSeconds(values.ttl, "--ttl")
   if (values.idle) spec.idleSeconds = values.idle === "none" ? 0 : parseSeconds(values.idle, "--idle")
   // an agent's wrapper sets KYORA_VMS_IMAGE once; --image still wins for one call
-  const image = values.image ?? (process.env.KYORA_VMS_IMAGE?.trim() || undefined)
+  const image = withImage ? values.image ?? (process.env.KYORA_VMS_IMAGE?.trim() || undefined) : undefined
   if (image !== undefined) {
     if (!IMAGE_PATTERN.test(image) && !isImageId(image) && !isPinnedRef(image)) usage(`${values.image === undefined ? "KYORA_VMS_IMAGE" : "--image"} must be a short lowercase name, e.g. desktop, or one of your account's images: name, name@N, name@sha256:… or img_…`)
     // a name kyora.image.lock pins here boots the pinned version, never whatever is newest
@@ -552,8 +552,8 @@ export async function vmsMain(argv: string[]): Promise<number> {
       let spec: CreateSpec | undefined
       if (restoreRequested) {
         if (values.image !== undefined) usage("restore boots the snapshot's image; --image does not go with restore")
-        spec = sandboxSpec(values)
-        delete spec.image
+        // the snapshot's image boots: KYORA_VMS_IMAGE and kyora.image.lock aren't asked
+        spec = sandboxSpec(values, { image: false })
       }
       return snapshotCommand(api, { verb, positionals, json: asJson, full: Boolean(values.full), name: values.name, ttl: values.ttl, noWait: Boolean(values["no-wait"]), noResume: Boolean(values["no-resume"]), given: Object.keys(values), ...(spec ? { spec } : {}), ...(restoreRequested ? { wait: waitSeconds(values) } : {}) }, usage)
     }
@@ -619,7 +619,7 @@ export async function vmsMain(argv: string[]): Promise<number> {
       if (positionals.length > 1) usage("ls takes at most one sandbox id")
       if (values.label !== undefined) {
         if (positionals.length) usage("ls --label takes no sandbox")
-        const labels: Record<string, string> = {}
+        const labels: Record<string, string> = Object.create(null)
         for (const pair of values.label) {
           const eq = pair.indexOf("=")
           if (eq <= 0) usage("--label takes key=value")
