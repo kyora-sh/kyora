@@ -143,9 +143,33 @@ test("images build <name> --from: a setup script and packages on gha-runner, the
   expect(built.code).toBe(0)
   expect(JSON.parse(built.stdout)).toMatchObject({ ref: "ci-web@4", name: "ci-web", cached: true, key })
   expect(cloud.created).toHaveLength(0)
-  // `image` and --name are the same command
-  const again = await cli(["image", "build", "--name", "ci-web", "--from", "gha-runner", "--package", "jq", "--package", "protobuf-compiler", "--file", join(root, "setup.sh")], { cwd: "/", env: env() })
+  // `image` and --name are the same command; --allow is how it builds, not what it is
+  const again = await cli(["image", "build", "--name", "ci-web", "--from", "gha-runner", "--package", "jq", "--package", "protobuf-compiler", "--file", join(root, "setup.sh"), "--allow", "example.com"], { cwd: "/", env: env() })
   expect([again.code, again.stdout.trim()]).toEqual([0, "ci-web@4"])
+})
+
+test("images build <name> --from --allow: the hosts are the build sandbox's egress allowlist, as build.allow", async () => {
+  const built = await cli(["images", "build", "ci-web", "--from", "gha-runner", "--package", "jq", "--allow", "Example.com", "--allow", "*.pkg.dev"], { cwd: root, env: env() })
+  expect(cloud.created).toHaveLength(1)
+  expect(cloud.created[0]).toMatchObject({ image: "gha-runner", network: "registries", egressAllow: ["example.com", "*.pkg.dev"] })
+  expect(built.stderr).not.toContain("build.allow")
+})
+
+test("images build --from --allow: a bad host or too many is build.allow's error, and costs no sandbox", async () => {
+  const bad = await cli(["images", "build", "ci-web", "--from", "gha-runner", "--package", "jq", "--allow", "example.com", "--allow", "https://x.dev"], { cwd: root, env: env() })
+  expect(bad.code).toBe(2)
+  expect(bad.stderr).toContain('build.allow[1]: must be a hostname or *.suffix: "https://x.dev"')
+  const many = Array.from({ length: 33 }, (_, i) => ["--allow", `h${i}.example.com`]).flat()
+  const tooMany = await cli(["images", "build", "ci-web", "--from", "gha-runner", "--package", "jq", ...many], { cwd: root, env: env() })
+  expect(tooMany.code).toBe(2)
+  expect(tooMany.stderr).toContain("build.allow: at most 32 hosts")
+  const alone = await cli(["images", "build", "ci-web", "--allow", "example.com"], { cwd: root, env: env() })
+  expect(alone.code).not.toBe(0)
+  expect(alone.stderr).toContain("go with --from <base>")
+  const misplaced = await cli(["images", "rm", "platform@1", "--allow", "example.com"], { cwd: root, env: env() })
+  expect(misplaced.code).not.toBe(0)
+  expect(misplaced.stderr).toContain("go with image build")
+  expect(cloud.created).toHaveLength(0)
 })
 
 test("images build --from: a bad base, a bad package, a missing file or a Dockerfile costs no sandbox", async () => {
