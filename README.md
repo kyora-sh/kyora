@@ -40,6 +40,8 @@ This installs `kyora`:
 - `kyora vms`: disposable VMs. `kyora vms run -- cargo build` uploads your worktree, runs the command, streams its output and exits with its code; `new`, `ls`, `shell`, `exec`, `push`, `pull` and `images` cover the rest. See [packages/vms/cli](packages/vms/cli/README.md).
 - `kyora detach` moves this repo's coding-agent conversation to a kyora VM and `kyora back` brings its commits and conversation home.
 - `kyora image`, `kyora deploy` and `kyora top` manage images, deploys and live usage; `kyora login` signs in to kyora cloud.
+- `kyora publish ./report` serves a directory or file as a page at its own URL, private unless `--public`; `kyora pages` lists and removes them.
+- `kyora mcp` is all of the above as an MCP server for coding agents: `claude mcp add kyora -- kyora mcp`.
 - `kyora switch` hot-swaps coding-agent logins between accounts. See [packages/switch/cli](packages/switch/cli/README.md).
 - `kyora run` and `kyora tui` start the kyora agent harness (below).
 

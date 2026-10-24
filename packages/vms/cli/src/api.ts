@@ -368,7 +368,10 @@ export interface DnsRecord {
 /** a custom domain as `/v1/domains` shows it */
 export interface CustomDomain {
   hostname: string
+  /** the public URL name it serves, or `page:<name>` for a page */
   label: string
+  /** the page it serves, if it serves one */
+  page?: string
   /** unverified: kyora hasn't seen your ownership TXT yet, nothing is set up at Cloudflare */
   status: "unverified" | "pending" | "active" | "failed"
   reason: string | null
@@ -388,6 +391,34 @@ export interface CustomDomain {
   missing?: Array<{ type: string; name: string; value: string }>
   /** blocked by kyora: not served, and you can't add or remove it */
   blocked?: boolean
+}
+
+/** a static page as `/v1/pages` shows it: a name served from a prefix of one of your buckets */
+export interface Page {
+  name: string
+  url: string
+  private: boolean
+  bucket: string
+  /** ends with / */
+  prefix: string
+  region?: string
+  spa: boolean
+  notFound?: string | null
+  /** taken down by kyora: not served */
+  disabled?: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+/** `POST /v1/pages`: a new page, or the caller's own name pointed at another prefix; without a name, kyora cloud makes one from `hint` */
+export interface PageCreate {
+  name?: string
+  hint?: string
+  bucket: string
+  prefix: string
+  public?: boolean
+  spa?: boolean
+  notFound?: string
 }
 
 /** a region as `GET /v1/regions` shows it */
@@ -1239,9 +1270,10 @@ export class VmsClient {
     return ((await response.json()) as { region: string | null }).region
   }
 
-  /** custom domains: a hostname of yours for one of your public URL names */
-  async domainAdd(hostname: string, label: string, dcv?: "http" | "txt"): Promise<CustomDomain> {
-    const response = await this.send(`add ${hostname}`, "POST", "/v1/domains", { json: { hostname, label, ...(dcv ? { dcv } : {}) }, timeout: TIMEOUTS.short })
+  /** custom domains: a hostname of yours for one of your public URL names, or (`{ page }`) one of your public pages */
+  async domainAdd(hostname: string, to: string | { page: string }, dcv?: "http" | "txt"): Promise<CustomDomain> {
+    const target = typeof to === "string" ? { label: to } : { page: to.page }
+    const response = await this.send(`add ${hostname}`, "POST", "/v1/domains", { json: { hostname, ...target, ...(dcv ? { dcv } : {}) }, timeout: TIMEOUTS.short })
     return (await response.json()) as CustomDomain
   }
 
@@ -1258,6 +1290,32 @@ export class VmsClient {
 
   async domainRemove(hostname: string): Promise<void> {
     await this.send(`remove ${hostname}`, "DELETE", `/v1/domains/${encodeURIComponent(hostname)}`, { timeout: TIMEOUTS.short, accept: [204] })
+  }
+
+  /** static pages; their errors say what the server said, without the hints for sandboxes */
+  async pageCreate(body: PageCreate): Promise<Page> {
+    const response = await this.send("publish", "POST", "/v1/pages", { json: body, timeout: TIMEOUTS.short, noHint: true })
+    return (await response.json()) as Page
+  }
+
+  async pages(): Promise<Page[]> {
+    const response = await this.send("list pages", "GET", "/v1/pages", { timeout: TIMEOUTS.short, noHint: true })
+    return ((await response.json()) as { pages?: Page[] }).pages ?? []
+  }
+
+  async page(name: string): Promise<Page> {
+    const response = await this.send(`page ${name}`, "GET", `/v1/pages/${encodeURIComponent(name)}`, { timeout: TIMEOUTS.short, noHint: true })
+    return (await response.json()) as Page
+  }
+
+  async pageRemove(name: string): Promise<void> {
+    await this.send(`remove page ${name}`, "DELETE", `/v1/pages/${encodeURIComponent(name)}`, { timeout: TIMEOUTS.short, accept: [204], noHint: true })
+  }
+
+  /** a signed link, good for 60 s, that signs a browser in to a private page */
+  async pageLogin(name: string): Promise<string> {
+    const response = await this.send(`sign in to ${name}`, "POST", `/v1/pages/${encodeURIComponent(name)}/login`, { timeout: TIMEOUTS.short, noHint: true })
+    return ((await response.json()) as { loginUrl: string }).loginUrl
   }
 
   async nodes(): Promise<NodeInfo[]> {
