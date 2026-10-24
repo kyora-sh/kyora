@@ -16,6 +16,8 @@ export interface FromOptions {
   /** a setup script, run as root with bash -euo pipefail */
   file?: string
   packages?: string[]
+  /** hosts the build sandbox reaches beyond the registries: the spec's build.allow */
+  allow?: string[]
 }
 
 /**
@@ -33,7 +35,8 @@ export async function fromSpec(name: string, options: FromOptions, usage: (messa
     setup = await file.text()
   }
   const spec: CiImageSpec = { packages, setup }
-  return { ...toImageJson(spec, options.from!, { name }) }
+  const allow = options.allow ?? []
+  return { ...toImageJson(spec, options.from!, { name }), ...(allow.length > 0 ? { build: { allow } } : {}) }
 }
 
 /**
@@ -68,7 +71,7 @@ export async function checkCommand(options: { dir?: string; json: boolean }): Pr
 }
 
 /**
- * `kyora vms image build [spec] [--name N] [--region R] [--json]`, or `image build <name> --from <base> [--file F] [--package P]...`:
+ * `kyora vms image build [spec] [--name N] [--region R] [--json]`, or `image build <name> --from <base> [--file F] [--package P]... [--allow HOST]...`:
  * 0 built or reused, 1 the build failed, 2 a bad spec, 125 kyora failed
  */
 export async function buildCommand(api: VmsClient, options: { spec?: string; name?: string; region?: string; json: boolean } & FromOptions, usage: (message: string) => never): Promise<number> {
@@ -84,7 +87,7 @@ export async function buildCommand(api: VmsClient, options: { spec?: string; nam
     if (!ACCOUNT_IMAGE_NAME.test(name)) usage("the image's name is 1-64 lowercase letters, digits and dashes, a letter first")
     raw = await fromSpec(name, options, usage)
     specPath = `--from ${options.from}`
-  } else if (options.file !== undefined || (options.packages ?? []).length > 0) usage("--file and --package go with --from <base>, e.g. --from gha-runner")
+  } else if (options.file !== undefined || (options.packages ?? []).length > 0 || (options.allow ?? []).length > 0) usage("--file, --package and --allow go with --from <base>, e.g. --from gha-runner")
   const interrupt = new Interrupt()
   try {
     const result = await buildImage(apiBackend(api, interrupt.signal), {
