@@ -5,7 +5,7 @@ import { BUILDER_HASH } from "./image-builder-assets"
 import { toImageJson } from "../../shared/ci-image-spec"
 import { checkSpec, contentKey, loadSpec } from "./image-spec"
 import { startFakePlatform, type FakeAccountImage, type FakeVmd } from "./testing/fake-vmd"
-import { cli, platformEnv, tempDir, write } from "./testing/fixtures"
+import { cli, KYORA_ENTRY, platformEnv, tempDir, write } from "./testing/fixtures"
 
 /**
  * The image commands end to end against the fake kyora cloud: `image build --json` (a cached build
@@ -148,11 +148,14 @@ test("images build <name> --from: a setup script and packages on gha-runner, the
   expect([again.code, again.stdout.trim()]).toEqual([0, "ci-web@4"])
 })
 
-test("images build <name> --from --allow: the hosts are the build sandbox's egress allowlist, as build.allow", async () => {
-  const built = await cli(["images", "build", "ci-web", "--from", "gha-runner", "--package", "jq", "--allow", "Example.com", "--allow", "*.pkg.dev"], { cwd: root, env: env() })
-  expect(cloud.created).toHaveLength(1)
-  expect(cloud.created[0]).toMatchObject({ image: "gha-runner", network: "registries", egressAllow: ["example.com", "*.pkg.dev"] })
-  expect(built.stderr).not.toContain("build.allow")
+test("images build <name> --from --allow: the hosts are the build sandbox's egress allowlist, as build.allow, from kyora vms images, image and kyora image", async () => {
+  const args = ["build", "ci-web", "--from", "gha-runner", "--package", "jq", "--allow", "Example.com", "--allow", "*.pkg.dev"]
+  for (const [command, entry] of [[["images"], undefined], [["image"], undefined], [["image"], KYORA_ENTRY]] as Array<[string[], string | undefined]>) {
+    const before = cloud.created.length
+    await cli([...command, ...args], { cwd: root, env: env(), ...(entry ? { entry } : {}) })
+    expect(cloud.created).toHaveLength(before + 1)
+    expect(cloud.created.at(-1)).toMatchObject({ image: "gha-runner", network: "registries", egressAllow: ["example.com", "*.pkg.dev"] })
+  }
 })
 
 test("images build --from --allow: a bad host or too many is build.allow's error, and costs no sandbox", async () => {
@@ -169,6 +172,15 @@ test("images build --from --allow: a bad host or too many is build.allow's error
   const misplaced = await cli(["images", "rm", "platform@1", "--allow", "example.com"], { cwd: root, env: env() })
   expect(misplaced.code).not.toBe(0)
   expect(misplaced.stderr).toContain("go with image build")
+  // the fleet's list and the admin rebuild take no --allow
+  for (const args of [["images"], ["images", "build", "gha-runner", "--node", "box-1"], ["images", "build", "gha-runner", "--all"]]) {
+    const fleet = await cli([...args, "--allow", "example.com"], { cwd: root, env: env() })
+    expect(fleet.code).not.toBe(0)
+    expect(fleet.stderr).toContain("usage: kyora vms images [--json], or images build <profile>")
+  }
+  const top = await cli(["image", "build", "ci-web", "--from", "gha-runner", "--package", "jq", "--allow", "bad_host"], { cwd: root, env: env(), entry: KYORA_ENTRY })
+  expect(top.code).toBe(2)
+  expect(top.stderr).toContain('build.allow[0]: must be a hostname or *.suffix: "bad_host"')
   expect(cloud.created).toHaveLength(0)
 })
 
