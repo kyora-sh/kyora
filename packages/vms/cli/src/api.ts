@@ -183,6 +183,18 @@ export interface QueueTicket {
   waitUntil: string
 }
 
+export type SnapshotKind = "fs" | "full"
+
+export interface Snapshot {
+  id: string; kind: SnapshotKind; status: "creating" | "ready" | "failed" | "deleted"; name: string | null; sandbox: string
+  bytes: number | null; logicalBytes: number | null; dataBytes: number | null; image: string | null
+  spec?: Record<string, unknown>; resumable: boolean; createdAt: string; readyAt?: string; expiresAt: string; error?: string
+}
+
+export interface Exposure { label: string; port: number; private: boolean; trusted?: boolean; url: string; sandboxId?: string; running?: boolean }
+
+export interface ListOptions { labels?: Record<string, string>; limit?: number; cursor?: string; signal?: AbortSignal }
+
 export interface CreateOptions {
   /** kyora cloud: seconds to wait in line when there is no room (0 or unset: fail at once); a kyora-vmd has no line */
   wait?: number
@@ -520,6 +532,21 @@ function retryAfterMs(header: string | null, now = Date.now()): number | undefin
   return Number.isNaN(date) ? undefined : Math.max(0, date - now)
 }
 
+/** how long a snapshot or a restore is waited on: as long as the server gives its snapshot and restore work */
+const POLL_TIMEOUT_MS = 60 * 60_000
+/** that many failed polls in a row end the wait */
+const POLL_RETRIES = 20
+/** a busy server's Retry-After is waited out up to this long per poll */
+const POLL_MAX_RETRY_AFTER_MS = 30_000
+/** a listing is followed this many pages (of up to 1000 rows) at most */
+const MAX_PAGES = 100
+
+/** the first wait between snapshot and restore polls; KYORA_VMS_POLL_MS shortens it in tests */
+function pollMs(): number {
+  const value = Number(process.env.KYORA_VMS_POLL_MS)
+  return Number.isFinite(value) && value > 0 ? value : 1_000
+}
+
 function pause(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) return reject(signal.reason)
@@ -540,10 +567,13 @@ async function apiError(action: string, response: Response, kind: Kind, hints = 
   const text = await response.text().catch(() => "")
   let code: string | undefined
   let message: string | undefined
+  let after: number | undefined
   try {
-    const body = JSON.parse(text) as { error?: unknown; message?: unknown }
+    const body = JSON.parse(text) as { error?: unknown; message?: unknown; retryAfterMs?: unknown }
     code = typeof body.error === "string" ? body.error : undefined
     message = typeof body.message === "string" ? body.message : code
+    // kyora cloud says it to the millisecond on a 429 or 503; the header only in whole seconds
+    if (typeof body.retryAfterMs === "number" && Number.isFinite(body.retryAfterMs) && body.retryAfterMs >= 0) after = Math.round(body.retryAfterMs)
   } catch {
     // an HTML error page means a proxy answered, not the server itself
     if (text.trim() && !text.trimStart().startsWith("<")) message = text.trim().slice(0, 200)
@@ -554,7 +584,7 @@ async function apiError(action: string, response: Response, kind: Kind, hints = 
       ? kind === "platform" ? "`kyora vms images` shows availability; choose an available region or ask an admin to build the profile" : "build this profile on the host before retrying"
       : ((kind === "platform" && code ? CODE_HINTS[code] : undefined) ?? (code ? SHARED_CODE_HINTS[code] : undefined) ?? HINTS[kind][response.status])
     : undefined
-  return new ApiError(`${action}: ${message}${hint ? `; ${hint}` : ""}`, response.status, code, retryAfterMs(response.headers.get("retry-after")))
+  return new ApiError(`${action}: ${message}${hint ? `; ${hint}` : ""}`, response.status, code, after ?? retryAfterMs(response.headers.get("retry-after")))
 }
 
 /**
@@ -915,9 +945,14 @@ export class VmsClient {
     }
   }
 
-  async list(): Promise<Sandbox[]> {
-    const response = await this.send("list sandboxes", "GET", "/v1/sandboxes", { timeout: TIMEOUTS.short })
-    return ((await response.json()) as { sandboxes?: Sandbox[] }).sandboxes ?? []
+  async list(options: ListOptions = {}): Promise<Sandbox[]> {
+    const params = new URLSearchParams()
+    for (const [key, value] of Object.entries(options.labels ?? {})) params.append("label", `${key}=${value}`)
+    if (options.limit !== undefined) params.set("limit", String(options.limit))
+    const sandboxes = await this.pages<Sandbox>("list sandboxes", "/v1/sandboxes", "sandboxes", params, options)
+    if (!options.labels) return sandboxes
+    const labels = options.labels
+    return sandboxes.filter((sandbox) => Object.entries(labels).every(([key, value]) => sandbox.labels?.[key] === value))
   }
 
   async stats(signal?: AbortSignal): Promise<SandboxStatsResponse> {
@@ -943,8 +978,8 @@ export class VmsClient {
     }
   }
 
-  async get(id: string): Promise<Sandbox> {
-    const response = await this.send(`get ${id}`, "GET", sandboxPath(id), { timeout: TIMEOUTS.short })
+  async get(id: string, signal?: AbortSignal): Promise<Sandbox> {
+    const response = await this.send(`get ${id}`, "GET", sandboxPath(id), { timeout: TIMEOUTS.short, ...(signal ? { signal } : {}) })
     return (await response.json()) as Sandbox
   }
 
@@ -957,6 +992,133 @@ export class VmsClient {
       if (error instanceof ApiError && error.status === 404) return false
       throw error
     }
+  }
+
+  async snapshot(id: string, options: { kind?: SnapshotKind; name?: string; ttlDays?: number; stop?: boolean; idempotencyKey?: string; wait?: boolean; timeoutMs?: number; signal?: AbortSignal; onProgress?: (s: Snapshot) => void } = {}): Promise<Snapshot> {
+    const body: Record<string, unknown> = {}
+    if (options.kind !== undefined) body.kind = options.kind
+    if (options.name !== undefined) body.name = options.name
+    if (options.ttlDays !== undefined) body.ttlDays = options.ttlDays
+    if (options.stop !== undefined) body.stop = options.stop
+    const response = await this.send(`snapshot ${id}`, "POST", `${sandboxPath(id)}/snapshots`, { json: body, timeout: TIMEOUTS.create, ...(options.signal ? { signal: options.signal } : {}), ...(options.idempotencyKey ? { headers: { "Idempotency-Key": options.idempotencyKey } } : {}) })
+    const snapshot = (await response.json()) as Snapshot
+    if (options.wait === false) return snapshot
+    return this.poll(snapshot, () => this.getSnapshot(snapshot.id, options.signal), (current) => {
+      if (current.status === "failed") throw new ApiError(`snapshot ${current.id} failed: ${current.error ?? "no reason given"}`, 0, "snapshot_failed")
+      if (current.status === "deleted") throw new ApiError(`snapshot ${current.id} was deleted`, 404, "not_found")
+      return current.status === "ready"
+    }, {
+      ...options,
+      gone: () => new ApiError(`snapshot ${snapshot.id} not found`, 404, "not_found"),
+      late: () => new ApiError(`snapshot ${snapshot.id} timed out; it may still finish (kyora vms snapshot show ${snapshot.id})`, 0, "snapshot_timeout"),
+    })
+  }
+
+  /**
+   * asks `next` again, 1 s backing off to 5 s, until `done`: a 404 is `gone`, the deadline `late`; transient failures
+   * and a busy server (429, 503, after its Retry-After) are asked again, up to POLL_RETRIES in a row
+   */
+  private async poll<T>(current: T, next: () => Promise<T>, done: (current: T) => boolean, options: { timeoutMs?: number; signal?: AbortSignal; onProgress?: (current: T) => void; gone: () => ApiError; late: () => ApiError }): Promise<T> {
+    options.onProgress?.(current)
+    if (done(current)) return current
+    const deadline = Date.now() + (options.timeoutMs ?? POLL_TIMEOUT_MS)
+    let delay = pollMs()
+    let wait = delay
+    let failures = 0
+    for (;;) {
+      if (Date.now() >= deadline) throw options.late()
+      await pause(Math.min(wait, deadline - Date.now()), options.signal)
+      delay = Math.min(5_000, delay * 2)
+      wait = delay
+      try {
+        current = await next()
+      } catch (error) {
+        if (options.signal?.aborted) throw options.signal.reason
+        if (!(error instanceof ApiError)) throw error
+        if (error.status === 404) throw options.gone()
+        if (!(transient(error) || error.status === 429 || error.status === 503) || ++failures > POLL_RETRIES) throw error
+        wait = Math.max(delay, Math.min(error.retryAfterMs ?? 0, POLL_MAX_RETRY_AFTER_MS))
+        continue
+      }
+      failures = 0
+      options.onProgress?.(current)
+      if (done(current)) return current
+    }
+  }
+
+  async snapshots(): Promise<Snapshot[]> {
+    return this.pages<Snapshot>("list snapshots", "/v1/snapshots", "snapshots", new URLSearchParams())
+  }
+
+  /** every page of a listing, following `next_cursor`; a caller that names a `cursor` gets that one page */
+  private async pages<T>(action: string, path: string, field: string, params: URLSearchParams, options: { cursor?: string; signal?: AbortSignal } = {}): Promise<T[]> {
+    let rows: T[] = []
+    let cursor = options.cursor
+    for (let pages = 1; ; pages++) {
+      const query = new URLSearchParams(params)
+      if (cursor !== undefined) query.set("cursor", cursor)
+      const text = query.toString()
+      const response = await this.send(action, "GET", text ? `${path}?${text}` : path, { timeout: TIMEOUTS.short, ...(options.signal ? { signal: options.signal } : {}) })
+      const body = (await response.json()) as Record<string, unknown>
+      rows = rows.concat((body[field] as T[] | undefined) ?? [])
+      if (options.cursor !== undefined || typeof body.next_cursor !== "string" || !body.next_cursor) return rows
+      // never a partial listing passed off as the whole: rm --all and name lookups act on it
+      if (pages >= MAX_PAGES) throw new ApiError(`${action}: still more after ${MAX_PAGES} pages; ${this.url} kept answering next_cursor`, 0, "too_many_pages")
+      cursor = body.next_cursor
+    }
+  }
+
+  async getSnapshot(id: string, signal?: AbortSignal): Promise<Snapshot> {
+    const response = await this.send(`get snapshot ${id}`, "GET", `/v1/snapshots/${encodeURIComponent(id)}`, { timeout: TIMEOUTS.short, ...(signal ? { signal } : {}) })
+    return (await response.json()) as Snapshot
+  }
+
+  /** false when the snapshot was already gone */
+  async deleteSnapshot(id: string): Promise<boolean> {
+    try {
+      await this.send(`delete snapshot ${id}`, "DELETE", `/v1/snapshots/${encodeURIComponent(id)}`, { timeout: TIMEOUTS.short })
+      return true
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) return false
+      throw error
+    }
+  }
+
+  async restore(snapshotId: string, spec: Omit<CreateSpec, "fromSnapshot" | "image"> = {}, options: Omit<CreateOptions, "wait"> & { wait?: number | boolean; timeoutMs?: number; onProgress?: (s: Sandbox) => void } = {}): Promise<Sandbox> {
+    if ((spec as { image?: unknown }).image !== undefined) throw new ApiError(`restore of ${snapshotId}: the image is the snapshot's; do not give one`, 0, "invalid_request")
+    const createOptions: CreateOptions = {}
+    if (typeof options.wait === "number") createOptions.wait = options.wait
+    if (options.graceMs !== undefined) createOptions.graceMs = options.graceMs
+    if (options.signal !== undefined) createOptions.signal = options.signal
+    if (options.onQueued !== undefined) createOptions.onQueued = options.onQueued
+    const sandbox = await this.create({ ...spec, fromSnapshot: snapshotId }, createOptions)
+    if (options.wait === false) return sandbox
+    return this.poll(sandbox, () => this.get(sandbox.id, options.signal), (current) => {
+      if (current.status === "failed" || current.status === "lost" || current.status === "destroyed") throw new ApiError(`restore of ${snapshotId} into ${sandbox.id} failed (status ${current.status})`, 0, "restore_failed")
+      return current.status === "running"
+    }, {
+      ...options,
+      gone: () => new ApiError(`restore of ${snapshotId} into ${sandbox.id} failed (sandbox not found)`, 0, "restore_failed"),
+      late: () => new ApiError(`restore of ${snapshotId} into ${sandbox.id} timed out; ${sandbox.id} may still finish`, 0, "restore_timeout"),
+    })
+  }
+
+  async expose(id: string, port: number, options: { name?: string; public?: boolean; trusted?: boolean; idempotencyKey?: string } = {}): Promise<Exposure> {
+    const response = await this.send("expose port", "POST", `${sandboxPath(id)}/ports`, { json: { port, ...(options.name ? { name: options.name } : {}), ...(options.public ? { public: true } : {}), ...(options.trusted ? { trusted: true } : {}) }, timeout: TIMEOUTS.create, ...(options.idempotencyKey ? { headers: { "Idempotency-Key": options.idempotencyKey } } : {}) })
+    return (await response.json()) as Exposure
+  }
+
+  async ports(id?: string): Promise<Exposure[]> {
+    const response = await this.send("list exposed ports", "GET", id ? `${sandboxPath(id)}/ports` : "/v1/ports", { timeout: TIMEOUTS.create })
+    return ((await response.json()) as { ports?: Exposure[] }).ports ?? []
+  }
+
+  async unexpose(id: string, label: string): Promise<void> {
+    await this.send("unexpose port", "DELETE", `${sandboxPath(id)}/ports/${encodeURIComponent(label)}`, { timeout: TIMEOUTS.create, accept: [204] })
+  }
+
+  async releaseName(label: string): Promise<void> {
+    await this.send("release name", "DELETE", `/v1/ports/${encodeURIComponent(label)}`, { timeout: TIMEOUTS.create, accept: [204] })
   }
 
   /** kyora-vmd: the whole tar in one streamed PUT */

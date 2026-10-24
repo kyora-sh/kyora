@@ -12,7 +12,7 @@ import { formatBytes, formatMs, relativeTime } from "./units"
 
 export const memory = (mb: number) => (mb % 1024 === 0 ? `${mb / 1024}G` : `${mb}M`)
 
-function describe(sandbox: Sandbox): string {
+export function describe(sandbox: Sandbox): string {
   const where = sandbox.node ? ` · on ${sandbox.node}${sandbox.region ? ` in ${sandbox.region}` : ""}` : sandbox.region ? ` · in ${sandbox.region}` : ""
   return `${sandbox.status} · ${sandbox.vcpus} vCPU · ${memory(sandbox.memoryMb)} RAM · ${sandbox.diskGb}G disk · network ${sandbox.network}${sandbox.shareable === false ? " · sharing disabled" : ""} · ${sandbox.expiresAt === null ? "no expiry" : `expires ${relativeTime(sandbox.expiresAt)}`}${where}`
 }

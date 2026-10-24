@@ -57,7 +57,7 @@ export const sandboxArgument = (name: string): string => name.startsWith("-") ? 
 /** `--` can escape a sandbox name as well as mark a remote command. */
 export function sandboxArgs(verb: string, positionals: string[], tail: string[] | null): { positionals: string[]; tail: string[] | null } {
   if (tail === null) return { positionals, tail }
-  if (["create", "attach", "ls", "rm", "rename", "ttl", "network", "push", "pull", "screenshot", "share"].includes(verb)) return { positionals: [...positionals, ...tail], tail: null }
+  if (["create", "attach", "ls", "rm", "rename", "ttl", "network", "push", "pull", "screenshot", "share", "snapshot", "snapshots", "restore"].includes(verb)) return { positionals: [...positionals, ...tail], tail: null }
   if (!positionals.length && ["exec", "shell", "computer"].includes(verb)) {
     const count = verb === "computer" ? 2 : 1
     const args = tail.slice(count)

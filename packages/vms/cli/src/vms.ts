@@ -22,6 +22,7 @@ import { storageMain, StorageUsage } from "./storage"
 import { tokensMain, TokenUsage } from "./tokens"
 import { create, exec, health, list, nodes, pullPaths, pushDir, remove } from "./session"
 import { domainCommand } from "./domains"
+import { snapshotCommand } from "./snapshots"
 import { killSession, listSessions, shell } from "./shell"
 import { MAX_SHARDS } from "./shard"
 import { remotePath, WORK } from "./transfer"
@@ -67,6 +68,13 @@ more commands (every sandbox argument accepts a name, id or unique id prefix):
   kyora vms expose <id> <port> [--name label] [--public] [--trusted]   print a private URL through kyora cloud
   kyora vms expose [<id>] --list            list exposed ports, or all held names
   kyora vms unexpose [<id>] <label>         release a name (30-day cooldown for other accounts)
+  kyora vms snapshot <x> [--full] [--name N] [--ttl 7d] [--no-wait]
+                                            save a sandbox's files (--full: memory too, if allowed); prints snap_…
+  kyora vms snapshot ls | show <snap> | rm <snap>…
+                                            your snapshots (also kyora vms snapshots)
+  kyora vms restore <snap> [create options] [--no-resume]
+                                            a new sandbox from a snapshot; waits until it runs
+  kyora vms ls --label key=value            only sandboxes with that label (repeatable)
   kyora vms domain add <hostname> --to <label> [--dcv http|txt]
                                             serve a public name on your own domain: prints the DNS
                                             records to add (a CNAME to custom.kyora.run)
@@ -273,6 +281,9 @@ const OPTIONS = {
   kill: { type: "string" },
   revoke: { type: "string" },
   clipboard: { type: "boolean" },
+  full: { type: "boolean" },
+  "no-resume": { type: "boolean" },
+  label: { type: "string", multiple: true },
   json: { type: "boolean" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean", short: "v" },
@@ -299,7 +310,10 @@ const VERBS: Record<string, Option[]> = {
   __complete: [],
   resize: ["disk"],
   network: ["allow", "no-registries", "none"],
-  ls: [],
+  snapshot: [...SANDBOX, "name", "full", "no-resume"],
+  snapshots: [...SANDBOX, "name", "full", "no-resume"],
+  restore: [...SANDBOX, "name", "no-resume"],
+  ls: ["label"],
   exec: COMMAND,
   push: ["dest", "no-git", "git", "git-depth", "git-base", "shards"],
   pull: ["to"],
@@ -520,23 +534,36 @@ export async function vmsMain(argv: string[]): Promise<number> {
       const [id, portText, extra] = positionals
       if (extra || (values.private && values.public) || (values.list ? portText || values.name || values.private || values.public || values.trusted : !id || !portText)) usage("usage: kyora vms expose <sandbox> <port> [--name label] [--public] [--trusted], or expose [<sandbox>] --list")
       if (values.list) {
-        const result = await api.call<{ ports: Array<{ label: string; port: number; private: boolean; trusted?: boolean; running?: boolean; url: string }> }>("list exposed ports", "GET", id ? `/v1/sandboxes/${encodeURIComponent(id)}/ports` : "/v1/ports")
-        if (asJson) console.log(JSON.stringify(result))
-        else for (const port of result.ports) console.log(`${port.url}  ${port.port}  ${port.private ? "private" : "public"}${port.trusted ? "  trusted" : ""}${port.running === false ? "  not running" : ""}`)
+        const ports = await api.ports(id)
+        if (asJson) console.log(JSON.stringify({ ports }))
+        else for (const port of ports) console.log(`${port.url}  ${port.port}  ${port.private ? "private" : "public"}${port.trusted ? "  trusted" : ""}${port.running === false ? "  not running" : ""}`)
       } else {
         const port = positiveInt(portText!, "port")
         if (port > 65535) usage("port must be 1-65535")
-        const result = await api.call<{ url: string }>("expose port", "POST", `/v1/sandboxes/${encodeURIComponent(id!)}/ports`, { json: { port, ...(values.name ? { name: values.name } : {}), ...(values.public ? { public: true } : {}), ...(values.trusted ? { trusted: true } : {}) } })
+        const result = await api.expose(id!, port, { name: values.name, public: values.public, trusted: values.trusted })
         console.log(asJson ? JSON.stringify(result) : result.url)
       }
       return 0
+    }
+    case "snapshot":
+    case "snapshots":
+    case "restore": {
+      const restoreRequested = verb === "restore" || positionals[0] === "restore"
+      let spec: CreateSpec | undefined
+      if (restoreRequested) {
+        if (values.image !== undefined) usage("restore boots the snapshot's image; --image does not go with restore")
+        spec = sandboxSpec(values)
+        delete spec.image
+      }
+      return snapshotCommand(api, { verb, positionals, json: asJson, full: Boolean(values.full), name: values.name, ttl: values.ttl, noWait: Boolean(values["no-wait"]), noResume: Boolean(values["no-resume"]), given: Object.keys(values), ...(spec ? { spec } : {}), ...(restoreRequested ? { wait: waitSeconds(values) } : {}) }, usage)
     }
     case "domain":
       return domainCommand(api, { positionals, to: values.to, dcv: values.dcv, json: asJson }, usage)
     case "unexpose": {
       const [id, label, extra] = positionals
       if (!id || extra) usage("usage: kyora vms unexpose [<sandbox>] <label>")
-      await api.call("unexpose port", "DELETE", label ? `/v1/sandboxes/${encodeURIComponent(id)}/ports/${encodeURIComponent(label)}` : `/v1/ports/${encodeURIComponent(id)}`, { accept: [204] })
+      if (label) await api.unexpose(id, label)
+      else await api.releaseName(id)
       if (asJson) console.log(JSON.stringify({ released: true, label: label ?? id }))
       return 0
     }
@@ -590,6 +617,17 @@ export async function vmsMain(argv: string[]): Promise<number> {
     }
     case "ls":
       if (positionals.length > 1) usage("ls takes at most one sandbox id")
+      if (values.label !== undefined) {
+        if (positionals.length) usage("ls --label takes no sandbox")
+        const labels: Record<string, string> = {}
+        for (const pair of values.label) {
+          const eq = pair.indexOf("=")
+          if (eq <= 0) usage("--label takes key=value")
+          if (Object.hasOwn(labels, pair.slice(0, eq))) usage(`--label ${pair.slice(0, eq)} is given twice`)
+          labels[pair.slice(0, eq)] = pair.slice(eq + 1)
+        }
+        return list(api, undefined, asJson, await api.list({ labels }))
+      }
       if (bare) {
         const sandboxes = await api.list()
         await list(api, undefined, asJson, sandboxes)
