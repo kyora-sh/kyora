@@ -10,6 +10,15 @@
         "typescript": "5.9.2",
       },
     },
+    "packages/sdk/typescript": {
+      "name": "@kyora-sh/sdk",
+      "version": "0.0.0",
+      "devDependencies": {
+        "@repo/typescript-config": "workspace:*",
+        "@types/bun": "1.4.2",
+        "typescript": "^5.9.2",
+      },
+    },
     "packages/shared/hostnames": {
       "name": "@kyora-sh/hostnames",
       "version": "0.1.0",
@@ -100,6 +109,8 @@
     "@clack/prompts": ["@clack/prompts@1.8.1", "", { "dependencies": { "@clack/core": "1.5.1", "fast-string-width": "^3.0.2", "fast-wrap-ansi": "^0.2.0", "sisteransi": "^1.0.5" } }, "sha512-dlT1m5e/0yUL0kRNcQn7yGLVThkgbB0Ga/1AmfDDC/8ik6AIiSf2QLQO2zPYvefsHP0aFgxO93cVLCCfDp7kzQ=="],
 
     "@kyora-sh/hostnames": ["@kyora-sh/hostnames@workspace:packages/shared/hostnames"],
+
+    "@kyora-sh/sdk": ["@kyora-sh/sdk@workspace:packages/sdk/typescript"],
 
     "@kyora-sh/usage": ["@kyora-sh/usage@workspace:packages/shared/usage"],
 
