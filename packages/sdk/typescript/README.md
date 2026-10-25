@@ -111,13 +111,13 @@ result.stdout // bytes; result.stderr too
 result.truncated // { stdout, stderr }: output the result is missing
 ```
 
-Every command runs resumable under an exec key (`key`, a fresh one unless you pass it). When the stream breaks, the command keeps running and `run` reattaches from the bytes it already has, for up to `reattachWindowMs` (2 min). At its deadline `run` stops waiting and throws an `ExecDetachedError` with the command's `execId`, `key` and `offsets`; the command keeps running. Get the rest with `exec.attach(sandbox, execId, { from: offsets })`, or run the same request with the same `key` again, from another process too: kyora rejoins the running command instead of starting it twice. Aborting `signal` cancels the command (`cancelOnAbort: false` keeps it). `result.stdout` keeps the first 16 MiB of each stream (`maxOutputBytes`); `onOutput` sees all of it.
+Every command runs resumable under an exec key (`key`, a fresh one unless you pass it). When the stream breaks, the command keeps running and `run` reattaches from the bytes it already has, for up to `reattachWindowMs` (2 min). At its deadline `run` stops waiting and throws an `ExecDetachedError` with the command's `execId`, `key` and `offsets`; the command keeps running. Get the rest with `exec.attach(sandbox, execId, { from: offsets })`, or run the same request with the same `key` again, from another process too: kyora rejoins the running command instead of starting it twice. A stream that breaks before kyora named the command is found again by its key; one that started without an id is never sent again, so a command never runs twice. Aborting `signal` cancels the command (`cancelOnAbort: false` keeps it). An exception from `onOutput` ends the call as it is. `result.stdout` keeps the first 16 MiB of each stream (`maxOutputBytes`); `onOutput` sees all of it.
 
 ## Files
 
 ```ts
 await kyora.files.upload(sandbox.id, { "src/main.py": source, "data.bin": bytes }, { dest: "/work/job" })
-await kyora.files.uploadTar(sandbox.id, tarBytes) // above 64 MiB it goes up in parts
+await kyora.files.uploadTar(sandbox.id, tarBytesOrStream) // above 64 MiB it goes up in parts
 const bytes = await kyora.files.read(sandbox.id, "/work/out/report.json")
 const entries = await kyora.files.download(sandbox.id, ["/work/out"]) // [{ name, type, mode, data, ... }]
 const stream = await kyora.files.downloadTar(sandbox.id, ["/work/out"]) // the raw tar
@@ -138,7 +138,7 @@ const { token } = await kyora.tokens.create({ name: "doc-agent", scopes: ["vms:r
 
 ## Everything else
 
-`kyora.call(operationId, { path, query, body })` sends any operation of the API, typed from the spec, with the same errors, retries and idempotency keys. Operations without a helper yet: custom domains, pages, computer use and live views, terminals, account images and object storage. `OPERATIONS` lists every operation; the generated types (`Sandbox`, `Snapshot`, `ExecFrame`, ...) are exported too.
+`kyora.call(operationId, { path, query, body })` sends any operation of the API, typed from the spec, with the same errors, retries and idempotency keys. JSON operations answer their parsed body; streamed, binary and HEAD ones the `Response`. Operations without a helper yet: custom domains, pages, computer use and live views, terminals, account images and object storage. `OPERATIONS` lists every operation; the generated types (`Sandbox`, `Snapshot`, `ExecFrame`, ...) are exported too.
 
 ## Versions
 

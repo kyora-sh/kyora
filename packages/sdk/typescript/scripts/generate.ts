@@ -240,7 +240,7 @@ export function generate(source: string): Record<string, string> {
       const inHeader = list.filter((parameter) => parameter.in === "header")
       const body = bodyKind(operation)
       const answer = success(operation, "    ")
-      const bodyType = body === "json" ? typeOf(operation.requestBody!.content["application/json"]!.schema ?? true, "    ", `${id}/body`) : body === "binary" ? "BodyInit" : "never"
+      const bodyType = body === "json" ? typeOf(operation.requestBody!.content["application/json"]!.schema ?? true, "    ", `${id}/body`) : body === "binary" ? "Uint8Array | ReadableStream<Uint8Array> | string" : "never"
       const entry = {
         method: method.toUpperCase(),
         path,

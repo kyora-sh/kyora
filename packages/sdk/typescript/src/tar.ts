@@ -95,7 +95,7 @@ function relative(path: string): string {
 }
 
 /** a tar of `files`, with an entry for every parent directory */
-export function packFiles(files: readonly FileInput[]): Uint8Array<ArrayBuffer> {
+export function packFiles(files: readonly FileInput[]): Uint8Array {
   const mtime = Math.floor(Date.now() / 1000)
   const blocks: Uint8Array[] = []
   const dirs = new Set<string>()

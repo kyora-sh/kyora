@@ -77,15 +77,15 @@ export interface UploadOptions extends CallOptions {
 }
 
 /** the arguments of a raw call: the operation's path parameters, query, body and headers */
-export type CallInput<O extends OperationId> = (keyof Operations[O]["path"] extends never ? { path?: Operations[O]["path"] } : { path: Operations[O]["path"] }) & {
+export type CallInput<O extends OperationId> = ((typeof OPERATIONS)[O]["pathParams"] extends readonly [] ? { path?: Record<string, never> } : { path: Operations[O]["path"] }) & {
   query?: Operations[O]["query"]
   body?: Operations[O]["body"]
   headers?: Operations[O]["headers"]
   contentType?: string
 }
 
-/** JSON operations answer their parsed body; streamed and binary ones the Response */
-export type CallResult<O extends OperationId> = (typeof OPERATIONS)[O]["response"] extends "json" | "none" ? Operations[O]["response"] : Response
+/** JSON operations answer their parsed body; streamed, binary and HEAD ones the Response, headers and all */
+export type CallResult<O extends OperationId> = (typeof OPERATIONS)[O]["method"] extends "HEAD" ? Response : (typeof OPERATIONS)[O]["response"] extends "json" | "none" ? Operations[O]["response"] : Response
 
 const CREATE_TIMEOUT_MS = 120_000
 const QUEUE_POLL_S = 25
@@ -95,6 +95,80 @@ const QUEUE_RETRIES = 8
 const POLL_TIMEOUT_MS = 60 * 60_000
 /** an archive up to this size goes up in one PUT; a larger one in parts */
 const SINGLE_UPLOAD_BYTES = 64 * 1024 * 1024
+
+/** one request per part of a large upload may take this long */
+const TRANSFER_TIMEOUT_MS = 10 * 60_000
+/** the part sizes the SDK accepts from kyora: a part is held in memory whole */
+const MIN_PART_BYTES = 64 * 1024
+const MAX_PART_BYTES = 256 * 1024 * 1024
+
+/** an archive read in parts of a given size, from bytes or a stream; `unread` puts a part back */
+interface PartSource {
+  next(size: number): Promise<Uint8Array>
+  unread(part: Uint8Array): void
+  cancel(): void
+}
+
+function bytesSource(bytes: Uint8Array): PartSource {
+  let offset = 0
+  return {
+    next: async (size) => {
+      const part = bytes.subarray(offset, offset + size)
+      offset += part.length
+      return part
+    },
+    unread: (part) => {
+      offset -= part.length
+    },
+    cancel: () => {},
+  }
+}
+
+function streamSource(stream: ReadableStream<Uint8Array>): PartSource {
+  const reader = stream.getReader()
+  let held: Uint8Array[] = []
+  let heldBytes = 0
+  let done = false
+  return {
+    async next(size) {
+      while (heldBytes < size && !done) {
+        const chunk = await reader.read()
+        if (chunk.done) done = true
+        else if (chunk.value.length > 0) {
+          held.push(chunk.value)
+          heldBytes += chunk.value.length
+        }
+      }
+      const out = new Uint8Array(Math.min(size, heldBytes))
+      let filled = 0
+      const rest: Uint8Array[] = []
+      for (const chunk of held) {
+        const take = Math.min(chunk.length, out.length - filled)
+        out.set(chunk.subarray(0, take), filled)
+        filled += take
+        if (take < chunk.length) rest.push(chunk.subarray(take))
+      }
+      held = rest
+      heldBytes -= out.length
+      return out
+    },
+    unread(part) {
+      held.unshift(part)
+      heldBytes += part.length
+    },
+    cancel() {
+      reader.cancel().catch(() => {})
+    },
+  }
+}
+
+/** a DELETE that is false when the thing was already gone, unless an earlier try of this call may have deleted it */
+async function deleted(transport: Transport, operation: "deleteSandbox" | "deleteSnapshot", path: { id: string }, options: CallOptions): Promise<boolean> {
+  return transport.read(operation, { path, accept: [404] }, options, async (response, attempt) => {
+    await response.body?.cancel().catch(() => {})
+    return response.status !== 404 || attempt > 1
+  })
+}
 
 /** a poll that failed on the way, not with the create's outcome: nothing answered, a gateway, or a restart (do_reset) */
 const lostOnTheWay = (error: unknown) =>
@@ -122,14 +196,16 @@ export class Kyora {
   constructor(options: KyoraOptions = {}) {
     const fetcher = options.fetch ?? globalThis.fetch
     if (typeof fetcher !== "function") throw new TypeError("no fetch: pass one as options.fetch")
-    this.transport = new Transport({
-      baseUrl: (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, ""),
-      token: options.token ?? environmentToken(),
-      fetch: fetcher,
-      timeoutMs: options.timeoutMs ?? 30_000,
-      retry: options.retry === false ? false : { ...DEFAULT_RETRY, ...options.retry },
-      userAgent: options.userAgent ?? USER_AGENT,
-    })
+    this.transport = new Transport(
+      {
+        baseUrl: (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, ""),
+        fetch: fetcher,
+        timeoutMs: options.timeoutMs ?? 30_000,
+        retry: options.retry === false ? false : { ...DEFAULT_RETRY, ...options.retry },
+        userAgent: options.userAgent ?? USER_AGENT,
+      },
+      options.token ?? environmentToken(),
+    )
     this.region = options.region
     this.sandboxes = new Sandboxes(this)
     this.exec = new Exec(this.transport)
@@ -137,6 +213,14 @@ export class Kyora {
     this.snapshots = new Snapshots(this)
     this.ports = new Ports(this.transport)
     this.tokens = new Tokens(this.transport)
+  }
+
+  toJSON(): Record<string, unknown> {
+    return { ...this.transport.toJSON(), region: this.region ?? null }
+  }
+
+  [Symbol.for("nodejs.util.inspect.custom")](): string {
+    return `Kyora { baseUrl: ${JSON.stringify(this.transport.config.baseUrl)}, region: ${JSON.stringify(this.region ?? null)} }`
   }
 
   /** kyora's health and free capacity; needs no token */
@@ -177,9 +261,9 @@ export class Kyora {
       parts.idempotencyKey = key[1]
       delete headers[key[0]]
     }
-    const response = await this.transport.send(operation, parts, { ...options, headers })
-    const kind = OPERATIONS[operation].response
-    return (kind === "json" || kind === "none" ? await readJson(operation, response) : response) as CallResult<O>
+    const spec = OPERATIONS[operation]
+    if (spec.method !== "HEAD" && (spec.response === "json" || spec.response === "none")) return (await this.transport.json(operation, parts, { ...options, headers })) as CallResult<O>
+    return (await this.transport.send(operation, parts, { ...options, headers })) as CallResult<O>
   }
 }
 
@@ -295,26 +379,21 @@ export class Sandboxes {
     return this.transport.json("setSandboxNetwork", { path: { id }, body: change }, options)
   }
 
-  /** destroys a sandbox; false when it was already gone */
-  async delete(id: string, options: CallOptions = {}): Promise<boolean> {
-    try {
-      await this.transport.json("deleteSandbox", { path: { id } }, options)
-      return true
-    } catch (error) {
-      if (error instanceof KyoraError && error.status === 404) return false
-      throw error
-    }
+  /** destroys a sandbox; false when it was already gone (a retry that finds it gone counts as this call's) */
+  delete(id: string, options: CallOptions = {}): Promise<boolean> {
+    return deleted(this.transport, "deleteSandbox", { id }, options)
   }
 
   /** polls until the sandbox runs (default for up to an hour); one that failed, was lost or destroyed is an error */
   async waitUntilRunning(sandbox: string | Sandbox, options: PollOptions<Sandbox> = {}): Promise<Sandbox> {
-    const first = typeof sandbox === "string" ? await this.get(sandbox, { ...options, timeoutMs: undefined }) : sandbox
+    const deadline = endOf(options, POLL_TIMEOUT_MS)
+    const first = typeof sandbox === "string" ? await this.get(sandbox, { deadline, ...(options.signal ? { signal: options.signal } : {}) }) : sandbox
     return poll("getSandbox", first, (call) => this.get(first.id, call), (current) => {
       if (current.status === "failed" || current.status === "lost" || current.status === "destroyed") {
         throw new KyoraError({ code: "sandbox_ended", status: 0, message: `sandbox ${first.id} is ${current.status}`, operation: "getSandbox", class: "conflict", retryable: false })
       }
       return current.status === "running"
-    }, options)
+    }, { ...options, deadline })
   }
 }
 
@@ -350,15 +429,9 @@ export class Snapshots {
     return follow("listSnapshots", (cursor) => this.list({ ...options, ...(cursor === undefined ? {} : { cursor }) }), options.cursor)
   }
 
-  /** false when it was already gone */
-  async delete(id: string, options: CallOptions = {}): Promise<boolean> {
-    try {
-      await this.transport.json("deleteSnapshot", { path: { id } }, options)
-      return true
-    } catch (error) {
-      if (error instanceof KyoraError && error.status === 404) return false
-      throw error
-    }
+  /** false when it was already gone (a retry that finds it gone counts as this call's) */
+  delete(id: string, options: CallOptions = {}): Promise<boolean> {
+    return deleted(this.transport, "deleteSnapshot", { id }, options)
   }
 
   /**
@@ -367,7 +440,8 @@ export class Snapshots {
    */
   async restore(snapshot: string, spec: Omit<CreateSandboxRequest, "fromSnapshot" | "image"> = {}, options: CreateOptions & PollOptions<Sandbox> & { wait?: boolean } = {}): Promise<Sandbox> {
     const deadline = endOf(options, POLL_TIMEOUT_MS)
-    const sandbox = await this.kyora.sandboxes.create({ ...spec, fromSnapshot: snapshot }, { ...options, timeoutMs: CREATE_TIMEOUT_MS, deadline })
+    const { timeoutMs: _whole, ...create } = options
+    const sandbox = await this.kyora.sandboxes.create({ ...spec, fromSnapshot: snapshot }, { ...create, deadline })
     if (options.wait === false) return sandbox
     try {
       return await this.kyora.sandboxes.waitUntilRunning(sandbox, { ...options, deadline })
@@ -388,25 +462,37 @@ export class Files {
   }
 
   /**
-   * Unpacks a tar (or, with contentType application/zstd, a tar.zst) at `dest`. Bytes above 64 MiB
-   * go up in parts; a stream goes up in one request and is never retried.
+   * Unpacks a tar (or, with contentType application/zstd, a tar.zst) at `dest`. Up to 64 MiB it
+   * goes up in one PUT, past that in parts; a stream is read part by part, never held whole.
+   * `timeoutMs` and `deadline` bound the whole upload.
    */
   async uploadTar(sandbox: string, archive: Uint8Array | ReadableStream<Uint8Array>, options: UploadOptions & { contentType?: "application/x-tar" | "application/zstd" } = {}): Promise<PushFilesResponse> {
     const contentType = options.contentType ?? "application/x-tar"
-    if (!(archive instanceof Uint8Array) || archive.length <= SINGLE_UPLOAD_BYTES) {
-      return this.transport.json("pushFiles", { path: { id: sandbox }, query: { dest: options.dest }, body: archive, contentType }, { ...options, timeoutMs: options.timeoutMs ?? 10 * 60_000 })
+    const deadline = endOf(options)
+    const call: CallOptions = { deadline, timeoutMs: TRANSFER_TIMEOUT_MS, ...(options.signal ? { signal: options.signal } : {}), ...(options.retry !== undefined ? { retry: options.retry } : {}), ...(options.headers ? { headers: options.headers } : {}) }
+    const source = archive instanceof Uint8Array ? bytesSource(archive) : streamSource(archive)
+    // a first part that is the whole archive goes up as it is
+    const first = await source.next(SINGLE_UPLOAD_BYTES + 1)
+    if (first.length <= SINGLE_UPLOAD_BYTES) {
+      return this.transport.json("pushFiles", { path: { id: sandbox }, query: { dest: options.dest }, body: first, contentType }, call)
     }
-    const upload = await this.transport.json<CreateUploadResponse>("createUpload", { path: { id: sandbox }, body: { ...(options.dest ? { dest: options.dest } : {}), contentType } }, options)
+    const upload = await this.transport.json<CreateUploadResponse>("createUpload", { path: { id: sandbox }, body: { ...(options.dest ? { dest: options.dest } : {}), contentType } }, call)
     try {
-      const parts: Array<{ n: number; etag: string }> = []
       const size = Math.min(upload.partSize, upload.maxPartBytes)
-      for (let offset = 0, n = 1; offset < archive.length; offset += size, n++) {
-        const part = archive.subarray(offset, offset + size)
-        const answer = await this.transport.json<UploadPartResponse>("uploadPart", { path: { id: sandbox, upload: upload.uploadId, n }, body: part }, { ...options, timeoutMs: options.timeoutMs ?? 10 * 60_000 })
+      if (!Number.isInteger(size) || size < MIN_PART_BYTES || size > MAX_PART_BYTES) {
+        throw new KyoraError({ code: "bad_response", status: 0, message: `createUpload: kyora asked for ${size}-byte parts`, operation: "createUpload" })
+      }
+      source.unread(first)
+      const parts: Array<{ n: number; etag: string }> = []
+      for (let n = 1; ; n++) {
+        const part = await source.next(size)
+        if (part.length === 0) break
+        const answer = await this.transport.json<UploadPartResponse>("uploadPart", { path: { id: sandbox, upload: upload.uploadId, n }, body: part }, call)
         parts.push({ n, etag: answer.etag })
       }
-      return await this.transport.json<PushFilesResponse>("completeUpload", { path: { id: sandbox, upload: upload.uploadId }, body: { parts } }, { ...options, timeoutMs: options.timeoutMs ?? 10 * 60_000 })
+      return await this.transport.json<PushFilesResponse>("completeUpload", { path: { id: sandbox, upload: upload.uploadId }, body: { parts } }, call)
     } catch (error) {
+      source.cancel()
       await this.transport.json("abortUpload", { path: { id: sandbox, upload: upload.uploadId } }, { retry: false }).catch(() => undefined)
       throw error
     }
@@ -421,13 +507,15 @@ export class Files {
 
   /** the entries of `paths`, read whole into memory; for large trees, use downloadTar */
   async download(sandbox: string, paths: readonly string[], options: CallOptions = {}): Promise<TarEntry[]> {
-    const response = await this.transport.send("pullFiles", { path: { id: sandbox }, query: { path: paths } }, options)
-    const archive = new Uint8Array(await response.arrayBuffer())
-    try {
-      return unpack(archive)
-    } catch (error) {
-      throw new KyoraError({ code: "bad_response", status: response.status, message: `pullFiles: ${error instanceof Error ? error.message : String(error)}`, operation: "pullFiles", retryable: true, cause: error })
-    }
+    // read inside the call, so a download that breaks off is fetched again
+    return this.transport.read("pullFiles", { path: { id: sandbox }, query: { path: paths } }, options, async (response) => {
+      const archive = new Uint8Array(await response.arrayBuffer())
+      try {
+        return unpack(archive)
+      } catch (error) {
+        throw new KyoraError({ code: "bad_response", status: response.status, message: `pullFiles: ${error instanceof Error ? error.message : String(error)}`, operation: "pullFiles", retryable: true, cause: error })
+      }
+    })
   }
 
   /** one file's bytes */

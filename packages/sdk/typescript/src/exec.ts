@@ -94,6 +94,11 @@ function concat(chunks: Uint8Array[]): Uint8Array {
 
 const describe = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
+/** an exception of the caller's onOutput: it ends the call as it is, never taken for a broken stream */
+class OutputCallbackError {
+  constructor(readonly error: unknown) {}
+}
+
 /** the command's output so far, and where a reattach carries on */
 class Collector {
   readonly offsets: ByteOffsets = { stdout: 0, stderr: 0 }
@@ -102,6 +107,8 @@ class Collector {
   private readonly keptBytes: ByteOffsets = { stdout: 0, stderr: 0 }
   execId: string | null = null
   key: string | null
+  /** a started or attached frame came: the command runs, whether or not kyora named it */
+  started = false
 
   constructor(
     private readonly max: number,
@@ -120,7 +127,16 @@ class Collector {
       this.kept[stream].push(keep)
       this.keptBytes[stream] += keep.length
     }
-    await this.onOutput?.(stream, data)
+    try {
+      await this.onOutput?.(stream, data)
+    } catch (error) {
+      throw new OutputCallbackError(error)
+    }
+  }
+
+  /** nothing of the command was seen yet: sending it again under its key can only find it, never start a second */
+  get untouched(): boolean {
+    return !this.started && this.offsets.stdout === 0 && this.offsets.stderr === 0
   }
 
   /** output up to `to` left the sandbox's buffer before it was read */
@@ -187,9 +203,11 @@ async function readStream(response: Response, collector: Collector, idleMs: numb
       if (data.length > 0) progressed = true
       await collector.output(type, data)
     } else if (type === "started") {
+      collector.started = true
       if (frame.resumable === true && typeof frame.id === "string") collector.execId = frame.id
       if (typeof frame.key === "string") collector.key = frame.key
     } else if (type === "attached") {
+      collector.started = true
       if (typeof frame.id === "string") collector.execId = frame.id
     } else if (type === "gap") {
       if ((frame.stream === "stdout" || frame.stream === "stderr") && typeof frame.to === "number") collector.gap(frame.stream, frame.to)
@@ -237,12 +255,19 @@ async function readStream(response: Response, collector: Collector, idleMs: numb
     const tail = buffer + decoder.decode()
     if (ending === null && tail.trim()) await handle(tail)
   } catch (error) {
+    if (error instanceof OutputCallbackError) throw error
     // an exit that arrived stands, whatever stopped the reading after it
     if (ending === null) return { kind: "break", reason: describe(error), progressed }
   } finally {
     reader.cancel().catch(() => {})
   }
   return ending ?? { kind: "break", reason: "the stream ended without an exit status", progressed }
+}
+
+/** a failure that leaves open whether kyora started the command: no answer, a gateway, an internal error, a restart */
+function ambiguous(error: unknown): boolean {
+  if (!(error instanceof KyoraError)) return false
+  return error.status === 0 || error.status === 500 || error.status === 502 || error.status === 504 || error.code === "do_reset"
 }
 
 /** worth another reattach: no answer, a retryable error, or a key whose start kyora can't tell yet */
@@ -312,34 +337,55 @@ export class Exec {
     const windowMs = options.reattachWindowMs ?? DEFAULT_WINDOW_MS
     const detached = (code: "timeout" | "stream_lost", message: string, cause?: unknown) =>
       new ExecDetachedError({ code, status: 0, message: `exec in ${sandbox}: ${message}; the command may still be running`, operation: "execCommand", cause }, collector.execId, collector.key, { ...collector.offsets })
+    /** kyora asked to wait past the window or the deadline: its error, with what to reattach to */
+    const later = (error: KyoraError) =>
+      new ExecDetachedError({ code: error.code, status: error.status, message: `${error.message}; the command may still be running`, operation: error.operation ?? "execCommand", class: error.class, retryable: error.retryable, ...(error.retryAfterMs !== undefined ? { retryAfterMs: error.retryAfterMs } : {}), body: error.body, cause: error }, collector.execId, collector.key, { ...collector.offsets })
+    const pastDeadline = () => deadline.signal.aborted || Date.now() >= until
     let current = streamSignal(signal)
     try {
-      let ending = await readStream(await first(current.signal, Number.isFinite(until) ? until : undefined), collector, idleMs)
+      let ending: Ending
+      try {
+        ending = await readStream(await first(current.signal, Number.isFinite(until) ? until : undefined), collector, idleMs)
+      } catch (error) {
+        // no answer, or one that may have come after the command started: its key finds it, if it did
+        if (!rejoin || signal.aborted || pastDeadline() || !ambiguous(error)) throw error
+        ending = { kind: "break", reason: describe(error), progressed: false }
+      }
       current.close()
       let episode: { end: number; delay: number } | null = null
       for (;;) {
         if (ending.kind === "exit") return collector.result(ending.exit)
         if (ending.kind === "error") throw new KyoraError({ code: "exec_error", status: 0, message: `exec in ${sandbox}: ${ending.message}`, operation: "execCommand" })
         if (signal.aborted) throw signal.reason
+        // a command that started without an id can't be reattached, and sending it again could run it twice
+        if (!collector.execId && !(rejoin && collector.untouched)) throw detached("stream_lost", `the stream broke (${ending.reason}) and kyora never named the command, so it can't be reattached`)
         if (!episode || ending.progressed) episode = { end: Date.now() + windowMs, delay: BASE_DELAY_MS }
         let last = ending.reason
+        let asked: number | null = null
         let response: Response | null = null
         while (!response) {
           if (Date.now() >= episode.end) throw detached("stream_lost", `lost the stream (${last}) and could not reattach within ${windowMs} ms`)
-          await pause(Math.min(episode.delay, episode.end - Date.now()), signal)
+          await pause(Math.min(asked ?? episode.delay, episode.end - Date.now()), signal)
+          asked = null
           episode.delay = Math.min(MAX_DELAY_MS, episode.delay * 2)
           const next = streamSignal(signal)
+          let failure: unknown = null
           try {
             // without an id, the key finds the command again: kyora answers it with its id
-            if (collector.execId) response = await this.attachOnce(sandbox, collector, next.signal, { retry: false })
-            else if (rejoin) response = await rejoin(next.signal)
-            else throw detached("stream_lost", "the stream broke before the command was named")
+            response = collector.execId ? await this.attachOnce(sandbox, collector, next.signal, { retry: false }) : await rejoin!(next.signal)
             current = next
           } catch (error) {
             next.close()
-            if (signal.aborted) throw signal.reason ?? error
-            if (!reattachable(error)) throw error
-            last = describe(error)
+            failure = error
+          }
+          if (failure === null) continue
+          if (signal.aborted) throw signal.reason ?? failure
+          if (!reattachable(failure)) throw failure
+          last = describe(failure)
+          const after = (failure as KyoraError).retryAfterMs
+          if (after !== undefined) {
+            if (Date.now() + after >= Math.min(episode.end, until)) throw later(failure as KyoraError)
+            asked = after
           }
         }
         ending = await readStream(response, collector, idleMs)
@@ -347,11 +393,12 @@ export class Exec {
       }
     } catch (error) {
       current.close()
+      if (error instanceof OutputCallbackError) throw error.error
       if (options.signal?.aborted) {
         if (options.cancelOnAbort !== false && collector.execId) await this.cancel(sandbox, collector.execId).catch(() => undefined)
         throw options.signal.reason ?? error
       }
-      if (deadline.signal.aborted || Date.now() >= until) {
+      if (pastDeadline()) {
         if (error instanceof ExecDetachedError) throw error
         // a Retry-After past the deadline comes back as its own error: the command never started
         if (error instanceof KyoraError && error.code !== "timeout" && !collector.execId && error.status !== 0) throw error

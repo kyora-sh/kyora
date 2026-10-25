@@ -176,3 +176,75 @@ describe("deadline and abort", () => {
     expect(requests.at(-1)!.url.pathname).toBe(`/v1/sandboxes/sb_1/execs/${ID}/cancel`)
   })
 })
+
+describe("never running a command twice", () => {
+  test("a stream that started without resumability and broke is not sent again", async () => {
+    const { kyora, requests } = client(() => ndjson([{ type: "started", resumable: false }, { type: "stdout", data: "half" }]))
+    const failure = await kyora.exec.run("sb_1", { cmd: ["x"], key: "k1" }, { reattachWindowMs: 200 }).catch((caught: unknown) => caught)
+    expect(failure).toBeInstanceOf(ExecDetachedError)
+    expect(failure).toMatchObject({ code: "stream_lost", execId: null, key: "k1", offsets: { stdout: 4, stderr: 0 } })
+    expect(requests.length).toBe(1)
+  })
+
+  test("output from a server that never sent started is not sent again either", async () => {
+    const { kyora, requests } = client(() => ndjson([{ type: "stdout", data: "old server" }]))
+    await expect(kyora.exec.run("sb_1", { cmd: ["x"] })).rejects.toMatchObject({ code: "stream_lost" })
+    expect(requests.length).toBe(1)
+  })
+})
+
+describe("an exec whose start is unclear", () => {
+  test("no answer to the POST is recovered by its key", async () => {
+    const { kyora, requests } = client((request, index) => {
+      if (index === 0) throw new TypeError("connection reset")
+      if (request.method === "POST") return ndjson([{ type: "started", id: ID, resumable: true, key: "k5", existing: true }, { type: "detached", reason: "rejoin" }])
+      return ndjson([{ type: "attached", id: ID, running: false }, { type: "stdout", data: "ok" }, exit(0)])
+    }, { retry: { maxAttempts: 1 } })
+    const result = await kyora.exec.run("sb_1", { cmd: ["x"], key: "k5" })
+    expect(text(result.stdout)).toBe("ok")
+    expect(requests.map((request) => request.method)).toEqual(["POST", "POST", "GET"])
+    expect(requests.slice(0, 2).map((request) => (request.json as { key: string }).key)).toEqual(["k5", "k5"])
+  })
+
+  test("one that can't be recovered in time carries its generated key", async () => {
+    const { kyora } = client(() => {
+      throw new TypeError("connection reset")
+    }, { retry: { maxAttempts: 1 } })
+    const failure = await kyora.exec.run("sb_1", { cmd: ["x"] }, { reattachWindowMs: 100 }).catch((caught: unknown) => caught)
+    expect(failure).toBeInstanceOf(ExecDetachedError)
+    expect((failure as ExecDetachedError).key).toMatch(/^sdk-/)
+    expect((failure as ExecDetachedError).code).toBe("stream_lost")
+  })
+})
+
+describe("reattach honours Retry-After", () => {
+  test("waits what kyora asks between reattaches", async () => {
+    const { kyora } = client((request, index) => {
+      if (request.method === "POST") return ndjson([{ type: "started", id: ID, resumable: true }])
+      if (index === 1) return error(503, "waking", { retryable: true, retryAfterMs: 120 })
+      return ndjson([{ type: "attached", id: ID, running: false }, exit(0)])
+    })
+    const started = Date.now()
+    expect((await kyora.exec.run("sb_1", { cmd: ["x"] })).exitCode).toBe(0)
+    expect(Date.now() - started).toBeGreaterThanOrEqual(110)
+  })
+
+  test("a Retry-After past the window or deadline is thrown with what to reattach to", async () => {
+    const { kyora } = client((request) => (request.method === "POST" ? ndjson([{ type: "started", id: ID, resumable: true }]) : error(503, "waking", { retryable: true, retryAfterMs: 60_000 })))
+    const started = Date.now()
+    const failure = await kyora.exec.run("sb_1", { cmd: ["x"], key: "k6" }, { timeoutMs: 5_000 }).catch((caught: unknown) => caught)
+    expect(Date.now() - started).toBeLessThan(2_000)
+    expect(failure).toBeInstanceOf(ExecDetachedError)
+    expect(failure).toMatchObject({ code: "waking", retryAfterMs: 60_000, execId: ID, key: "k6" })
+  })
+})
+
+describe("onOutput", () => {
+  test("an exception it throws ends the call as it is, with no reattach", async () => {
+    const { kyora, requests } = client(() => ndjson([{ type: "started", id: ID, resumable: true }, { type: "stdout", data: "a" }, exit(0)]))
+    const mine = new Error("sink full")
+    const failure = await kyora.exec.run("sb_1", { cmd: ["x"] }, { onOutput: () => { throw mine } }).catch((caught: unknown) => caught)
+    expect(failure).toBe(mine)
+    expect(requests.length).toBe(1)
+  })
+})

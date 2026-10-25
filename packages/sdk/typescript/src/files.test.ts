@@ -74,7 +74,7 @@ describe("files", () => {
 
   test("download and read unpack what the sandbox sends", async () => {
     const archive = packFiles([{ path: "out/summary.json", data: '{"ok":true}' }])
-    const { kyora, requests } = client(() => new Response(archive, { status: 200, headers: { "content-type": "application/x-tar" } }))
+    const { kyora, requests } = client(() => new Response(archive as Uint8Array<ArrayBuffer>, { status: 200, headers: { "content-type": "application/x-tar" } }))
     expect(text(await kyora.files.read("sb_1", "/work/out/summary.json"))).toBe('{"ok":true}')
     expect(requests[0]!.url.searchParams.getAll("path")).toEqual(["/work/out/summary.json"])
     const entries = await kyora.files.download("sb_1", ["/work/out"])
@@ -125,5 +125,64 @@ describe("snapshots, ports and tokens", () => {
       "POST /v1/tokens",
       "DELETE /v1/tokens/tok_1",
     ])
+  })
+})
+
+describe("uploads and waits under one deadline", () => {
+  const MiB = 1024 * 1024
+  const multipart = (partSize: number, delayMs = 0) => (request: { method: string; url: URL }) => {
+    const path = request.url.pathname
+    const answer = () => {
+      if (path.endsWith("/uploads")) return json(201, { uploadId: "up_s", partSize, maxPartBytes: partSize, expiresAt: "x" })
+      if (path.includes("/parts/")) return json(200, { n: Number(path.split("/").at(-1)), etag: "e" })
+      if (request.method === "DELETE") return json(204, null)
+      return json(200, { bytes: 1, entries: 1, durationMs: 1 })
+    }
+    return delayMs ? new Promise<Response>((resolve) => setTimeout(() => resolve(answer()), delayMs)) : answer()
+  }
+  const stream = (total: number, chunk = MiB) => {
+    let sent = 0
+    return new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sent >= total) return controller.close()
+        const size = Math.min(chunk, total - sent)
+        sent += size
+        controller.enqueue(new Uint8Array(size))
+      },
+    })
+  }
+
+  test("a large stream goes up in parts, never as one PUT", async () => {
+    const { kyora, requests } = client(multipart(32 * MiB))
+    await kyora.files.uploadTar("sb_1", stream(65 * MiB))
+    const parts = requests.filter((request) => request.url.pathname.includes("/parts/"))
+    expect(parts.map((request) => request.body!.length)).toEqual([32 * MiB, 32 * MiB, MiB])
+    expect(requests.some((request) => request.url.pathname.endsWith("/files"))).toBe(false)
+  })
+
+  test("a small stream goes up as one PUT", async () => {
+    const { kyora, requests } = client(multipart(32 * MiB))
+    await kyora.files.uploadTar("sb_1", stream(3 * MiB))
+    expect(requests.map((request) => `${request.method} ${request.url.pathname}`)).toEqual(["PUT /v1/sandboxes/sb_1/files"])
+    expect(requests[0]!.body!.length).toBe(3 * MiB)
+  })
+
+  test("timeoutMs bounds the whole multipart upload, not each part", async () => {
+    const { kyora, requests } = client(multipart(32 * MiB, 80))
+    await expect(kyora.files.uploadTar("sb_1", new Uint8Array(65 * MiB), { timeoutMs: 200 })).rejects.toMatchObject({ code: "timeout" })
+    expect(requests.at(-1)!.method).toBe("DELETE")
+  })
+
+  test("a part size out of bounds is refused, and the upload aborted", async () => {
+    const { kyora, requests } = client(multipart(1024))
+    await expect(kyora.files.uploadTar("sb_1", new Uint8Array(65 * MiB))).rejects.toMatchObject({ code: "bad_response" })
+    expect(requests.at(-1)!.method).toBe("DELETE")
+  })
+
+  test("waitUntilRunning's first request is inside its deadline", async () => {
+    const { kyora } = client(() => new Promise<Response>(() => {}))
+    const started = Date.now()
+    await expect(kyora.sandboxes.waitUntilRunning("sb_1", { timeoutMs: 100 })).rejects.toMatchObject({ code: "timeout" })
+    expect(Date.now() - started).toBeLessThan(1_000)
   })
 })

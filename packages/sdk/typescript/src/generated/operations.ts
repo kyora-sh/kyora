@@ -768,7 +768,7 @@ export interface Operations {
       dest?: string
     }
     headers: Record<string, never>
-    body: BodyInit
+    body: Uint8Array | ReadableStream<Uint8Array> | string
     response: PushFilesResponse
   }
   /** Start a multipart file upload */
@@ -792,7 +792,7 @@ export interface Operations {
     }
     query: Record<string, never>
     headers: Record<string, never>
-    body: BodyInit
+    body: Uint8Array | ReadableStream<Uint8Array> | string
     response: UploadPartResponse
   }
   /** Complete a file upload */
@@ -871,7 +871,7 @@ export interface Operations {
     }
     query: Record<string, never>
     headers: Record<string, never>
-    body: BodyInit
+    body: Uint8Array | ReadableStream<Uint8Array> | string
     response: UploadChunkResponse
   }
   /** Commit an image */
@@ -999,7 +999,7 @@ export interface Operations {
       partNumber?: number
     }
     headers: Record<string, never>
-    body: BodyInit
+    body: Uint8Array | ReadableStream<Uint8Array> | string
     response: PutObjectResponse | PutPartResponse
   }
   /** Start or complete a multipart object upload */
