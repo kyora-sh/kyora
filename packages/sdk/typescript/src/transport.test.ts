@@ -114,3 +114,46 @@ export function callTypes(kyora: Kyora): void {
   const head: Promise<Response> = kyora.call("headObject", { path: { name: "a", objectKey: "k" } })
   void head
 }
+
+describe("final round", () => {
+  const breaksOff = (start: string) =>
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(start))
+          controller.error(new TypeError("socket hang up"))
+        },
+      }),
+      { status: 201, headers: { "content-type": "application/json" } },
+    )
+
+  test("a create whose body breaks off is asked again under the same key", async () => {
+    const { kyora, requests } = client((_, index) => (index === 0 ? breaksOff('{"id":') : json(201, sandbox("sb_c"))))
+    expect((await kyora.sandboxes.create()).id).toBe("sb_c")
+    expect(requests.length).toBe(2)
+    expect(requests[0]!.headers.get("idempotency-key")).toBe(requests[1]!.headers.get("idempotency-key"))
+  })
+
+  test("a queue poll whose body breaks off is polled again", async () => {
+    const ticket = { ticket: "q_9", status: "queued", position: 1, ahead: 0, depth: 1, enqueuedAt: "x", waitUntil: "y", poll: "/v1/queue/q_9" }
+    const { kyora } = client((request, index) => {
+      if (request.method === "POST") return json(202, ticket)
+      if (index === 1) return breaksOff('{"id":')
+      return json(201, sandbox("sb_q"))
+    })
+    expect((await kyora.sandboxes.create({ wait: 30 })).id).toBe("sb_q")
+  })
+
+  test("the token in a nested cause never survives", async () => {
+    const { kyora } = client(() => {
+      const inner = Object.assign(new Error("header Authorization: Bearer kyora_test"), { request: { headers: { authorization: "Bearer kyora_test" } } })
+      throw Object.assign(new TypeError("fetch failed", { cause: inner }), { init: { headers: { authorization: "Bearer kyora_test" } } })
+    }, { retry: false })
+    const failure = (await kyora.me().catch((caught: unknown) => caught)) as KyoraError
+    expect(failure.code).toBe("network_error")
+    expect(inspect(failure, { depth: 20, showHidden: true })).not.toContain("kyora_test")
+    const cause = failure.cause as Error
+    expect(cause.name).toBe("TypeError")
+    expect((cause.cause as Error).message).toBe("header Authorization: Bearer [token]")
+  })
+})

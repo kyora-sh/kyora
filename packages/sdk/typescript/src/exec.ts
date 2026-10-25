@@ -70,6 +70,8 @@ const BASE_DELAY_MS = 250
 const MAX_DELAY_MS = 10_000
 /** how long the first line of an exec may take: the machine gets 60 s to start the command */
 const START_TIMEOUT_MS = 120_000
+/** how long a reattach's first line may take */
+const ATTACH_TIMEOUT_MS = 30_000
 /** a server that sends this header sends a line at least that often */
 const KEEPALIVE_HEADER = "x-kyora-keepalive-ms"
 
@@ -297,7 +299,7 @@ export class Exec {
     const stdin = encoder.encode(request.stdin ?? "").length
     return this.drive(sandbox, collector, options, (signal, deadline) =>
       this.transport.send("execCommand", { path: { id: sandbox }, body, keyed: true, headersTimeoutMs: START_TIMEOUT_MS + Math.ceil(stdin / 16) }, { signal, deadline }),
-    (signal) => this.transport.send("execCommand", { path: { id: sandbox }, body, keyed: true, headersTimeoutMs: START_TIMEOUT_MS }, { signal, retry: false }))
+    (signal, headersMs) => this.transport.send("execCommand", { path: { id: sandbox }, body, keyed: true, headersTimeoutMs: Math.min(START_TIMEOUT_MS, headersMs) }, { signal, retry: false }))
   }
 
   /** The rest of a running or finished command's output, from `from` (default the start), to its exit. */
@@ -316,9 +318,9 @@ export class Exec {
     return this.transport.json<ExecCancelResponse>("cancelExec", { path: { id: sandbox, execId } }, options)
   }
 
-  private attachOnce(sandbox: string, collector: Collector, signal: AbortSignal, options: CallOptions = {}): Promise<Response> {
+  private attachOnce(sandbox: string, collector: Collector, signal: AbortSignal, options: CallOptions = {}, headersMs = ATTACH_TIMEOUT_MS): Promise<Response> {
     const from = `${collector.offsets.stdout},${collector.offsets.stderr}`
-    return this.transport.send("attachExec", { path: { id: sandbox, execId: collector.execId! }, query: { from }, headersTimeoutMs: 30_000 }, { ...options, signal })
+    return this.transport.send("attachExec", { path: { id: sandbox, execId: collector.execId! }, query: { from }, headersTimeoutMs: Math.min(ATTACH_TIMEOUT_MS, headersMs) }, { ...options, signal })
   }
 
   private async drive(
@@ -326,7 +328,7 @@ export class Exec {
     collector: Collector,
     options: ExecOptions,
     first: (signal: AbortSignal, deadline: number | undefined) => Promise<Response>,
-    rejoin: ((signal: AbortSignal) => Promise<Response>) | null,
+    rejoin: ((signal: AbortSignal, headersMs: number) => Promise<Response>) | null,
   ): Promise<ExecResult> {
     const until = endOf(options)
     const deadline = new AbortController()
@@ -344,12 +346,15 @@ export class Exec {
     let current = streamSignal(signal)
     try {
       let ending: Ending
+      /** what the failure before the first recovery asked to wait */
+      let asked: { ms: number; error: KyoraError } | null = null
       try {
         ending = await readStream(await first(current.signal, Number.isFinite(until) ? until : undefined), collector, idleMs)
       } catch (error) {
         // no answer, or one that may have come after the command started: its key finds it, if it did
         if (!rejoin || signal.aborted || pastDeadline() || !ambiguous(error)) throw error
         ending = { kind: "break", reason: describe(error), progressed: false }
+        if ((error as KyoraError).retryAfterMs !== undefined) asked = { ms: (error as KyoraError).retryAfterMs!, error: error as KyoraError }
       }
       current.close()
       let episode: { end: number; delay: number } | null = null
@@ -361,18 +366,20 @@ export class Exec {
         if (!collector.execId && !(rejoin && collector.untouched)) throw detached("stream_lost", `the stream broke (${ending.reason}) and kyora never named the command, so it can't be reattached`)
         if (!episode || ending.progressed) episode = { end: Date.now() + windowMs, delay: BASE_DELAY_MS }
         let last = ending.reason
-        let asked: number | null = null
         let response: Response | null = null
         while (!response) {
+          if (asked && Date.now() + asked.ms >= Math.min(episode.end, until)) throw later(asked.error)
           if (Date.now() >= episode.end) throw detached("stream_lost", `lost the stream (${last}) and could not reattach within ${windowMs} ms`)
-          await pause(Math.min(asked ?? episode.delay, episode.end - Date.now()), signal)
+          await pause(Math.min(asked?.ms ?? episode.delay, episode.end - Date.now()), signal)
           asked = null
           episode.delay = Math.min(MAX_DELAY_MS, episode.delay * 2)
+          const left = episode.end - Date.now()
+          if (left <= 0) continue
           const next = streamSignal(signal)
           let failure: unknown = null
           try {
-            // without an id, the key finds the command again: kyora answers it with its id
-            response = collector.execId ? await this.attachOnce(sandbox, collector, next.signal, { retry: false }) : await rejoin!(next.signal)
+            // without an id, the key finds the command again: kyora answers it with its id; neither waits past the window
+            response = collector.execId ? await this.attachOnce(sandbox, collector, next.signal, { retry: false }, left) : await rejoin!(next.signal, left)
             current = next
           } catch (error) {
             next.close()
@@ -383,10 +390,7 @@ export class Exec {
           if (!reattachable(failure)) throw failure
           last = describe(failure)
           const after = (failure as KyoraError).retryAfterMs
-          if (after !== undefined) {
-            if (Date.now() + after >= Math.min(episode.end, until)) throw later(failure as KyoraError)
-            asked = after
-          }
+          if (after !== undefined) asked = { ms: after, error: failure as KyoraError }
         }
         ending = await readStream(response, collector, idleMs)
         current.close()

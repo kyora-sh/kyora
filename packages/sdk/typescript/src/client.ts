@@ -162,6 +162,50 @@ function streamSource(stream: ReadableStream<Uint8Array>): PartSource {
   }
 }
 
+/** how long the cleanup of a failed upload may take */
+const ABORT_UPLOAD_TIMEOUT_MS = 5_000
+
+/** `promise`, or a timeout at `until`, or the signal's reason once it aborts */
+function bounded<T>(promise: Promise<T>, until: number, signal: AbortSignal | undefined, operation: string): Promise<T> {
+  if (!Number.isFinite(until) && !signal) return promise
+  return new Promise<T>((resolve, reject) => {
+    const stop = () => {
+      clearTimeout(timer)
+      reject(signal!.reason)
+    }
+    const timer = Number.isFinite(until) ? setTimeout(() => {
+      signal?.removeEventListener("abort", stop)
+      reject(timeoutError(operation))
+    }, Math.max(0, until - Date.now())) : undefined
+    if (signal?.aborted) return stop()
+    signal?.addEventListener("abort", stop, { once: true })
+    promise.then(
+      (value) => {
+        clearTimeout(timer)
+        signal?.removeEventListener("abort", stop)
+        resolve(value)
+      },
+      (error: unknown) => {
+        clearTimeout(timer)
+        signal?.removeEventListener("abort", stop)
+        reject(error)
+      },
+    )
+  })
+}
+
+/** waits for `promise` at most `ms` (no wait at all for 0 or less) */
+async function settleWithin(promise: Promise<unknown>, ms: number): Promise<void> {
+  if (!(ms > 0)) return
+  if (!Number.isFinite(ms)) {
+    await promise
+    return
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined
+  await Promise.race([promise, new Promise<void>((resolve) => (timer = setTimeout(resolve, ms)))])
+  clearTimeout(timer)
+}
+
 /** a DELETE that is false when the thing was already gone, unless an earlier try of this call may have deleted it */
 async function deleted(transport: Transport, operation: "deleteSandbox" | "deleteSnapshot", path: { id: string }, options: CallOptions): Promise<boolean> {
   return transport.read(operation, { path, accept: [404] }, options, async (response, attempt) => {
@@ -300,9 +344,9 @@ export class Sandboxes {
     const until = endOf(options, spec.wait ? spec.wait * 1000 + QUEUE_GRACE_MS : CREATE_TIMEOUT_MS)
     const parts: RequestParts = { body }
     if (options.idempotencyKey) parts.idempotencyKey = options.idempotencyKey
-    const response = await this.transport.send("createSandbox", parts, { ...options, timeoutMs: Infinity, deadline: until })
-    const answer = await readJson<unknown>("createSandbox", response)
-    if (response.status === 202 && isTicket(answer)) return this.waitInLine(answer, until, options)
+    // read inside the call: a body that breaks off is asked again, under the same Idempotency-Key
+    const { status, answer } = await this.transport.read("createSandbox", parts, { ...options, timeoutMs: Infinity, deadline: until }, async (response) => ({ status: response.status, answer: await readJson<unknown>("createSandbox", response) }))
+    if (status === 202 && isTicket(answer)) return this.waitInLine(answer, until, options)
     return answer as Sandbox
   }
 
@@ -314,18 +358,18 @@ export class Sandboxes {
         const left = until - Date.now()
         if (left <= 1_000) throw timeoutError("createSandbox")
         const wait = Math.max(1, Math.min(QUEUE_POLL_S, Math.floor(left / 1000) - 1))
-        let response: Response
+        let status: number
+        let answer: unknown
         try {
-          // never repeated as is: an error the ticket answers is the create's own outcome
-          response = await this.transport.send("getQueueTicket", { path: { ticket: ticket.ticket }, query: { wait } }, { signal: options.signal, timeoutMs: (wait + 30) * 1000, deadline: until, retry: false })
+          // never repeated as is: an error the ticket answers is the create's own outcome; a body that breaks off is a poll lost on the way
+          ;({ status, answer } = await this.transport.read("getQueueTicket", { path: { ticket: ticket.ticket }, query: { wait } }, { signal: options.signal, timeoutMs: (wait + 30) * 1000, deadline: until, retry: false }, async (response) => ({ status: response.status, answer: await readJson<unknown>("getQueueTicket", response) })))
         } catch (error) {
           if (options.signal?.aborted || !lostOnTheWay(error) || ++failures > QUEUE_RETRIES) throw error
           await pause(Math.min(5_000, 250 * 2 ** failures, Math.max(0, until - Date.now())), options.signal)
           continue
         }
         failures = 0
-        const answer = await readJson<unknown>("getQueueTicket", response)
-        if (response.status !== 202 || !isTicket(answer)) return answer as Sandbox
+        if (status !== 202 || !isTicket(answer)) return answer as Sandbox
         options.onQueued?.(answer)
       }
     } catch (error) {
@@ -471,13 +515,16 @@ export class Files {
     const deadline = endOf(options)
     const call: CallOptions = { deadline, timeoutMs: TRANSFER_TIMEOUT_MS, ...(options.signal ? { signal: options.signal } : {}), ...(options.retry !== undefined ? { retry: options.retry } : {}), ...(options.headers ? { headers: options.headers } : {}) }
     const source = archive instanceof Uint8Array ? bytesSource(archive) : streamSource(archive)
-    // a first part that is the whole archive goes up as it is
-    const first = await source.next(SINGLE_UPLOAD_BYTES + 1)
-    if (first.length <= SINGLE_UPLOAD_BYTES) {
-      return this.transport.json("pushFiles", { path: { id: sandbox }, query: { dest: options.dest }, body: first, contentType }, call)
-    }
-    const upload = await this.transport.json<CreateUploadResponse>("createUpload", { path: { id: sandbox }, body: { ...(options.dest ? { dest: options.dest } : {}), contentType } }, call)
+    // a stalled stream ends at the deadline or the abort, like a request does
+    const read = (size: number) => bounded(source.next(size), deadline, options.signal, "uploadTar")
+    let upload: CreateUploadResponse | null = null
     try {
+      // a first part that is the whole archive goes up as it is
+      const first = await read(SINGLE_UPLOAD_BYTES + 1)
+      if (first.length <= SINGLE_UPLOAD_BYTES) {
+        return await this.transport.json<PushFilesResponse>("pushFiles", { path: { id: sandbox }, query: { dest: options.dest }, body: first, contentType }, call)
+      }
+      upload = await this.transport.json<CreateUploadResponse>("createUpload", { path: { id: sandbox }, body: { ...(options.dest ? { dest: options.dest } : {}), contentType } }, call)
       const size = Math.min(upload.partSize, upload.maxPartBytes)
       if (!Number.isInteger(size) || size < MIN_PART_BYTES || size > MAX_PART_BYTES) {
         throw new KyoraError({ code: "bad_response", status: 0, message: `createUpload: kyora asked for ${size}-byte parts`, operation: "createUpload" })
@@ -485,7 +532,7 @@ export class Files {
       source.unread(first)
       const parts: Array<{ n: number; etag: string }> = []
       for (let n = 1; ; n++) {
-        const part = await source.next(size)
+        const part = await read(size)
         if (part.length === 0) break
         const answer = await this.transport.json<UploadPartResponse>("uploadPart", { path: { id: sandbox, upload: upload.uploadId, n }, body: part }, call)
         parts.push({ n, etag: answer.etag })
@@ -493,7 +540,11 @@ export class Files {
       return await this.transport.json<PushFilesResponse>("completeUpload", { path: { id: sandbox, upload: upload.uploadId }, body: { parts } }, call)
     } catch (error) {
       source.cancel()
-      await this.transport.json("abortUpload", { path: { id: sandbox, upload: upload.uploadId } }, { retry: false }).catch(() => undefined)
+      if (upload) {
+        // best effort, bounded on its own; the caller hears back by its deadline, at once after an abort
+        const abort = this.transport.json("abortUpload", { path: { id: sandbox, upload: upload.uploadId } }, { retry: false, timeoutMs: ABORT_UPLOAD_TIMEOUT_MS }).catch(() => undefined)
+        await settleWithin(abort, options.signal?.aborted ? 0 : deadline - Date.now())
+      }
       throw error
     }
   }

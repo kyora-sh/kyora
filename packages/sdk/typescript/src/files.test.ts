@@ -186,3 +186,63 @@ describe("uploads and waits under one deadline", () => {
     expect(Date.now() - started).toBeLessThan(1_000)
   })
 })
+
+describe("uploads that stall or fail early", () => {
+  const MiB = 1024 * 1024
+  const watched = (chunks: number, then: "hang" | "close") => {
+    let cancelled = false
+    let sent = 0
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sent < chunks) {
+          sent++
+          controller.enqueue(new Uint8Array(MiB))
+        } else if (then === "close") controller.close()
+        else return new Promise<void>(() => {})
+      },
+      cancel() {
+        cancelled = true
+      },
+    })
+    return { stream, cancelled: () => cancelled }
+  }
+
+  test("a stalled stream ends at the deadline, and is cancelled", async () => {
+    const source = watched(1, "hang")
+    const { kyora, requests } = client(() => json(200, {}))
+    const started = Date.now()
+    await expect(kyora.files.uploadTar("sb_1", source.stream, { timeoutMs: 100 })).rejects.toMatchObject({ code: "timeout" })
+    expect(Date.now() - started).toBeLessThan(1_000)
+    expect(source.cancelled()).toBe(true)
+    expect(requests.length).toBe(0)
+  })
+
+  test("and at an abort", async () => {
+    const source = watched(1, "hang")
+    const { kyora } = client(() => json(200, {}))
+    const controller = new AbortController()
+    setTimeout(() => controller.abort(new Error("stop")), 30)
+    await expect(kyora.files.uploadTar("sb_1", source.stream, { signal: controller.signal })).rejects.toThrow("stop")
+    expect(source.cancelled()).toBe(true)
+  })
+
+  test("a failed createUpload cancels the stream", async () => {
+    const source = watched(70, "hang")
+    const { kyora } = client(() => error(403, "insufficient_scope"))
+    await expect(kyora.files.uploadTar("sb_1", source.stream)).rejects.toMatchObject({ code: "insufficient_scope" })
+    expect(source.cancelled()).toBe(true)
+  })
+
+  test("a cleanup that hangs never holds the caller past its deadline", async () => {
+    const { kyora, requests } = client((request) => {
+      const path = request.url.pathname
+      if (path.endsWith("/uploads")) return json(201, { uploadId: "up_h", partSize: 32 * MiB, maxPartBytes: 32 * MiB, expiresAt: "x" })
+      if (request.method === "DELETE") return new Promise<Response>(() => {})
+      return new Promise<Response>((resolve) => setTimeout(() => resolve(json(200, { n: 1, etag: "e" })), 80))
+    })
+    const started = Date.now()
+    await expect(kyora.files.uploadTar("sb_1", new Uint8Array(65 * MiB), { timeoutMs: 200 })).rejects.toMatchObject({ code: "timeout" })
+    expect(Date.now() - started).toBeLessThan(600)
+    expect(requests.at(-1)!.method).toBe("DELETE")
+  })
+})

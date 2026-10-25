@@ -248,3 +248,31 @@ describe("onOutput", () => {
     expect(requests.length).toBe(1)
   })
 })
+
+describe("recovery bounds", () => {
+  test("the unclear start's Retry-After is the first recovery delay", async () => {
+    const { kyora, requests } = client((request, index) => {
+      if (index === 0) return error(503, "do_reset", { retryable: true, retryAfterMs: 300 })
+      if (request.method === "POST") return ndjson([{ type: "started", id: ID, resumable: true, existing: true }, { type: "detached", reason: "rejoin" }])
+      return ndjson([{ type: "attached", id: ID, running: false }, exit(0)])
+    }, { retry: { maxAttempts: 1 } })
+    const started = Date.now()
+    expect((await kyora.exec.run("sb_1", { cmd: ["x"] })).exitCode).toBe(0)
+    expect(Date.now() - started).toBeGreaterThanOrEqual(290)
+    expect(requests.map((request) => request.method)).toEqual(["POST", "POST", "GET"])
+  })
+
+  test("an unclear start whose Retry-After passes the deadline is thrown with the key", async () => {
+    const { kyora } = client(() => error(503, "do_reset", { retryable: true, retryAfterMs: 30_000 }), { retry: { maxAttempts: 1 } })
+    const failure = await kyora.exec.run("sb_1", { cmd: ["x"], key: "k8" }, { timeoutMs: 2_000 }).catch((caught: unknown) => caught)
+    expect(failure).toBeInstanceOf(ExecDetachedError)
+    expect(failure).toMatchObject({ code: "do_reset", retryAfterMs: 30_000, key: "k8" })
+  })
+
+  test("a reattach that never answers is bounded by the window", async () => {
+    const { kyora } = client((request) => (request.method === "POST" ? ndjson([{ type: "started", id: ID, resumable: true }]) : new Promise<Response>(() => {})))
+    const started = Date.now()
+    await expect(kyora.exec.run("sb_1", { cmd: ["x"] }, { reattachWindowMs: 200 })).rejects.toMatchObject({ code: "stream_lost" })
+    expect(Date.now() - started).toBeLessThan(1_000)
+  })
+})

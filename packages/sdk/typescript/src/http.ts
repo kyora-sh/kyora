@@ -225,8 +225,19 @@ export class Transport {
   /** a failure on the way (no answer, a body that broke off) as a KyoraError, with the token taken out */
   private wrap(operation: OperationId, what: string, error: unknown): KyoraError {
     const detail = this.redact(error instanceof Error ? error.message : String(error))
-    const cause = error instanceof Error && this.#token && error.message.includes(this.#token) ? undefined : error
-    return new KyoraError({ code: "network_error", status: 0, message: `${operation}: ${what} (${detail})`, operation, cause })
+    return new KyoraError({ code: "network_error", status: 0, message: `${operation}: ${what} (${detail})`, operation, cause: this.sanitize(error) })
+  }
+
+  /**
+   * A copy of an error that is safe to keep: its name and redacted message, and so on for a few
+   * causes down. Never the error itself, which may hold the request and its Authorization header.
+   */
+  private sanitize(error: unknown, depth = 3): Error | undefined {
+    if (!(error instanceof Error) || depth === 0) return undefined
+    const nested = this.sanitize((error as { cause?: unknown }).cause, depth - 1)
+    const copy = new Error(this.redact(error.message), nested === undefined ? undefined : { cause: nested })
+    copy.name = error.name
+    return copy
   }
 
   /** one request and its answer's headers; never retried */
@@ -263,7 +274,7 @@ export class Transport {
     if (isStream(body)) init.duplex = "half"
     const failure = (error: unknown, what: string) => {
       if (signal?.aborted) return signal.reason ?? error
-      if (deadline?.signal.aborted || start?.signal.aborted) return timeoutError(operation, error)
+      if (deadline?.signal.aborted || start?.signal.aborted) return timeoutError(operation, this.sanitize(error))
       if (error instanceof KyoraError) return error
       return this.wrap(operation, what, error)
     }
