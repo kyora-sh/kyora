@@ -5,11 +5,14 @@ import { join } from "node:path"
 import type { VmsClient } from "./api"
 import { isFullId } from "./names"
 
-export const SUBCOMMANDS = "new ls usage top attach rm run create shell share ssh exec push pull screenshot computer rename ttl resize network completion health regions images image nodes session storage tokens login logout whoami"
+export const SUBCOMMANDS = "new ls usage top attach rm run create shell share ssh exec push pull screenshot computer rename ttl resize network completion health regions images image nodes session storage tokens login logout whoami snapshot snapshots restore"
 const safeName = (name: unknown): name is string => typeof name === "string" && /^[a-z0-9-]{1,32}$/.test(name)
 const safeCandidate = (name: unknown): name is string => typeof name === "string" && (safeName(name) || isFullId(name))
 const TOKEN_SCOPES = "vms:read vms:write vms:exec vms:share public-urls images storage storage:presign projects:read deploys"
 const TOKEN_FLAGS = "--scope --project --label --region --max-sandboxes --max-vcpus --max-memory --max-ttl --network --names --name-prefix --expires --org --json"
+const SNAPSHOT_SUBCOMMANDS = "create ls list show rm delete restore"
+const SNAPSHOT_FLAGS = "--full --name --ttl --no-wait --json"
+const RESTORE_FLAGS = "--no-share --size --network --allow --cpus --allocated-cpus --cpu-limit --max-memory --autoscale --memory --disk --ttl --idle --display --region --wait --no-wait --name --no-resume --json"
 const TARGETS = "attach ssh shell share ls exec push pull rm screenshot computer rename ttl resize network"
 
 export async function completionNames(api: VmsClient, key: string): Promise<string[]> {
@@ -63,6 +66,15 @@ _kyora() {
           elif [ "\${COMP_WORDS[n+1]}" = "create" ]; then words="${TOKEN_FLAGS}"
           fi ;;
         image|images) words="${IMAGE}" ;;
+        snapshot|snapshots)
+          if [ "$at" -eq 1 ]; then words="${SNAPSHOT_SUBCOMMANDS}"; [ "\${COMP_WORDS[n]}" = "snapshot" ] && words="$words $(kyora vms __complete 2>/dev/null)"
+          elif [ "$at" -eq 2 ] && [ "\${COMP_WORDS[n+1]}" = "create" ]; then words="$(kyora vms __complete 2>/dev/null)"
+          elif [ "\${COMP_WORDS[n+1]}" = "restore" ]; then words="${RESTORE_FLAGS}"
+          elif [[ " ls list show rm delete " == *" \${COMP_WORDS[n+1]} "* ]]; then words="--json"
+          else words="${SNAPSHOT_FLAGS}"
+          fi ;;
+        restore) [ "$at" -gt 1 ] && words="${RESTORE_FLAGS}" ;;
+        ls) words="--label --json $(kyora vms __complete 2>/dev/null)" ;;
         ${TARGETS.split(" ").join("|")}) words="$(kyora vms __complete 2>/dev/null)" ;;
       esac
     fi
@@ -99,6 +111,17 @@ _kyora() {
       fi
     elif [[ $words[n] == (image|images) ]] && (( CURRENT == n + 1 )); then
       candidates=(${IMAGE})
+    elif [[ $words[n] == (snapshot|snapshots) ]]; then
+      if (( CURRENT == n + 1 )); then candidates=(${SNAPSHOT_SUBCOMMANDS}); [[ $words[n] == snapshot ]] && candidates+=(\${(f)"$(kyora vms __complete 2>/dev/null)"})
+      elif (( CURRENT == n + 2 )) && [[ $words[n+1] == create ]]; then candidates=(\${(f)"$(kyora vms __complete 2>/dev/null)"})
+      elif [[ $words[n+1] == restore ]]; then candidates=(${RESTORE_FLAGS})
+      elif [[ $words[n+1] == (ls|list|show|rm|delete) ]]; then candidates=(--json)
+      else candidates=(${SNAPSHOT_FLAGS})
+      fi
+    elif [[ $words[n] == restore ]] && (( CURRENT > n + 1 )); then
+      candidates=(${RESTORE_FLAGS})
+    elif [[ $words[n] == ls ]]; then
+      candidates=(--label --json \${(f)"$(kyora vms __complete 2>/dev/null)"})
     elif [[ " ${TARGETS} " == *" $words[n] "* ]]; then
       candidates=(\${(f)"$(kyora vms __complete 2>/dev/null)"})
     fi
@@ -108,11 +131,20 @@ _kyora() {
 compdef _kyora kyora kyora-vms`
   if (shell === "fish") {
     const vms = (command: string, seen: string) => `complete -c ${command} -n '${seen}; and not __fish_seen_subcommand_from ${SUBCOMMANDS}' -a '${SUBCOMMANDS}'
-complete -c ${command} -n '${seen}; and __fish_seen_subcommand_from ${TARGETS}' -a '(kyora vms __complete 2>/dev/null)'
+complete -c ${command} -n '${seen}; and __fish_seen_subcommand_from ${TARGETS}; and not __fish_seen_subcommand_from snapshot snapshots restore tokens' -a '(kyora vms __complete 2>/dev/null)'
 complete -c ${command} -n '${seen}; and __fish_seen_subcommand_from completion' -a 'bash zsh fish'
 complete -c ${command} -n '${seen}; and __fish_seen_subcommand_from tokens' -a 'create ls revoke'
 complete -c ${command} -n '${seen}; and __fish_seen_subcommand_from tokens; and __fish_seen_subcommand_from create' -l scope -r -a '${TOKEN_SCOPES}'
 complete -c ${command} -n '${seen}; and __fish_seen_subcommand_from tokens; and __fish_seen_subcommand_from create' -l project -r
+complete -c ${command} -n '${seen}; and __fish_seen_subcommand_from snapshot snapshots; and not __fish_seen_subcommand_from ${SNAPSHOT_SUBCOMMANDS}' -a '${SNAPSHOT_SUBCOMMANDS}'
+complete -c ${command} -n '${seen}; and __fish_seen_subcommand_from snapshot; and not __fish_seen_subcommand_from ls list show rm delete restore' -a '(kyora vms __complete 2>/dev/null)'
+complete -c ${command} -n '${seen}; and __fish_seen_subcommand_from snapshot snapshots' -l json
+complete -c ${command} -n '${seen}; and __fish_seen_subcommand_from snapshot snapshots; and not __fish_seen_subcommand_from restore ls list show rm delete' -l full
+complete -c ${command} -n '${seen}; and __fish_seen_subcommand_from snapshot snapshots; and not __fish_seen_subcommand_from restore ls list show rm delete' -l name -r
+complete -c ${command} -n '${seen}; and __fish_seen_subcommand_from snapshot snapshots; and not __fish_seen_subcommand_from restore ls list show rm delete' -l ttl -r
+complete -c ${command} -n '${seen}; and __fish_seen_subcommand_from snapshot snapshots; and not __fish_seen_subcommand_from restore ls list show rm delete' -l no-wait
+${RESTORE_FLAGS.split(" ").map((flag) => `complete -c ${command} -n '${seen}; and __fish_seen_subcommand_from restore' -l ${flag.slice(2)}`).join("\n")}
+complete -c ${command} -n '${seen}; and __fish_seen_subcommand_from ls; and not __fish_seen_subcommand_from snapshot snapshots tokens' -l label -r
 complete -c ${command} -n '${seen}; and __fish_seen_subcommand_from image images' -a '${IMAGE}'`
     return `# kyora vms completion fish | source
 complete -c kyora -f
