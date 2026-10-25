@@ -1,0 +1,6176 @@
+openapi: 3.1.0
+info:
+  title: kyora vms API
+  version: 1.0.0-beta.1
+  summary: Sandboxes, snapshots, public URLs, pages, images and object storage on kyora cloud.
+  description: |
+    The HTTP API the `kyora` CLI and integrators use at `https://cloud.kyora.sh`.
+
+    ## Conventions
+
+    - Bodies are JSON (`application/json`) unless an operation says otherwise. Responses carry no envelope.
+    - Times are ISO 8601 strings, except where a field says epoch milliseconds.
+    - A sandbox in a path (`{id}`) is its full id (`sb_...`), its name, or a unique prefix of its id that
+      starts with `sb_`. A prefix that matches several sandboxes is `409 ambiguous_prefix`.
+    - Encode path segments and query values.
+
+    ## Errors
+
+    Every error is `{"error": "<code>", "message": "<a readable reason>"}`, sometimes with more fields
+    (`Error`). Branch on `error`, never on `message`. `x-kyora-error-codes` lists every code with the
+    statuses it comes with and whether repeating the same request can succeed (`retryable`: `true` or
+    `false` for every status, or the list of statuses after which it can): take retryability from
+    there. A 429 or 503 also says it in the body: `retryable`, and for a retryable one `retryAfterMs`
+    with a `Retry-After` header (seconds); wait at least that long. Other statuses, and a few 429 and
+    503 codes whose bodies predate these fields (`rate_limited`, `node_offline` and the like), carry
+    neither field, so fall back to the catalog when they are absent.
+
+    ## Stability
+
+    - `/v1` changes are additive only: new operations, new optional request fields, new response
+      fields, new error codes and new enum values. Clients must ignore fields they don't know and treat
+      an unknown error code by its status.
+    - A breaking change ships as `/v2`, or after a deprecation of at least six months announced with a
+      `Deprecation` header (RFC 9745) and a `Sunset` header on the affected operations.
+    - `info.version` follows semver and the SDKs track it. While it is a `1.0.0-beta`, the guarantees
+      above already hold for `/v1`; the beta covers the spec's completeness, not the API's stability.
+  contact:
+    name: kyora
+    url: https://kyora.sh
+servers:
+  - url: https://cloud.kyora.sh
+security:
+  - bearer: []
+tags:
+  - name: account
+    description: Health, regions, the account a token acts for, tokens and usage.
+  - name: sandboxes
+    description: Create, list, inspect, change and destroy sandboxes; the create queue.
+  - name: exec
+    description: Run commands and reattach to them.
+  - name: files
+    description: Push and pull archives, multipart uploads.
+  - name: network
+    description: Network modes, public ports and custom domains.
+  - name: computer
+    description: The desktop of a sandbox with a display, its live view and shares.
+  - name: terminals
+    description: Interactive terminals over WebSockets.
+  - name: snapshots
+    description: Take, list and restore snapshots.
+  - name: pages
+    description: Static pages served from kyora.
+  - name: images
+    description: Account images built from a base or pushed in chunks.
+  - name: storage
+    description: S3-like buckets and objects.
+x-kyora-error-codes:
+  account_images_unsupported:
+    status: [501]
+    retryable: false
+    class: unavailable
+    description: "The sandbox's machine takes no account images now."
+  account_not_found:
+    status: [404]
+    retryable: false
+    class: not_found
+    description: "The resource does not exist."
+  agent_unavailable:
+    status: [502]
+    retryable: true
+    class: transient
+    description: "The sandbox's agent did not answer; try again."
+  already_committed:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "Already committed."
+  already_published:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "Already published."
+  ambiguous_prefix:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The prefix matches several sandboxes."
+  autoscale_unavailable:
+    status: [503]
+    retryable: true
+    class: transient
+    description: "Autoscale is unavailable."
+  bad_reply:
+    status: [502]
+    retryable: false
+    class: unavailable
+    description: "The machine answered badly."
+  bad_request:
+    status: [400]
+    retryable: false
+    class: invalid
+    description: "Bad request."
+  barrier_timeout:
+    status: [504]
+    retryable: true
+    class: transient
+    description: "Timed out waiting for a barrier."
+  binding_changed:
+    status: [409]
+    retryable: true
+    class: transient
+    description: "The name's binding changed while the request ran; repeat it."
+  binding_revoked:
+    status: [409]
+    retryable: true
+    class: transient
+    description: "The name update was rolled back; repeat the expose."
+  blob_unavailable:
+    status: [502]
+    retryable: true
+    class: transient
+    description: "A stored snapshot or image could not be read; try again."
+  boot_failed:
+    status: [502, 503]
+    retryable: true
+    class: transient
+    description: "The sandbox could not start."
+  bucket_deleting:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The bucket is being deleted."
+  bucket_exists:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "A bucket with this name exists."
+  bucket_not_empty:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The bucket is not empty."
+  burst_unsupported:
+    status: [503]
+    retryable: false
+    class: unavailable
+    description: "Burst sizing (allocatedVcpus below vcpus, or memory that grows) is unavailable for this sandbox."
+  busy:
+    status: [409, 429]
+    retryable: true
+    class: transient
+    description: "The resource is busy."
+  cancelled:
+    status: [410, 499]
+    retryable: false
+    class: conflict
+    description: "Cancelled."
+  capacity:
+    status: [503]
+    retryable: true
+    class: transient
+    description: "There is not enough capacity right now."
+  changed:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The resource changed."
+  child_limit:
+    status: [429]
+    retryable: false
+    class: limit
+    description: "Session child sandbox limit reached."
+  chunk_busy:
+    status: [503]
+    retryable: true
+    class: transient
+    description: "The chunk is being collected."
+  chunk_mismatch:
+    status: [422, 502]
+    retryable: false
+    class: invalid
+    description: "A chunk does not match its key (422: an upload; 502: a stored chunk a machine pulled)."
+  chunk_not_listed:
+    status: [400]
+    retryable: false
+    class: invalid
+    description: "The chunk is not in the manifest."
+  chunk_size:
+    status: [400]
+    retryable: false
+    class: invalid
+    description: "The chunk size does not match the manifest."
+  chunks_missing:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "Some chunks are missing."
+  claim_changed:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The claim changed."
+  claim_committed:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The claim was committed."
+  claim_expired:
+    status: [409]
+    retryable: true
+    class: transient
+    description: "The name update expired; repeat it."
+  claim_pending:
+    status: [409]
+    retryable: true
+    class: transient
+    description: "The name is being updated; try again."
+  cloud_error:
+    status: [502]
+    retryable: true
+    class: transient
+    description: "The machine's transfer to or from kyora storage failed; try again."
+  cloud_unavailable:
+    status: [502]
+    retryable: true
+    class: transient
+    description: "The machine could not reach kyora storage; try again."
+  cloudflare_unavailable:
+    status: [503]
+    retryable: true
+    class: transient
+    description: "The domain provider is temporarily unavailable."
+  conflict:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The operation conflicts with current state."
+  cors_limit:
+    status: [409]
+    retryable: false
+    class: limit
+    description: "Too many CORS origins."
+  create_key_conflict:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The idempotency key was used with a different body."
+  create_key_superseded:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The create key was superseded."
+  create_lost:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The create ticket is gone and its outcome is unknown."
+  credentials_failed:
+    status: [502]
+    retryable: true
+    class: transient
+    description: "Credentials failed."
+  custom_domains_misconfigured:
+    status: [503]
+    retryable: false
+    class: unavailable
+    description: "Custom domains are misconfigured."
+  custom_domains_unavailable:
+    status: [503]
+    retryable: true
+    class: transient
+    description: "Custom domains are unavailable."
+  deadline:
+    status: [504]
+    retryable: true
+    class: transient
+    description: "Deadline exceeded."
+  deleted:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "Deleted."
+  desktop_starting:
+    status: [503]
+    retryable: true
+    class: transient
+    description: "The sandbox's desktop is still starting; try again shortly."
+  detached:
+    status: [499]
+    retryable: true
+    class: transient
+    description: "The command's connection ended; the command keeps running, reattach to it."
+  digest_mismatch:
+    status: [502]
+    retryable: false
+    class: unavailable
+    description: "The image a machine assembled does not match its digest."
+  disconnected:
+    status: [499]
+    retryable: true
+    class: transient
+    description: "The sandbox connection ended; try again."
+  disk_only:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The hibernation kept only the disk; its memory can't be resumed."
+  disk_resize_pending:
+    status: [409, 503]
+    retryable: true
+    class: transient
+    description: "A disk resize is pending; repeat the same diskGb."
+  disk_shrink_unsupported:
+    status: [400]
+    retryable: false
+    class: invalid
+    description: "Disk can only grow."
+  display_error:
+    status: [502]
+    retryable: false
+    class: unavailable
+    description: "The sandbox's display failed."
+  display_not_found:
+    status: [404]
+    retryable: false
+    class: not_found
+    description: "The sandbox has no such display."
+  dns_unavailable:
+    status: [503]
+    retryable: true
+    class: transient
+    description: "DNS is temporarily unavailable."
+  do_reset:
+    status: [503]
+    retryable: true
+    class: transient
+    description: "The object reset; wait Retry-After 2 (retryAfterMs 2000)."
+  domain_blocked:
+    status: [403, 451]
+    retryable: false
+    class: unavailable
+    description: "This domain is blocked."
+  domain_busy:
+    status: [409]
+    retryable: true
+    class: transient
+    description: "The domain is being changed, created or deleted; try again once that settles."
+  domain_limit:
+    status: [429]
+    retryable: false
+    class: limit
+    description: "Domain limit reached."
+  domain_pending:
+    status: [503]
+    retryable: true
+    class: transient
+    description: "The domain is still being set up."
+  domain_taken:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The domain is taken."
+  download_failed:
+    status: [400, 502]
+    retryable: [502]
+    class: unavailable
+    description: "The download from the sandbox failed (400: the sandbox refused it; 502: it ended early, try again)."
+  draining:
+    status: [503]
+    retryable: true
+    class: transient
+    description: "The machine is draining."
+  egress_not_allowed:
+    status: [403]
+    retryable: false
+    class: auth
+    description: "Egress hosts are not allowed here."
+  egress_unavailable:
+    status: [501, 503]
+    retryable: [503]
+    class: unavailable
+    description: "Per-sandbox egress hosts are unavailable on the sandbox's machine (501: never there; 503: not yet, try again)."
+  egress_unsupported:
+    status: [409, 501]
+    retryable: false
+    class: unavailable
+    description: "Egress policies are unsupported here."
+  eternal_session:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "An eternal session's sandbox hibernates only when its session asks."
+  exec_busy:
+    status: [409]
+    retryable: true
+    class: transient
+    description: "Another exec or exclusive work is in progress."
+  exec_key_conflict:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The exec key belongs to another command."
+  exec_key_unknown:
+    status: [404]
+    retryable: false
+    class: conflict
+    description: "The exec key is unknown."
+  exec_key_used:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "A command with this key may have run and cannot be rejoined."
+  exec_limit:
+    status: [429]
+    retryable: true
+    class: limit
+    description: "Too many concurrent execs; try again once some finish."
+  exec_not_found:
+    status: [404]
+    retryable: false
+    class: not_found
+    description: "The resource does not exist."
+  exec_not_started:
+    status: [503]
+    retryable: true
+    class: transient
+    description: "The command never started."
+  exists:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The resource exists."
+  expired:
+    status: [410]
+    retryable: false
+    class: conflict
+    description: "Expired."
+  fleet_config:
+    status: [503]
+    retryable: false
+    class: unavailable
+    description: "Fleet is misconfigured."
+  forbidden:
+    status: [403]
+    retryable: false
+    class: auth
+    description: "Forbidden for this caller."
+  fs_grow_pending:
+    status: [502]
+    retryable: true
+    class: transient
+    description: "Filesystem growth is not confirmed."
+  full_snapshots_not_allowed:
+    status: [403]
+    retryable: false
+    class: auth
+    description: "Full snapshots are not allowed."
+  github_unavailable:
+    status: [502]
+    retryable: true
+    class: transient
+    description: "GitHub is temporarily unavailable."
+  grant_invalid:
+    status: [401]
+    retryable: false
+    class: auth
+    description: "The grant is not valid."
+  guest_error:
+    status: [502, 503]
+    retryable: false
+    class: unavailable
+    description: "The sandbox's agent answered with an error."
+  guest_port_unavailable:
+    status: [503]
+    retryable: true
+    class: transient
+    description: "The sandbox's port is not accepting connections; try again once it listens."
+  guest_timeout:
+    status: [504]
+    retryable: true
+    class: transient
+    description: "The sandbox's agent did not answer in time; try again."
+  guest_unavailable:
+    status: [503]
+    retryable: true
+    class: transient
+    description: "The sandbox application is unavailable."
+  ha_tier:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "A sandbox of the HA tier is never hibernated."
+  headers_too_large:
+    status: [431]
+    retryable: false
+    class: invalid
+    description: "Request headers are too large."
+  hibernate_failed:
+    status: [503]
+    retryable: false
+    class: unavailable
+    description: "The hibernation failed."
+  hibernated:
+    status: [409]
+    retryable: true
+    class: transient
+    description: "The sandbox is hibernated; the request wakes it, repeat it after Retry-After."
+  hibernating:
+    status: [409]
+    retryable: true
+    class: transient
+    description: "The sandbox is being hibernated; try again after Retry-After."
+  history_pending:
+    status: [503]
+    retryable: true
+    class: transient
+    description: "History is pending."
+  image_build_grant:
+    status: [403]
+    retryable: false
+    class: auth
+    description: "The image build grant is not valid."
+  image_cache_full:
+    status: [507]
+    retryable: true
+    class: transient
+    description: "The machine's image cache is full; try again later or in another region."
+  image_closed:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The image is no longer uploading."
+  image_in_use:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The image is in use."
+  image_missing:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The image is missing."
+  image_not_found:
+    status: [404]
+    retryable: false
+    class: not_found
+    description: "The resource does not exist."
+  image_region:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The image is in another region."
+  image_required:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "An image is required."
+  image_unavailable:
+    status: [409]
+    retryable: false
+    class: unavailable
+    description: "The requested image is unavailable."
+  insufficient_scope:
+    status: [403]
+    retryable: false
+    class: auth
+    description: "The token lacks the required scope."
+  insufficient_storage:
+    status: [507]
+    retryable: false
+    class: unavailable
+    description: "Not enough storage."
+  internal:
+    status: [500]
+    retryable: false
+    class: unavailable
+    description: "Internal error."
+  invalid_chunks:
+    status: [502]
+    retryable: false
+    class: unavailable
+    description: "A stored image's chunk list is not valid."
+  invalid_configuration:
+    status: [503]
+    retryable: false
+    class: unavailable
+    description: "Invalid configuration."
+  invalid_cursor:
+    status: [400]
+    retryable: false
+    class: invalid
+    description: "The cursor is not valid."
+  invalid_grant:
+    status: [403]
+    retryable: false
+    class: auth
+    description: "The grant is not valid."
+  invalid_host:
+    status: [400]
+    retryable: false
+    class: invalid
+    description: "Invalid host."
+  invalid_hostname:
+    status: [400]
+    retryable: false
+    class: invalid
+    description: "The hostname is not valid."
+  invalid_json:
+    status: [400]
+    retryable: false
+    class: invalid
+    description: "The body is not valid JSON."
+  invalid_label:
+    status: [400]
+    retryable: false
+    class: invalid
+    description: "The label is not valid."
+  invalid_limit:
+    status: [400]
+    retryable: false
+    class: invalid
+    description: "The limit parameter is not valid."
+  invalid_manifest:
+    status: [502]
+    retryable: false
+    class: unavailable
+    description: "A stored image's manifest is not valid."
+  invalid_path:
+    status: [400]
+    retryable: false
+    class: invalid
+    description: "Invalid path."
+  invalid_request:
+    status: [400]
+    retryable: false
+    class: invalid
+    description: "A field, bound or query parameter is not valid; message names it."
+  invalid_seal:
+    status: [400]
+    retryable: false
+    class: unavailable
+    description: "The stored snapshot is not intact."
+  invalid_share_stream:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "Invalid share stream."
+  invalid_snapshot:
+    status: [400]
+    retryable: false
+    class: invalid
+    description: "The snapshot is not valid."
+  invalid_status:
+    status: [502]
+    retryable: false
+    class: unavailable
+    description: "Invalid status from the machine."
+  label_not_found:
+    status: [404]
+    retryable: false
+    class: not_found
+    description: "The resource does not exist."
+  label_not_public:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The label is not public."
+  label_private:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The label is private."
+  label_taken:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The label is taken."
+  label_unavailable:
+    status: [503]
+    retryable: true
+    class: transient
+    description: "Could not allocate a label."
+  length_required:
+    status: [411]
+    retryable: false
+    class: invalid
+    description: "Content-Length is required."
+  lifetime_unsupported:
+    status: [400, 503]
+    retryable: false
+    class: invalid
+    description: "This lifetime is unsupported here."
+  limit_reached:
+    status: [429]
+    retryable: false
+    class: limit
+    description: "A limit was reached."
+  machine_health:
+    status: [503]
+    retryable: true
+    class: transient
+    description: "The machine paused new sandboxes; try again."
+  machine_placement_forbidden:
+    status: [403]
+    retryable: false
+    class: auth
+    description: "Placing on a named machine is for admins."
+  maintenance_in_progress:
+    status: [503]
+    retryable: true
+    class: transient
+    description: "The sandbox's machine is in maintenance; try again later."
+  managed_sandbox:
+    status: [403]
+    retryable: false
+    class: auth
+    description: "A managed sandbox allows only view and delete."
+  manifest_invalid:
+    status: [422]
+    retryable: false
+    class: invalid
+    description: "The manifest is invalid."
+  manifest_mismatch:
+    status: [502]
+    retryable: false
+    class: unavailable
+    description: "The stored manifest does not match."
+  manifest_missing:
+    status: [404]
+    retryable: false
+    class: not_found
+    description: "The resource does not exist."
+  metadata_busy:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "Metadata is being updated."
+  method_not_allowed:
+    status: [405]
+    retryable: false
+    class: invalid
+    description: "Method not allowed."
+  migrating:
+    status: [409]
+    retryable: true
+    class: transient
+    description: "The sandbox is migrating."
+  migration_error:
+    status: [502]
+    retryable: true
+    class: transient
+    description: "Migration failed."
+  move_busy:
+    status: [429]
+    retryable: true
+    class: transient
+    description: "A move is in progress."
+  move_disabled:
+    status: [503]
+    retryable: false
+    class: unavailable
+    description: "Moves are disabled."
+  move_limit:
+    status: [429]
+    retryable: false
+    class: limit
+    description: "Move limit reached."
+  name_binding:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The name binding changed."
+  name_busy:
+    status: [409]
+    retryable: true
+    class: transient
+    description: "The name has an operation in progress; try again."
+  name_limit:
+    status: [429]
+    retryable: false
+    class: limit
+    description: "Held name limit reached."
+  name_reserved:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The name is reserved."
+  name_taken:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The name is taken."
+  network_not_allowed:
+    status: [403]
+    retryable: false
+    class: auth
+    description: "The network mode is not allowed."
+  network_recreate:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The network cannot be changed in place."
+  network_unavailable:
+    status: [503]
+    retryable: false
+    class: unavailable
+    description: "The sandbox's network could not be set up on its machine."
+  no_access:
+    status: [403]
+    retryable: false
+    class: auth
+    description: "The account has no vms access."
+  no_capacity:
+    status: [503]
+    retryable: true
+    class: transient
+    description: "No machine has room right now."
+  no_frame:
+    status: [404]
+    retryable: false
+    class: not_found
+    description: "No frame is available yet."
+  no_room_on_machine:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The machine lacks room."
+  node_disconnected:
+    status: [503]
+    retryable: true
+    class: transient
+    description: "The machine disconnected."
+  node_error:
+    status: [500, 502]
+    retryable: true
+    class: transient
+    description: "The machine answered with an error."
+  node_offline:
+    status: [503]
+    retryable: true
+    class: transient
+    description: "The machine is offline."
+  node_timeout:
+    status: [503, 504]
+    retryable: true
+    class: transient
+    description: "The machine did not answer in time."
+  node_update_required:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The machine needs an update for this."
+  not_active:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "Not active."
+  not_broadcast:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "Not a broadcast share."
+  not_found:
+    status: [404]
+    retryable: false
+    class: not_found
+    description: "The resource does not exist."
+  not_hibernated:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The sandbox is not hibernated."
+  not_ready:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "Not ready."
+  not_running:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The sandbox is not running."
+  offline:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "Offline."
+  org_limit:
+    status: [403]
+    retryable: false
+    class: limit
+    description: "Organization limit reached."
+  out_of_range:
+    status: [400, 409]
+    retryable: false
+    class: invalid
+    description: "Out of range."
+  over_ceiling:
+    status: [403]
+    retryable: false
+    class: limit
+    description: "Over the account ceiling."
+  page_changed:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The page changed."
+  page_not_found:
+    status: [404]
+    retryable: false
+    class: not_found
+    description: "The resource does not exist."
+  pages_disabled:
+    status: [503]
+    retryable: false
+    class: unavailable
+    description: "Pages are disabled."
+  parent_ending:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The parent sandbox is ending."
+  parent_gone:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The parent sandbox is gone."
+  parked_changed:
+    status: [409]
+    retryable: true
+    class: transient
+    description: "The sandbox woke or slept again while the request ran; repeat it."
+  payment_required:
+    status: [402]
+    retryable: false
+    class: limit
+    description: "Payment is required."
+  port_limit:
+    status: [429]
+    retryable: false
+    class: limit
+    description: "Port limit reached."
+  precondition_failed:
+    status: [412]
+    retryable: false
+    class: invalid
+    description: "The precondition failed."
+  presign_put_unavailable:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "Presigned PUTs are unavailable for this bucket."
+  public_url_access_required:
+    status: [403]
+    retryable: false
+    class: auth
+    description: "Public hosting requires vms access."
+  public_url_disabled:
+    status: [403, 503]
+    retryable: false
+    class: conflict
+    description: "The public URL is disabled."
+  public_url_expose_failed:
+    status: [503]
+    retryable: true
+    class: transient
+    description: "Could not expose the port."
+  public_url_unavailable:
+    status: [503]
+    retryable: true
+    class: transient
+    description: "The public URL is unavailable."
+  public_urls:
+    status: [503]
+    retryable: true
+    class: transient
+    description: "Moving the sandbox's public URLs failed; try again."
+  public_urls_disabled:
+    status: [503]
+    retryable: false
+    class: unavailable
+    description: "Public URLs are disabled."
+  public_urls_unconfigured:
+    status: [503]
+    retryable: false
+    class: unavailable
+    description: "Public URLs are not configured."
+  publication_closed:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "Publication is closed."
+  queue_full:
+    status: [503]
+    retryable: true
+    class: transient
+    description: "The create queue is full."
+  queue_limit:
+    status: [429]
+    retryable: true
+    class: limit
+    description: "Too many queued creates; try again once some are placed."
+  quota_exceeded:
+    status: [403, 429]
+    retryable: false
+    class: limit
+    description: "Account quota exceeded; no Retry-After is sent."
+  range_not_satisfiable:
+    status: [416]
+    retryable: false
+    class: invalid
+    description: "The range is outside the object."
+  rate_limited:
+    status: [429]
+    retryable: true
+    class: transient
+    description: "Rate limited; wait Retry-After 60."
+  region_conflict:
+    status: [400, 409]
+    retryable: false
+    class: conflict
+    description: "The region conflicts with another choice."
+  region_storage:
+    status: [503]
+    retryable: true
+    class: transient
+    description: "Regional storage is unavailable."
+  region_unavailable:
+    status: [503]
+    retryable: true
+    class: transient
+    description: "The region is unavailable right now."
+  reserved_label:
+    status: [400]
+    retryable: false
+    class: invalid
+    description: "The label is reserved."
+  resize_failed:
+    status: [503]
+    retryable: false
+    class: unavailable
+    description: "The memory resize failed."
+  resize_pending:
+    status: [503]
+    retryable: true
+    class: transient
+    description: "A disk resize is still running; try again after Retry-After."
+  respec_failed:
+    status: [502, 503]
+    retryable: true
+    class: transient
+    description: "The size change failed."
+  restoring:
+    status: [409]
+    retryable: true
+    class: transient
+    description: "The sandbox is still being restored; try again shortly."
+  sandbox_busy:
+    status: [409]
+    retryable: true
+    class: transient
+    description: "The sandbox is busy."
+  sandbox_ended:
+    status: [409, 410]
+    retryable: false
+    class: conflict
+    description: "The sandbox ended."
+  sandbox_gone:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The sandbox is gone."
+  sandbox_limit:
+    status: [429]
+    retryable: false
+    class: limit
+    description: "Sandbox limit reached; no Retry-After is sent."
+  sandbox_unavailable:
+    status: [503]
+    retryable: true
+    class: transient
+    description: "The sandbox is unavailable."
+  scp_failed:
+    status: [502]
+    retryable: false
+    class: unavailable
+    description: "The sandbox's SCP operation failed."
+  scp_unavailable:
+    status: [501]
+    retryable: false
+    class: unavailable
+    description: "SCP is unavailable in this sandbox."
+  session_busy:
+    status: [409]
+    retryable: true
+    class: transient
+    description: "A wake or hibernate of the session is under way; try again after Retry-After."
+  session_ended:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The session ended."
+  session_limit:
+    status: [429]
+    retryable: false
+    class: limit
+    description: "Session limit reached."
+  session_not_found:
+    status: [404]
+    retryable: false
+    class: not_found
+    description: "The resource does not exist."
+  session_starting:
+    status: [409, 503]
+    retryable: true
+    class: transient
+    description: "The session is starting."
+  share_disabled:
+    status: [403]
+    retryable: false
+    class: auth
+    description: "Sharing is disabled for this sandbox."
+  share_ended:
+    status: [410]
+    retryable: false
+    class: conflict
+    description: "The share ended."
+  share_expired:
+    status: [404, 410]
+    retryable: false
+    class: not_found
+    description: "The resource does not exist."
+  share_limit:
+    status: [409]
+    retryable: false
+    class: limit
+    description: "Share limit reached."
+  share_not_found:
+    status: [404]
+    retryable: false
+    class: not_found
+    description: "The resource does not exist."
+  share_revoked:
+    status: [404]
+    retryable: false
+    class: not_found
+    description: "The resource does not exist."
+  share_unsupported:
+    status: [501]
+    retryable: false
+    class: unavailable
+    description: "Sharing is unsupported here."
+  short_body:
+    status: [400]
+    retryable: false
+    class: invalid
+    description: "The body is shorter than its Content-Length."
+  shutting_down:
+    status: [503]
+    retryable: true
+    class: transient
+    description: "The sandbox is shutting down."
+  snapshot_busy:
+    status: [409]
+    retryable: true
+    class: transient
+    description: "A snapshot is in progress."
+  snapshot_failed:
+    status: [503]
+    retryable: false
+    class: unavailable
+    description: "The snapshot failed."
+  snapshot_incompatible:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The snapshot's memory can't be resumed here; restore its files instead (resume false)."
+  snapshot_not_allowed:
+    status: [403]
+    retryable: false
+    class: auth
+    description: "This account may not take or resume full (memory) snapshots."
+  snapshot_not_ready:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The snapshot is not ready."
+  snapshot_quota:
+    status: [413, 429]
+    retryable: false
+    class: limit
+    description: "Snapshot quota reached; no Retry-After is sent."
+  snapshot_region:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The snapshot is in another region."
+  snapshot_timeout:
+    status: [504]
+    retryable: false
+    class: unavailable
+    description: "The snapshot ran past the time the sandbox may stay frozen."
+  snapshot_unsupported:
+    status: [501]
+    retryable: false
+    class: unavailable
+    description: "Snapshots are unsupported here."
+  snapshotting:
+    status: [409]
+    retryable: true
+    class: transient
+    description: "A snapshot of the sandbox is being taken; try again in a moment."
+  stale_metadata:
+    status: [409]
+    retryable: true
+    class: transient
+    description: "The sandbox's metadata changed while the update ran; repeat it."
+  standby_busy:
+    status: [429]
+    retryable: true
+    class: transient
+    description: "Standby work is in progress."
+  starting:
+    status: [409, 503]
+    retryable: true
+    class: transient
+    description: "The sandbox is still starting."
+  state_unavailable:
+    status: [503]
+    retryable: true
+    class: transient
+    description: "The sandbox's state could not be written; try again."
+  status_unavailable:
+    status: [503]
+    retryable: true
+    class: transient
+    description: "Wake status is unavailable."
+  storage_busy:
+    status: [409]
+    retryable: true
+    class: transient
+    description: "Storage is being set up or taken down."
+  storage_capacity:
+    status: [503]
+    retryable: true
+    class: transient
+    description: "Storage is at capacity."
+  storage_error:
+    status: [502]
+    retryable: true
+    class: transient
+    description: "Storage failed; try again."
+  storage_misconfigured:
+    status: [503]
+    retryable: false
+    class: unavailable
+    description: "Storage is misconfigured."
+  storage_rejected:
+    status: [400]
+    retryable: false
+    class: invalid
+    description: "Storage rejected the upload."
+  storage_unavailable:
+    status: [502, 503]
+    retryable: true
+    class: transient
+    description: "Storage is temporarily unavailable."
+  storage_unconfigured:
+    status: [503]
+    retryable: false
+    class: unavailable
+    description: "Storage is not configured."
+  stream_unavailable:
+    status: [502, 504]
+    retryable: true
+    class: transient
+    description: "The stream could not be opened; reconnect."
+  token_constraint:
+    status: [403]
+    retryable: false
+    class: limit
+    description: "The token constraints refuse this."
+  too_large:
+    status: [413, 502]
+    retryable: false
+    class: limit
+    description: "The body is too large (413), or a stored image file a machine read is (502)."
+  too_late:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "Too late for this operation."
+  too_many_reservations:
+    status: [429]
+    retryable: true
+    class: limit
+    description: "Too many uploads and presigned PUTs outstanding; try again once some finish or expire."
+  too_many_spares:
+    status: [429]
+    retryable: true
+    class: limit
+    description: "Too many spares; try again later."
+  too_slow:
+    status: [503]
+    retryable: true
+    class: transient
+    description: "The live view's viewer isn't keeping up with the screen; reconnect."
+  trust_required:
+    status: [403]
+    retryable: false
+    class: auth
+    description: "Trusted URLs require a vetted account."
+  tty_error:
+    status: [502]
+    retryable: false
+    class: unavailable
+    description: "The sandbox's terminal failed."
+  unauthorized:
+    status: [401]
+    retryable: false
+    class: auth
+    description: "No token, or an unknown, expired or revoked one. Comes with www-authenticate: Bearer."
+  unavailable:
+    status: [409, 503]
+    retryable: true
+    class: transient
+    description: "The feature is temporarily unavailable."
+  unknown_method:
+    status: [400]
+    retryable: false
+    class: unavailable
+    description: "The sandbox's machine does not support this operation."
+  unknown_region:
+    status: [400]
+    retryable: false
+    class: invalid
+    description: "Unknown region."
+  unschedulable:
+    status: [422]
+    retryable: false
+    class: invalid
+    description: "No machine could ever fit this sandbox."
+  unsupported:
+    status: [409, 501, 503]
+    retryable: false
+    class: unavailable
+    description: "Unsupported here."
+  unsupported_media_type:
+    status: [415]
+    retryable: false
+    class: invalid
+    description: "Unsupported media type."
+  upgrade_required:
+    status: [426]
+    retryable: false
+    class: invalid
+    description: "A WebSocket upgrade is required."
+  upload_aborted:
+    status: [502]
+    retryable: false
+    class: unavailable
+    description: "The upload ended before completion; check its size and archive, then repeat it."
+  upload_closed:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The upload is closed."
+  upload_rejected:
+    status: [400]
+    retryable: false
+    class: invalid
+    description: "The sandbox rejected the upload."
+  uploads_in_flight:
+    status: [429]
+    retryable: true
+    class: limit
+    description: "Too many uploads in flight; try again once some finish."
+  viewer_expired:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The viewer expired."
+  viewer_limit:
+    status: [429]
+    retryable: true
+    class: limit
+    description: "Viewer limit reached; try again when a viewer leaves."
+  vm_kept:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The sandbox was kept for an operator after a failed hibernation."
+  vmd_bad_reply:
+    status: [502]
+    retryable: true
+    class: transient
+    description: "The sandbox's machine answered badly; try again."
+  vmd_unauthorized:
+    status: [503]
+    retryable: false
+    class: unavailable
+    description: "The sandbox's machine is unavailable."
+  vmd_unavailable:
+    status: [503]
+    retryable: true
+    class: transient
+    description: "The sandbox service is unavailable."
+  vmd_update_required:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The machine needs a vmd update."
+  wake_declined:
+    status: [409]
+    retryable: false
+    class: unavailable
+    description: "Wake was declined."
+  wake_failed:
+    status: [502, 503]
+    retryable: true
+    class: transient
+    description: "The sandbox did not wake."
+  waking:
+    status: [503]
+    retryable: true
+    class: transient
+    description: "The sandbox is waking."
+paths:
+  /v1/health:
+    get:
+      operationId: getHealth
+      tags:
+        - account
+      summary: Health and free capacity
+      responses:
+        "200":
+          description: kyora cloud answers.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Health"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+      security: []
+  /v1/regions:
+    get:
+      operationId: listRegions
+      tags:
+        - account
+      summary: List regions
+      responses:
+        "200":
+          description: "Regions and the caller's default."
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/RegionList"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  /v1/me:
+    get:
+      operationId: getMe
+      tags:
+        - account
+      summary: Get the account the token acts for
+      responses:
+        "200":
+          description: The account.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Me"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  /v1/me/region:
+    put:
+      operationId: setDefaultRegion
+      tags:
+        - account
+      summary: Set the default region
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/SetRegionRequest"
+      responses:
+        "200":
+          description: The new default.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/SetRegionResponse"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  /v1/tokens:
+    get:
+      operationId: listTokens
+      tags:
+        - account
+      summary: List tokens
+      responses:
+        "200":
+          description: Tokens.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/TokenList"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+    post:
+      operationId: createToken
+      tags:
+        - account
+      summary: Create a scoped token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/CreateTokenRequest"
+      responses:
+        "201":
+          description: "The token, shown once."
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/CreateTokenResponse"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  "/v1/tokens/{id}":
+    delete:
+      operationId: deleteToken
+      tags:
+        - account
+      summary: Revoke a token
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "204":
+          description: Revoked.
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  "/v1/orgs/{org}/tokens":
+    get:
+      operationId: listOrgTokens
+      tags:
+        - account
+      summary: List org tokens
+      parameters:
+        - name: org
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: Tokens.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/TokenList"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+    post:
+      operationId: createOrgToken
+      tags:
+        - account
+      summary: Create an org token
+      parameters:
+        - name: org
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/CreateTokenRequest"
+      responses:
+        "201":
+          description: "The token, shown once."
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/CreateTokenResponse"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  "/v1/orgs/{org}/tokens/{id}":
+    delete:
+      operationId: deleteOrgToken
+      tags:
+        - account
+      summary: Revoke an org token
+      parameters:
+        - name: org
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "204":
+          description: Revoked.
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  /v1/usage:
+    get:
+      operationId: getUsage
+      tags:
+        - account
+      summary: Get usage
+      parameters:
+        - name: month
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Usage.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Usage"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  /v1/sandboxes:
+    post:
+      operationId: createSandbox
+      tags:
+        - sandboxes
+      summary: Create a sandbox
+      parameters:
+        - "$ref": "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/CreateSandboxRequest"
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Sandbox"
+        "202":
+          description: "Queued, or a starting restore."
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - "$ref": "#/components/schemas/QueueTicket"
+                  - "$ref": "#/components/schemas/Sandbox"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+    get:
+      operationId: listSandboxes
+      tags:
+        - sandboxes
+      summary: List sandboxes
+      description: Newest first. Keep paging while next_cursor is present.
+      parameters:
+        - "$ref": "#/components/parameters/LabelFilter"
+        - "$ref": "#/components/parameters/Limit"
+        - "$ref": "#/components/parameters/Cursor"
+        - name: stats
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - "1"
+      responses:
+        "200":
+          description: "A page of sandboxes, or stats."
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - "$ref": "#/components/schemas/SandboxList"
+                  - "$ref": "#/components/schemas/SandboxStats"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  "/v1/sandboxes/{id}":
+    get:
+      operationId: getSandbox
+      tags:
+        - sandboxes
+      summary: Get a sandbox
+      parameters:
+        - "$ref": "#/components/parameters/SandboxId"
+      responses:
+        "200":
+          description: The sandbox.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Sandbox"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+    patch:
+      operationId: updateSandbox
+      tags:
+        - sandboxes
+      summary: Update a sandbox
+      description: "Rename, change TTL, grow disk, or resize vcpus/memoryMb; see the request schema."
+      parameters:
+        - "$ref": "#/components/parameters/SandboxId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/UpdateSandboxRequest"
+      responses:
+        "200":
+          description: The sandbox.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Sandbox"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+    delete:
+      operationId: deleteSandbox
+      tags:
+        - sandboxes
+      summary: Delete a sandbox
+      parameters:
+        - "$ref": "#/components/parameters/SandboxId"
+      responses:
+        "204":
+          description: Deleted.
+        "202":
+          description: Deletion pending.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/DeleteSandboxPending"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  "/v1/sandboxes/{id}/resolve":
+    get:
+      operationId: resolveSandbox
+      tags:
+        - sandboxes
+      summary: Resolve a sandbox reference
+      parameters:
+        - "$ref": "#/components/parameters/SandboxId"
+      responses:
+        "200":
+          description: The resolved id.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ResolveResponse"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  "/v1/queue/{ticket}":
+    get:
+      operationId: getQueueTicket
+      tags:
+        - sandboxes
+      summary: Poll a queue ticket
+      parameters:
+        - name: ticket
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - name: wait
+          in: query
+          required: false
+          schema:
+            type: number
+            minimum: 0
+          description: "Long poll seconds, at most 30."
+      responses:
+        "202":
+          description: Still queued.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/QueueTicket"
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Sandbox"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+    delete:
+      operationId: cancelQueueTicket
+      tags:
+        - sandboxes
+      summary: Cancel a queue ticket
+      parameters:
+        - name: ticket
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "204":
+          description: Cancelled.
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  "/v1/sandboxes/{id}/exec":
+    post:
+      operationId: execCommand
+      tags:
+        - exec
+      summary: Run a command
+      parameters:
+        - "$ref": "#/components/parameters/SandboxId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/ExecRequest"
+      responses:
+        "200":
+          description: NDJSON exec frames; read to exit or detached.
+          content:
+            "application/x-ndjson":
+              schema:
+                "$ref": "#/components/schemas/ExecFrame"
+              "x-kyora-stream": ndjson
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  "/v1/sandboxes/{id}/execs/{execId}/stream":
+    get:
+      operationId: attachExec
+      tags:
+        - exec
+      summary: Reattach to an exec
+      parameters:
+        - "$ref": "#/components/parameters/SandboxId"
+        - name: execId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^[0-9a-f]{32}$"
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+          description: "STDOUT,STDERR byte offsets, default 0,0."
+      responses:
+        "200":
+          description: "NDJSON exec frames from the given offsets, then live."
+          content:
+            "application/x-ndjson":
+              schema:
+                "$ref": "#/components/schemas/ExecFrame"
+              "x-kyora-stream": ndjson
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  "/v1/sandboxes/{id}/execs/{execId}/cancel":
+    post:
+      operationId: cancelExec
+      tags:
+        - exec
+      summary: Cancel an exec
+      parameters:
+        - "$ref": "#/components/parameters/SandboxId"
+        - name: execId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^[0-9a-f]{32}$"
+      responses:
+        "200":
+          description: Cancelled.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ExecCancelResponse"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  "/v1/sandboxes/{id}/network":
+    patch:
+      operationId: setSandboxNetwork
+      tags:
+        - network
+      summary: Set sandbox network
+      parameters:
+        - "$ref": "#/components/parameters/SandboxId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/NetworkUpdateRequest"
+      responses:
+        "200":
+          description: The network.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/NetworkUpdateResponse"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  "/v1/sandboxes/{id}/ports":
+    post:
+      operationId: exposePort
+      tags:
+        - network
+      summary: Expose a port
+      parameters:
+        - "$ref": "#/components/parameters/SandboxId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/ExposePortRequest"
+      responses:
+        "201":
+          description: The exposure.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Port"
+        "200":
+          description: Already exposed.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Port"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+    get:
+      operationId: listSandboxPorts
+      tags:
+        - network
+      summary: List sandbox ports
+      parameters:
+        - "$ref": "#/components/parameters/SandboxId"
+      responses:
+        "200":
+          description: Ports.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/PortList"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  "/v1/sandboxes/{id}/ports/{label}":
+    delete:
+      operationId: unexposePort
+      tags:
+        - network
+      summary: Unexpose a port
+      parameters:
+        - "$ref": "#/components/parameters/SandboxId"
+        - name: label
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "204":
+          description: Removed.
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  "/v1/sandboxes/{id}/ports/{label}/login":
+    post:
+      operationId: createPortLogin
+      tags:
+        - network
+      summary: Create a port login link
+      parameters:
+        - "$ref": "#/components/parameters/SandboxId"
+        - name: label
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: "Login link, valid 60 seconds."
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/LoginResponse"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  /v1/ports:
+    get:
+      operationId: listPorts
+      tags:
+        - network
+      summary: List held ports
+      responses:
+        "200":
+          description: Held ports.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/HeldPortList"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  "/v1/ports/{label}":
+    delete:
+      operationId: deletePort
+      tags:
+        - network
+      summary: Release a held port name
+      parameters:
+        - name: label
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "204":
+          description: Released.
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  /v1/domains:
+    post:
+      operationId: createDomain
+      tags:
+        - network
+      summary: Create a custom domain
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/CreateDomainRequest"
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Domain"
+        "200":
+          description: Existing.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Domain"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+    get:
+      operationId: listDomains
+      tags:
+        - network
+      summary: List domains
+      responses:
+        "200":
+          description: Domains.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/DomainList"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  "/v1/domains/{hostname}":
+    get:
+      operationId: getDomain
+      tags:
+        - network
+      summary: Get a domain
+      parameters:
+        - name: hostname
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: The domain.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Domain"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+    delete:
+      operationId: deleteDomain
+      tags:
+        - network
+      summary: Delete a domain
+      parameters:
+        - name: hostname
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "204":
+          description: Deleted.
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  /v1/pages:
+    post:
+      operationId: publishPage
+      tags:
+        - pages
+      summary: Publish a page
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/PublishPageRequest"
+      responses:
+        "201":
+          description: Published.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Page"
+        "200":
+          description: Repointed.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Page"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+    get:
+      operationId: listPages
+      tags:
+        - pages
+      summary: List pages
+      responses:
+        "200":
+          description: Pages.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/PageList"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  "/v1/pages/{name}":
+    get:
+      operationId: getPage
+      tags:
+        - pages
+      summary: Get a page
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: The page.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Page"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+    delete:
+      operationId: deletePage
+      tags:
+        - pages
+      summary: Delete a page
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "204":
+          description: Released.
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  "/v1/pages/{name}/login":
+    post:
+      operationId: createPageLogin
+      tags:
+        - pages
+      summary: Create a page login link
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: "Login link, valid 60 seconds."
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/LoginResponse"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  "/v1/sandboxes/{id}/computer":
+    post:
+      operationId: computerAction
+      tags:
+        - computer
+      summary: Run a computer action
+      parameters:
+        - "$ref": "#/components/parameters/SandboxId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/ComputerRequest"
+      responses:
+        "200":
+          description: "Result, or a PNG for screenshot/zoom with accept image/png."
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ComputerResponse"
+            image/png:
+              schema:
+                type: string
+                contentMediaType: image/png
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  "/v1/sandboxes/{id}/computer/stream":
+    get:
+      operationId: streamComputer
+      tags:
+        - computer
+      summary: Stream the computer (WebSocket)
+      description: "WebSocket of RFB bytes. Query: control=1 to send input, display and xauthority for another X display, quality=low."
+      parameters:
+        - "$ref": "#/components/parameters/SandboxId"
+        - name: control
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - "0"
+              - "1"
+        - name: display
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: xauthority
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: quality
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - high
+              - low
+      "x-kyora-websocket": true
+      responses:
+        "101":
+          description: "WebSocket upgrade. RFB bytes; closes with display_not_found when another display is not there, and 1001 or viewer limit codes."
+          "x-kyora-websocket": true
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  "/v1/sandboxes/{id}/shares":
+    post:
+      operationId: createShare
+      tags:
+        - computer
+      summary: Create a share
+      parameters:
+        - "$ref": "#/components/parameters/SandboxId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/CreateShareRequest"
+      responses:
+        "201":
+          description: "The share, with its token and URL once."
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Share"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+    get:
+      operationId: listShares
+      tags:
+        - computer
+      summary: List shares
+      parameters:
+        - "$ref": "#/components/parameters/SandboxId"
+      responses:
+        "200":
+          description: Shares.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ShareList"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  "/v1/sandboxes/{id}/shares/{shareId}":
+    delete:
+      operationId: deleteShare
+      tags:
+        - computer
+      summary: Revoke a share
+      parameters:
+        - "$ref": "#/components/parameters/SandboxId"
+        - name: shareId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: Revoked.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Share"
+        "204":
+          description: Revoked.
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  "/v1/shares/{shareId}":
+    get:
+      operationId: getShare
+      tags:
+        - computer
+      summary: Get a share
+      parameters:
+        - name: shareId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: The share.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Share"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  "/v1/shares/{shareId}/frame.mp4":
+    get:
+      operationId: getShareFrame
+      tags:
+        - computer
+      summary: Get a share frame
+      parameters:
+        - name: shareId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: "One-frame MP4."
+          content:
+            video/mp4:
+              schema:
+                type: string
+                contentMediaType: video/mp4
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  "/v1/sandboxes/{id}/tty":
+    get:
+      operationId: openTerminal
+      tags:
+        - terminals
+      summary: Open a terminal (WebSocket)
+      description: "WebSocket. Query: name, cols, rows, control, term. Binary frames: channel byte 0 terminal bytes, 1 UTF-8 JSON control. Close codes include 1000, 1001 and busy refusals."
+      parameters:
+        - "$ref": "#/components/parameters/SandboxId"
+        - name: name
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: cols
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+        - name: rows
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+        - name: control
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - "0"
+              - "1"
+        - name: term
+          in: query
+          required: false
+          schema:
+            type: string
+      "x-kyora-websocket": true
+      responses:
+        "101":
+          description: WebSocket upgrade. Binary frames with a channel byte.
+          "x-kyora-websocket": true
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  "/v1/sandboxes/{id}/tty/sessions":
+    get:
+      operationId: listTerminalSessions
+      tags:
+        - terminals
+      summary: List terminal sessions
+      parameters:
+        - "$ref": "#/components/parameters/SandboxId"
+      responses:
+        "200":
+          description: Sessions.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/TerminalSessionList"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+    post:
+      operationId: createTerminalSession
+      tags:
+        - terminals
+      summary: Create a terminal session
+      parameters:
+        - "$ref": "#/components/parameters/SandboxId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/CreateTerminalSessionRequest"
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/CreateTerminalSessionResponse"
+        "200":
+          description: Already existed.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/CreateTerminalSessionResponse"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  "/v1/sandboxes/{id}/tty/sessions/{name}":
+    delete:
+      operationId: deleteTerminalSession
+      tags:
+        - terminals
+      summary: Delete a terminal session
+      parameters:
+        - "$ref": "#/components/parameters/SandboxId"
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "204":
+          description: Deleted.
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  "/v1/sandboxes/{id}/snapshots":
+    post:
+      operationId: createSnapshot
+      tags:
+        - snapshots
+      summary: Create a snapshot
+      parameters:
+        - "$ref": "#/components/parameters/SandboxId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/CreateSnapshotRequest"
+      responses:
+        "202":
+          description: Creating.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Snapshot"
+        "200":
+          description: Already created.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Snapshot"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  /v1/snapshots:
+    get:
+      operationId: listSnapshots
+      tags:
+        - snapshots
+      summary: List snapshots
+      description: "Newest first (createdAt then id, descending). Page with label, limit and cursor as for sandboxes."
+      parameters:
+        - "$ref": "#/components/parameters/LabelFilter"
+        - "$ref": "#/components/parameters/Limit"
+        - "$ref": "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Snapshots.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/SnapshotList"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  "/v1/snapshots/{id}":
+    get:
+      operationId: getSnapshot
+      tags:
+        - snapshots
+      summary: Get a snapshot
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: The snapshot.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Snapshot"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+    delete:
+      operationId: deleteSnapshot
+      tags:
+        - snapshots
+      summary: Delete a snapshot
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "204":
+          description: Deleted.
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  "/v1/sandboxes/{id}/files":
+    put:
+      operationId: pushFiles
+      tags:
+        - files
+      summary: Push files (tar archive)
+      parameters:
+        - "$ref": "#/components/parameters/SandboxId"
+        - name: dest
+          in: query
+          required: false
+          schema:
+            type: string
+          description: "Destination under /work, default /work."
+      requestBody:
+        required: true
+        content:
+          "application/x-tar":
+            schema:
+              type: string
+              contentMediaType: "application/x-tar"
+          application/zstd:
+            schema:
+              type: string
+              contentMediaType: application/zstd
+      responses:
+        "200":
+          description: Pushed.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/PushFilesResponse"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+    get:
+      operationId: pullFiles
+      tags:
+        - files
+      summary: Pull files (tar archive)
+      parameters:
+        - "$ref": "#/components/parameters/SandboxId"
+        - name: path
+          in: query
+          required: true
+          style: form
+          explode: true
+          schema:
+            type: array
+            items:
+              type: string
+        - name: compress
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - zstd
+      responses:
+        "200":
+          description: The archive.
+          content:
+            "application/x-tar":
+              schema:
+                type: string
+                contentMediaType: "application/x-tar"
+            application/zstd:
+              schema:
+                type: string
+                contentMediaType: application/zstd
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  "/v1/sandboxes/{id}/uploads":
+    post:
+      operationId: createUpload
+      tags:
+        - files
+      summary: Start a multipart file upload
+      parameters:
+        - "$ref": "#/components/parameters/SandboxId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/CreateUploadRequest"
+      responses:
+        "201":
+          description: Upload started.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/CreateUploadResponse"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  "/v1/sandboxes/{id}/uploads/{upload}/parts/{n}":
+    put:
+      operationId: uploadPart
+      tags:
+        - files
+      summary: Upload a file part
+      parameters:
+        - "$ref": "#/components/parameters/SandboxId"
+        - name: upload
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - name: n
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 10000
+      requestBody:
+        required: true
+        content:
+          "application/octet-stream":
+            schema:
+              type: string
+              contentMediaType: "application/octet-stream"
+      responses:
+        "200":
+          description: Part stored.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/UploadPartResponse"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  "/v1/sandboxes/{id}/uploads/{upload}/complete":
+    post:
+      operationId: completeUpload
+      tags:
+        - files
+      summary: Complete a file upload
+      parameters:
+        - "$ref": "#/components/parameters/SandboxId"
+        - name: upload
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/CompleteUploadRequest"
+      responses:
+        "200":
+          description: Unpacked.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/PushFilesResponse"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  "/v1/sandboxes/{id}/uploads/{upload}":
+    delete:
+      operationId: abortUpload
+      tags:
+        - files
+      summary: Abort a file upload
+      parameters:
+        - "$ref": "#/components/parameters/SandboxId"
+        - name: upload
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "204":
+          description: Aborted.
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  /v1/images:
+    get:
+      operationId: listImages
+      tags:
+        - images
+      summary: List images
+      responses:
+        "200":
+          description: Fleet and account images.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ImageList"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+    post:
+      operationId: createImage
+      tags:
+        - images
+      summary: Create an account image upload
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/CreateImageRequest"
+      responses:
+        "201":
+          description: Created; missing lists chunks to upload.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/CreateImageResponse"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  /v1/images/usage:
+    get:
+      operationId: getImageUsage
+      tags:
+        - images
+      summary: Get image usage
+      responses:
+        "200":
+          description: Usage.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ImageUsage"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  "/v1/images/{id}":
+    get:
+      operationId: getImage
+      tags:
+        - images
+      summary: Get an image
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: The image.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Image"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+    delete:
+      operationId: deleteImage
+      tags:
+        - images
+      summary: Delete an image
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "204":
+          description: Deleted.
+        "200":
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Image"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  "/v1/images/{id}/chunks/{key}":
+    put:
+      operationId: uploadImageChunk
+      tags:
+        - images
+      summary: Upload an image chunk
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^[0-9a-f]{64}$"
+      requestBody:
+        required: true
+        content:
+          "application/octet-stream":
+            schema:
+              type: string
+              contentMediaType: "application/octet-stream"
+      responses:
+        "200":
+          description: Chunk stored.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/UploadChunkResponse"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  "/v1/images/{id}/commit":
+    post:
+      operationId: commitImage
+      tags:
+        - images
+      summary: Commit an image
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: The image.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Image"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  /v1/storage/buckets:
+    get:
+      operationId: listBuckets
+      tags:
+        - storage
+      summary: List buckets
+      responses:
+        "200":
+          description: Buckets.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/BucketList"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+    post:
+      operationId: createBucket
+      tags:
+        - storage
+      summary: Create a bucket
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/CreateBucketRequest"
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Bucket"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  "/v1/storage/buckets/{name}":
+    get:
+      operationId: getBucket
+      tags:
+        - storage
+      summary: Get a bucket
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: The bucket.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Bucket"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+    delete:
+      operationId: deleteBucket
+      tags:
+        - storage
+      summary: Delete a bucket
+      description: "Without `force` a bucket that holds objects is `409 bucket_not_empty`. With `force` its objects go first, up to 1,000 a call: a `202` says more are left (objects, or multipart uploads to abort) and the bucket is `deleting`; call again until a `200`."
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - name: force
+          in: query
+          required: false
+          description: "Delete the bucket's objects with it. Present (`?force`) is on, except `force=false` and `force=0`."
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/DeleteBucketResponse"
+        "202":
+          description: Deleting; more is left, call again.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/DeleteBucketProgress"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  "/v1/storage/buckets/{name}/cors":
+    get:
+      operationId: getBucketCors
+      tags:
+        - storage
+      summary: Get bucket CORS
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: CORS.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/BucketCors"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+    put:
+      operationId: setBucketCors
+      tags:
+        - storage
+      summary: Set bucket CORS
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/SetBucketCorsRequest"
+      responses:
+        "200":
+          description: CORS.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/BucketCors"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+    delete:
+      operationId: deleteBucketCors
+      tags:
+        - storage
+      summary: Delete bucket CORS
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: CORS cleared.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/BucketCors"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  "/v1/storage/buckets/{name}/presign":
+    post:
+      operationId: presignObject
+      tags:
+        - storage
+      summary: Presign an object URL
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/PresignRequest"
+      responses:
+        "201":
+          description: Signed URL.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/PresignResponse"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  "/v1/storage/buckets/{name}/o":
+    get:
+      operationId: listObjects
+      tags:
+        - storage
+      summary: List objects
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - name: prefix
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: Objects.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ObjectList"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  "/v1/storage/buckets/{name}/o/{objectKey}":
+    get:
+      operationId: getObject
+      tags:
+        - storage
+      summary: Get an object
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - name: objectKey
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: The object.
+          content:
+            "application/octet-stream":
+              schema:
+                type: string
+                contentMediaType: "application/octet-stream"
+            "*/*":
+              schema:
+                type: string
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+    head:
+      operationId: headObject
+      tags:
+        - storage
+      summary: Head an object
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - name: objectKey
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: "Object headers, no body."
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+    put:
+      operationId: putObject
+      tags:
+        - storage
+      summary: "Put an object, or a multipart part with uploadId and partNumber"
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - name: objectKey
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - name: uploadId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: partNumber
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+      requestBody:
+        required: true
+        content:
+          "application/octet-stream":
+            schema:
+              type: string
+              contentMediaType: "application/octet-stream"
+          "*/*":
+            schema:
+              type: string
+      responses:
+        "200":
+          description: Stored.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - "$ref": "#/components/schemas/PutObjectResponse"
+                  - "$ref": "#/components/schemas/PutPartResponse"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+    post:
+      operationId: multipartObject
+      tags:
+        - storage
+      summary: Start or complete a multipart object upload
+      description: "With ?uploads starts an upload; with ?uploadId= completes it."
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - name: objectKey
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - name: uploads
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: uploadId
+          in: query
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: false
+        description: "The completion's parts (with ?uploadId=); a start takes no body."
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/CompleteMultipartObjectRequest"
+      responses:
+        "201":
+          description: Upload started.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/MultipartStartResponse"
+        "200":
+          description: Completed.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/PutObjectResponse"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+    delete:
+      operationId: deleteObject
+      tags:
+        - storage
+      summary: "Delete an object, or abort its multipart upload with uploadId"
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - name: objectKey
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - name: uploadId
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted.
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  /v1/storage/keys:
+    get:
+      operationId: listStorageKeys
+      tags:
+        - storage
+      summary: List storage keys
+      responses:
+        "200":
+          description: Keys.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/StorageKeyList"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+    post:
+      operationId: createStorageKey
+      tags:
+        - storage
+      summary: Create a storage key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/CreateStorageKeyRequest"
+      responses:
+        "201":
+          description: "The key, shown once."
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/CreateStorageKeyResponse"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  "/v1/storage/keys/{id}":
+    delete:
+      operationId: deleteStorageKey
+      tags:
+        - storage
+      summary: Revoke a storage key
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: Revoked.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/RevokeStorageKeyResponse"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  /v1/storage/audit:
+    get:
+      operationId: getStorageAudit
+      tags:
+        - storage
+      summary: Get storage audit
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+      responses:
+        "200":
+          description: Audit events.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/StorageAudit"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: Bearer
+      description: "A kyora token (kyora_...): a personal or org token, or a scoped token whose capabilities and constraints narrow what it reaches. A cloud session's child token (kys_...) reaches a subset of the sandbox routes, for the sandboxes its session created."
+  parameters:
+    SandboxId:
+      name: id
+      in: path
+      required: true
+      description: "The sandbox's id (sb_...), its name, or a unique prefix of its id."
+      schema:
+        type: string
+        minLength: 1
+    LabelFilter:
+      name: label
+      in: query
+      required: false
+      description: "key=value, split at the first =; repeat it to require every pair. The key follows the label key rules of Labels."
+      style: form
+      explode: true
+      schema:
+        type: array
+        items:
+          type: string
+          pattern: "^[A-Za-z0-9][A-Za-z0-9_./-]{0,62}="
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: The most rows a page holds.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 1000
+        default: 500
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: The next_cursor of the previous page; opaque.
+      schema:
+        type: string
+        minLength: 1
+    IdempotencyKey:
+      name: "Idempotency-Key"
+      in: header
+      required: false
+      description: "Makes a create safe to repeat: the same key with the same body answers the first attempt's result instead of creating again; the same key with a different body is 409 create_key_conflict."
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+  headers:
+    RetryAfter:
+      description: Seconds to wait before repeating the request.
+      schema:
+        type: integer
+        minimum: 0
+  responses:
+    Error:
+      description: "An error. error is a code from x-kyora-error-codes."
+      headers:
+        "Retry-After":
+          "$ref": "#/components/headers/RetryAfter"
+      content:
+        application/json:
+          schema:
+            "$ref": "#/components/schemas/Error"
+  schemas:
+    Error:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+          description: "A machine-readable code, listed in x-kyora-error-codes."
+        message:
+          type: string
+          description: "A readable reason, for people. It can change; never branch on it."
+        retryable:
+          type: boolean
+          description: "On a 429 or 503 (absent on a few older codes and on other statuses): repeating the same request later can succeed. Absent, take it from x-kyora-error-codes."
+        retryAfterMs:
+          type: integer
+          minimum: 0
+          description: "On a retryable 429 or 503: the least time to wait before repeating, in milliseconds, as Retry-After says. Absent, use Retry-After when there is one."
+    Health:
+      type: object
+      required:
+        - ok
+        - version
+        - capacity
+      properties:
+        ok:
+          const: true
+        version:
+          const: "kyora-cloud"
+        capacity:
+          type: object
+          required:
+            - vcpusFree
+            - memoryMbFree
+          properties:
+            vcpusFree:
+              type: number
+              minimum: 0
+            memoryMbFree:
+              type: number
+              minimum: 0
+    Labels:
+      type: object
+      description: "Up to 31 labels. Keys are 1-63 characters of A-Za-z0-9_./- starting with a letter or digit; values up to 256 characters."
+      maxProperties: 31
+      propertyNames:
+        pattern: "^[A-Za-z0-9][A-Za-z0-9_./-]{0,62}$"
+      additionalProperties:
+        type: string
+        maxLength: 256
+    NetworkMode:
+      type: string
+      description: "none: no network. registries: package registries only. open: the internet. ci and ci-strict: the CI profiles."
+      enum:
+        - none
+        - registries
+        - open
+        - ci
+        - "ci-strict"
+    SandboxStatus:
+      type: string
+      enum:
+        - starting
+        - running
+        - moving
+        - moved
+        - incoming
+        - destroyed
+        - lost
+        - failed
+    Sandbox:
+      type: object
+      required:
+        - id
+        - status
+        - shareable
+        - network
+        - egressAllow
+        - vcpus
+        - allocatedVcpus
+        - memoryMb
+        - diskGb
+        - image
+        - labels
+        - ttlSeconds
+        - idleSeconds
+        - createdAt
+        - expiresAt
+      properties:
+        id:
+          type: string
+          pattern: ^sb_
+        name:
+          type: string
+          pattern: "^[a-z0-9-]{1,32}$"
+        status:
+          "$ref": "#/components/schemas/SandboxStatus"
+        shareable:
+          type: boolean
+        network:
+          "$ref": "#/components/schemas/NetworkMode"
+        egressAllow:
+          type: array
+          items:
+            type: string
+        vcpus:
+          type: number
+        allocatedVcpus:
+          type: number
+        maxMemoryMb:
+          type: integer
+        autoscale:
+          type: boolean
+        memoryMb:
+          type: integer
+        diskGb:
+          type:
+            - integer
+            - "null"
+        image:
+          type: string
+        labels:
+          "$ref": "#/components/schemas/Labels"
+        ttlSeconds:
+          type: integer
+          minimum: 0
+          description: "0: no expiry."
+        idleSeconds:
+          type: integer
+          minimum: 0
+        createdAt:
+          type: string
+          format: "date-time"
+        expiresAt:
+          type:
+            - string
+            - "null"
+          format: "date-time"
+          description: "null: no expiry."
+        lastActivityAt:
+          type: string
+          format: date-time
+          description: When the sandbox was last active; `idleSeconds` counts from it.
+        region:
+          type:
+            - string
+            - "null"
+          description: "The region, when kyora runs more than one."
+        requestedRegion:
+          type: string
+          description: "On a create placed in another region than the one asked for: the one asked for."
+        destroyedAt:
+          type: string
+          format: "date-time"
+        reason:
+          type:
+            - string
+            - "null"
+        fromSnapshot:
+          type: string
+        display:
+          type: object
+          required:
+            - width
+            - height
+          properties:
+            width:
+              type: integer
+            height:
+              type: integer
+        hibernate:
+          type: object
+          required:
+            - cold
+          properties:
+            cold:
+              type: string
+              enum:
+                - r2
+                - never
+        hibernated:
+          type: object
+          properties:
+            since:
+              type:
+                - string
+                - "null"
+              format: "date-time"
+            cold:
+              type: boolean
+            reason:
+              type: string
+            cause:
+              type: string
+              enum:
+                - pressure
+                - idle
+                - api
+            lastWakeError:
+              type: string
+        cpuLimit:
+          type: number
+          description: "The share of each vCPU the sandbox may use, 0.05 to 1."
+        memory:
+          type: object
+          description: The guest's memory as the machine sees it, in MiB.
+          required:
+            - currentMb
+            - targetMb
+            - pluggedMb
+            - balloonMb
+            - reclaimedMb
+          properties:
+            currentMb:
+              type: number
+            targetMb:
+              type: number
+            pluggedMb:
+              type: number
+            balloonMb:
+              type: number
+            reclaimedMb:
+              type: number
+        desktop:
+          type: boolean
+          description: Whether the sandbox's image has a desktop (computer use).
+        restoredFrom:
+          type: object
+          description: "On a restore's answer: the snapshot it restores."
+          required:
+            - snapshot
+            - kind
+            - resume
+          properties:
+            snapshot:
+              type: string
+              pattern: ^snap_
+            kind:
+              type: string
+              enum:
+                - fs
+                - full
+            resume:
+              type: boolean
+              description: "true: the snapshot's memory resumes; false: its files are restored and the sandbox boots."
+        timeSync:
+          type: boolean
+          description: "false: the guest's clock is not kept in sync."
+        downloadCache:
+          type: boolean
+          description: "false: the sandbox doesn't use the shared download cache."
+        health:
+          type: object
+          properties:
+            clock:
+              type: object
+              description: "The guest's wall clock, once synced: its last sync, or the last error."
+              required:
+                - largeCorrections
+              properties:
+                syncedAt:
+                  type: string
+                  format: "date-time"
+                source:
+                  type: string
+                  enum:
+                    - vsock
+                    - phc
+                offsetMs:
+                  type:
+                    - number
+                    - "null"
+                uncertaintyMs:
+                  type:
+                    - number
+                    - "null"
+                rttMs:
+                  type:
+                    - number
+                    - "null"
+                applied:
+                  type: string
+                  enum:
+                    - slew
+                    - step
+                    - none
+                appliedMs:
+                  type: number
+                reason:
+                  type: string
+                error:
+                  type: string
+                errorAt:
+                  type: string
+                  format: "date-time"
+                largeCorrections:
+                  type: integer
+                  minimum: 0
+        warnings:
+          type: array
+          items:
+            type: string
+        restarted:
+          type: boolean
+    SandboxList:
+      type: object
+      required:
+        - sandboxes
+      properties:
+        sandboxes:
+          type: array
+          items:
+            "$ref": "#/components/schemas/Sandbox"
+        next_cursor:
+          type: string
+          description: Present only when more sandboxes follow; pass it as cursor.
+    SandboxStats:
+      type: object
+      required:
+        - account
+        - at
+        - sandboxes
+      properties:
+        account:
+          type: string
+        at:
+          type: integer
+        sandboxes:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+            properties:
+              id:
+                type: string
+              name:
+                type:
+                  - string
+                  - "null"
+              vcpus:
+                type: number
+              memoryMb:
+                type: integer
+              diskGb:
+                type: integer
+              sample:
+                type:
+                  - object
+                  - "null"
+                additionalProperties: true
+              region:
+                type:
+                  - string
+                  - "null"
+      additionalProperties: true
+    CreateSandboxRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          pattern: "^[a-z0-9-]{1,32}$"
+        shareable:
+          type: boolean
+          default: true
+        vcpus:
+          type: integer
+          minimum: 1
+          maximum: 16
+          default: 4
+          description: 1 or an even number.
+        allocatedVcpus:
+          type: number
+          minimum: 0.05
+        cpuLimit:
+          type: number
+          minimum: 0.05
+          maximum: 1
+          default: 1
+        memoryMb:
+          type: integer
+          minimum: 256
+          maximum: 49152
+          default: 8192
+        maxMemoryMb:
+          type: integer
+          minimum: 256
+          maximum: 49152
+        autoscale:
+          type: boolean
+          default: false
+        diskGb:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 30
+        network:
+          type: string
+          enum:
+            - none
+            - registries
+            - open
+            - ci
+            - "ci-strict"
+          default: none
+        egressAllow:
+          type: array
+          items:
+            type: string
+          maxItems: 32
+        ttlSeconds:
+          type: integer
+          minimum: 0
+          default: 28800
+          description: "0: no expiry, where allowed."
+        idleSeconds:
+          type: integer
+          minimum: 0
+          maximum: 28800
+        image:
+          type: string
+          default: default
+          description: "A lowercase image name, an account image id (img_...), or a pinned version (name@N, name@sha256:...)."
+        labels:
+          "$ref": "#/components/schemas/Labels"
+        display:
+          type: object
+          required:
+            - width
+            - height
+          properties:
+            width:
+              type: integer
+              minimum: 640
+              maximum: 2560
+            height:
+              type: integer
+              minimum: 480
+              maximum: 1600
+        hibernate:
+          type: object
+          required:
+            - cold
+          properties:
+            cold:
+              type: string
+              enum:
+                - r2
+                - never
+        downloadCache:
+          type: boolean
+          default: true
+          description: "false: don't use the shared download cache."
+        region:
+          type: string
+        wait:
+          type: integer
+          minimum: 0
+          description: Seconds a create may wait in the queue.
+        session:
+          type: string
+        fromSnapshot:
+          type: string
+        resume:
+          type: boolean
+      additionalProperties: false
+    UpdateSandboxRequest:
+      type: object
+      description: "One of: name and/or ttlSeconds; or diskGb alone; or vcpus and/or memoryMb."
+      properties:
+        name:
+          type: string
+          pattern: "^[a-z0-9-]{1,32}$"
+        ttlSeconds:
+          type: integer
+          minimum: 0
+        diskGb:
+          type: integer
+          minimum: 1
+          maximum: 200
+        vcpus:
+          type: integer
+          minimum: 1
+          maximum: 16
+        memoryMb:
+          type: integer
+          minimum: 256
+          maximum: 49152
+      additionalProperties: false
+    QueueTicket:
+      type: object
+      required:
+        - ticket
+        - status
+        - position
+        - ahead
+        - depth
+        - enqueuedAt
+        - waitUntil
+        - poll
+      properties:
+        ticket:
+          type: string
+        status:
+          type: string
+          enum:
+            - queued
+        position:
+          type: integer
+          minimum: 0
+        ahead:
+          type: integer
+          minimum: 0
+        depth:
+          type: integer
+          minimum: 0
+        enqueuedAt:
+          type: string
+          format: "date-time"
+        waitUntil:
+          type: string
+          format: "date-time"
+        poll:
+          type: string
+        region:
+          type: string
+    Region:
+      type: object
+      required:
+        - id
+        - label
+        - default
+        - locationHint
+        - jurisdiction
+        - fallback
+        - free
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        default:
+          type: boolean
+        locationHint:
+          type:
+            - string
+            - "null"
+        jurisdiction:
+          type:
+            - string
+            - "null"
+        fallback:
+          type: array
+          items:
+            type: string
+        free:
+          type: object
+          required:
+            - vcpus
+            - memoryMb
+          properties:
+            vcpus:
+              type: number
+              minimum: 0
+            memoryMb:
+              type: number
+              minimum: 0
+    RegionList:
+      type: object
+      required:
+        - regions
+        - you
+        - default
+      properties:
+        regions:
+          type: array
+          items:
+            "$ref": "#/components/schemas/Region"
+        you:
+          type: object
+          required:
+            - region
+            - by
+            - strict
+            - overflow
+          properties:
+            region:
+              type: string
+            by:
+              type: string
+            strict:
+              type: boolean
+            overflow:
+              type: array
+              items:
+                type: string
+            location:
+              type: object
+              properties:
+                continent:
+                  type: string
+                country:
+                  type: string
+                regionCode:
+                  type: string
+                colo:
+                  type: string
+                asn:
+                  type: integer
+                  minimum: 1
+                asOrganization:
+                  type: string
+                city:
+                  type: string
+        default:
+          type:
+            - string
+            - "null"
+    SetRegionRequest:
+      type: object
+      required:
+        - region
+      properties:
+        region:
+          type:
+            - string
+            - "null"
+          description: "A region id, or global, auto or null for no default."
+      additionalProperties: false
+    SetRegionResponse:
+      type: object
+      required:
+        - region
+      properties:
+        region:
+          type:
+            - string
+            - "null"
+    TokenCapability:
+      type: string
+      description: "`images:build`: create image-builder sandboxes (labelled with the token's id) and use vms:read, vms:write and vms:exec on those builders only."
+      enum:
+        - "vms:read"
+        - "vms:write"
+        - "vms:exec"
+        - "vms:share"
+        - "public-urls"
+        - images
+        - "images:build"
+        - storage
+        - "storage:presign"
+        - "projects:read"
+        - deploys
+        - relay
+        - pages
+        - inference
+    TokenConstraints:
+      type: object
+      description: "Additive: new constraint fields may be added."
+      properties:
+        labels:
+          "$ref": "#/components/schemas/Labels"
+        regions:
+          type: array
+          items:
+            type: string
+        maxSandboxes:
+          type: integer
+          minimum: 1
+        maxVcpus:
+          type: integer
+          minimum: 1
+        maxMemoryMb:
+          type: integer
+          minimum: 128
+        maxTtlSeconds:
+          type: integer
+          minimum: 60
+        networkModes:
+          type: array
+          items:
+            "$ref": "#/components/schemas/NetworkMode"
+        names:
+          type: array
+          items:
+            type: string
+        namePrefix:
+          type: string
+        projects:
+          type: array
+          items:
+            type: string
+        images:
+          type: array
+          description: "The account image names (or name-* prefixes) the token sees, pushes and boots; absent: every name."
+          minItems: 1
+          maxItems: 100
+          items:
+            type: string
+            pattern: "^[a-z][a-z0-9-]{0,63}\\*?$"
+    Token:
+      type: object
+      required:
+        - id
+        - userId
+        - name
+        - hint
+        - scopes
+        - constraints
+        - source
+        - createdAt
+        - lastUsedAt
+        - expiresAt
+        - revokedAt
+        - scoped
+      properties:
+        id:
+          type: string
+        userId:
+          type: string
+        actorId:
+          type:
+            - string
+            - "null"
+        name:
+          type: string
+        hint:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+        constraints:
+          oneOf:
+            - "$ref": "#/components/schemas/TokenConstraints"
+            - type: "null"
+        source:
+          type: string
+          enum:
+            - dashboard
+            - device
+        createdAt:
+          type: string
+          format: "date-time"
+        lastUsedAt:
+          type:
+            - string
+            - "null"
+          format: "date-time"
+        expiresAt:
+          type:
+            - string
+            - "null"
+          format: "date-time"
+        revokedAt:
+          type:
+            - string
+            - "null"
+          format: "date-time"
+        scoped:
+          type: boolean
+    TokenList:
+      type: object
+      required:
+        - tokens
+        - capabilities
+      properties:
+        tokens:
+          type: array
+          items:
+            "$ref": "#/components/schemas/Token"
+        capabilities:
+          type: array
+          items:
+            "$ref": "#/components/schemas/TokenCapability"
+    CreateTokenRequest:
+      type: object
+      required:
+        - name
+        - scopes
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        scopes:
+          type: array
+          items:
+            "$ref": "#/components/schemas/TokenCapability"
+          minItems: 1
+        capabilities:
+          type: array
+          items:
+            "$ref": "#/components/schemas/TokenCapability"
+        constraints:
+          "$ref": "#/components/schemas/TokenConstraints"
+        expiresAt:
+          type: string
+          format: "date-time"
+        expires:
+          type: string
+          pattern: "^[0-9]+(d|h)$"
+        days:
+          type: number
+      additionalProperties: false
+    CreateTokenResponse:
+      type: object
+      required:
+        - token
+        - record
+      properties:
+        token:
+          type: string
+          description: "The secret, shown once."
+        record:
+          "$ref": "#/components/schemas/Token"
+    AccountLimits:
+      type: object
+      description: |
+        What this account may use. A null cap has no account-wide total (only the per-sandbox ceiling
+        applies); an absent one is not set for this account.
+      required: [maxSandboxes, snapshots]
+      properties:
+        maxSandboxes: { type: integer, minimum: 0, description: Sandboxes alive at once. }
+        maxVcpus: { type: [number, "null"], description: vCPUs across all sandboxes. }
+        maxMemoryMb: { type: [integer, "null"], description: Memory across all sandboxes. }
+        maxDiskGb: { type: [integer, "null"], description: The largest disk of one sandbox. }
+        diskTotalGb: { type: [integer, "null"], description: Disk across all sandboxes. }
+        maxTtlSeconds: { type: [integer, "null"], description: The longest lifetime of one sandbox. }
+        snapshotMaxCount: { type: integer, minimum: 0 }
+        snapshotMaxGb: { type: number, minimum: 0 }
+        storageMaxGb: { type: number, minimum: 0, description: Data stored in object storage. }
+        imageMaxCount: { type: integer, minimum: 0, description: "Account images, every version counted." }
+        imageMaxGb: { type: number, minimum: 0, description: "Account image storage (1 GB is 1e9 bytes), uploads in flight included." }
+        imageMaxRootBytes: { type: integer, minimum: 1, description: "The largest root filesystem one account image may have, in bytes." }
+        deployRuntimeNoExpiry: { type: [integer, "null"] }
+        snapshots:
+          type: object
+          required: [maxCount, maxBytes, ttlDays, fullTtlDays, full]
+          properties:
+            maxCount: { type: integer, minimum: 0 }
+            maxBytes: { type: integer, minimum: 0 }
+            ttlDays: { type: [integer, "null"] }
+            fullTtlDays: { type: [integer, "null"] }
+            full: { type: boolean, description: "true: this account may take full (memory) snapshots." }
+    Me:
+      type: object
+      required:
+        - id
+        - kind
+        - login
+        - name
+        - avatarUrl
+        - role
+        - memberships
+        - vmsAccess
+        - limits
+        - token
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+          enum:
+            - user
+            - org
+        login:
+          type: string
+        name:
+          type:
+            - string
+            - "null"
+        avatarUrl:
+          type:
+            - string
+            - "null"
+        role:
+          type: string
+        actor:
+          type: object
+          properties:
+            id:
+              type: string
+            login:
+              type: string
+            role:
+              type:
+                - string
+                - "null"
+        memberships:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              login:
+                type: string
+              name:
+                type:
+                  - string
+                  - "null"
+              role:
+                type:
+                  - string
+                  - "null"
+        vmsAccess:
+          type: boolean
+        limits: { $ref: "#/components/schemas/AccountLimits" }
+        token:
+          type: object
+          properties:
+            id:
+              type: string
+            name:
+              type: string
+            scopes:
+              type: array
+              items:
+                type: string
+            constraints:
+              oneOf:
+                - "$ref": "#/components/schemas/TokenConstraints"
+                - type: "null"
+            expiresAt:
+              type:
+                - string
+                - "null"
+              format: "date-time"
+        region:
+          type:
+            - string
+            - "null"
+        hold:
+          type: object
+          required:
+            - category
+            - since
+          properties:
+            category:
+              type: string
+            since:
+              type: string
+              format: "date-time"
+    Usage:
+      type: object
+      description: Usage report for a period; additive fields.
+      additionalProperties: true
+      properties:
+        account:
+          type: object
+          additionalProperties: true
+        period:
+          type: object
+          additionalProperties: true
+        generatedAt:
+          type: string
+          format: "date-time"
+        currency:
+          type: string
+        estimate:
+          type: boolean
+        totalUsd:
+          type: number
+        month:
+          type: string
+        storage:
+          type: object
+          additionalProperties: true
+        spendLimit:
+          type:
+            - object
+            - "null"
+          additionalProperties: true
+        lines:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        sandboxes:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        charges:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+    ExecRequest:
+      type: object
+      required:
+        - cmd
+      properties:
+        cmd:
+          type: array
+          items:
+            type: string
+          minItems: 1
+        cwd:
+          type: string
+        env:
+          type: object
+          additionalProperties:
+            type: string
+        stdin:
+          type: string
+        timeoutSeconds:
+          type: integer
+          minimum: 1
+          maximum: 28800
+          default: 1800
+        resumable:
+          type: boolean
+        key:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: "^[A-Za-z0-9._:-]+$"
+          description: "Idempotency key; needs resumable: true."
+      additionalProperties: false
+    ExecFrame:
+      description: |
+        One line of an exec stream. Read until `exit` (the command ended), `detached` (the connection
+        ended, a resumable command keeps running: reattach with attachExec) or `error`.
+      oneOf:
+        - { $ref: "#/components/schemas/ExecStartedFrame" }
+        - { $ref: "#/components/schemas/ExecAttachedFrame" }
+        - { $ref: "#/components/schemas/ExecOutputFrame" }
+        - { $ref: "#/components/schemas/ExecGapFrame" }
+        - { $ref: "#/components/schemas/ExecPingFrame" }
+        - { $ref: "#/components/schemas/ExecExitFrame" }
+        - { $ref: "#/components/schemas/ExecErrorFrame" }
+        - { $ref: "#/components/schemas/ExecDetachedFrame" }
+    ExecStartedFrame:
+      type: object
+      description: First line of a resumable exec; `id` reattaches to it.
+      required: [type, resumable]
+      properties:
+        type: { const: started }
+        id: { type: string }
+        resumable: { type: boolean }
+        from: { type: string }
+        key: { type: string, description: The exec `key` this command runs under. }
+        existing: { type: boolean, description: "true: the key named a command that was already running; this is it." }
+    ExecAttachedFrame:
+      type: object
+      description: First line of a reattach.
+      required: [type, id, running]
+      properties:
+        type: { const: attached }
+        id: { type: string }
+        running: { type: boolean }
+        from: { type: string }
+    ExecOutputFrame:
+      type: object
+      description: Output, as UTF-8 text in `data`, or base64 in `b64` when it isn't valid UTF-8.
+      required: [type]
+      properties:
+        type: { type: string, enum: [stdout, stderr] }
+        data: { type: string }
+        b64: { type: string, contentEncoding: base64 }
+    ExecGapFrame:
+      type: object
+      description: Output between byte offsets `from` and `to` of `stream` is lost (it left the buffer before it was read).
+      required: [type, stream, from, to]
+      properties:
+        type: { const: gap }
+        stream: { type: string, enum: [stdout, stderr] }
+        from: { type: integer, minimum: 0 }
+        to: { type: integer, minimum: 0 }
+    ExecPingFrame:
+      type: object
+      description: |
+        A heartbeat while the command is quiet. `stdout` and `stderr` are the byte offsets sent so far.
+        `source` is sent only to a client that asks for independent counters.
+      required: [type]
+      properties:
+        type: { const: ping }
+        from: { type: string, enum: [machine, cloud] }
+        seq: { type: integer, minimum: 0 }
+        stdout: { type: integer, minimum: 0 }
+        stderr: { type: integer, minimum: 0 }
+        source: { type: string, enum: [node, vmd] }
+    ExecExitFrame:
+      type: object
+      description: The command ended. Always the last line of a stream that ends normally.
+      required: [type, code, signal, durationMs, timedOut]
+      properties:
+        type: { const: exit }
+        code: { type: [integer, "null"], description: "The exit code; null when a signal ended the command." }
+        signal: { type: [string, integer, "null"], description: "The signal that ended the command (a Linux name or number), or null." }
+        durationMs: { type: number, minimum: 0 }
+        timedOut: { type: boolean, description: "true: the exec's timeout stopped the command." }
+        bytes:
+          type: object
+          description: A resumable command's total output per stream; a client that read fewer bytes missed some.
+          required: [stdout, stderr]
+          properties:
+            stdout: { type: integer, minimum: 0 }
+            stderr: { type: integer, minimum: 0 }
+    ExecErrorFrame:
+      type: object
+      description: The stream failed; the command may not have run to the end.
+      required: [type, message]
+      properties:
+        type: { const: error }
+        message: { type: string }
+    ExecDetachedFrame:
+      type: object
+      description: The connection ended and the resumable command keeps running; reattach with attachExec.
+      required: [type, reason]
+      properties:
+        type: { const: detached }
+        reason: { type: string }
+    ExecCancelResponse:
+      type: object
+      required:
+        - cancelled
+      properties:
+        cancelled:
+          type: boolean
+        running:
+          type: boolean
+    Snapshot:
+      type: object
+      required:
+        - id
+        - kind
+        - status
+        - name
+        - sandbox
+        - bytes
+        - logicalBytes
+        - dataBytes
+        - image
+        - resumable
+        - createdAt
+        - expiresAt
+      properties:
+        id:
+          type: string
+          pattern: ^snap_
+        kind:
+          type: string
+          enum:
+            - fs
+            - full
+        status:
+          type: string
+        name:
+          type:
+            - string
+            - "null"
+        sandbox:
+          type: string
+        bytes:
+          type:
+            - integer
+            - "null"
+          minimum: 0
+        logicalBytes:
+          type:
+            - integer
+            - "null"
+        dataBytes:
+          type:
+            - integer
+            - "null"
+        image:
+          type:
+            - string
+            - "null"
+        spec:
+          type: object
+          additionalProperties: true
+        compat:
+          type:
+            - object
+            - "null"
+          additionalProperties: true
+        resumable:
+          type: boolean
+        createdAt:
+          type: string
+          format: "date-time"
+        readyAt:
+          type: string
+          format: "date-time"
+        expiresAt:
+          type: string
+          format: "date-time"
+        error:
+          type: string
+    SnapshotList:
+      type: object
+      required:
+        - snapshots
+      properties:
+        snapshots:
+          type: array
+          items:
+            "$ref": "#/components/schemas/Snapshot"
+        next_cursor:
+          type: string
+          description: Present only when more snapshots follow; pass it as cursor.
+    CreateSnapshotRequest:
+      type: object
+      properties:
+        kind:
+          type: string
+          enum:
+            - fs
+            - full
+          default: fs
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        stop:
+          type: boolean
+        ttlDays:
+          type: integer
+          minimum: 1
+      additionalProperties: false
+    Port:
+      type: object
+      required:
+        - label
+        - port
+        - private
+        - trusted
+        - url
+      properties:
+        label:
+          type: string
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+        private:
+          type: boolean
+        trusted:
+          type: boolean
+        url:
+          type: string
+          format: uri
+    PortWithSandbox:
+      allOf:
+        - "$ref": "#/components/schemas/Port"
+        - type: object
+          required:
+            - sandboxId
+            - running
+          properties:
+            sandboxId:
+              type: string
+            running:
+              type: boolean
+    PortList:
+      type: object
+      required:
+        - ports
+      properties:
+        ports:
+          type: array
+          items:
+            "$ref": "#/components/schemas/Port"
+    HeldPortList:
+      type: object
+      required:
+        - ports
+      properties:
+        ports:
+          type: array
+          items:
+            "$ref": "#/components/schemas/PortWithSandbox"
+    ExposePortRequest:
+      type: object
+      required:
+        - port
+      properties:
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+        name:
+          type: string
+        public:
+          type: boolean
+        trusted:
+          type: boolean
+      additionalProperties: false
+    LoginResponse:
+      type: object
+      required:
+        - loginUrl
+      properties:
+        loginUrl:
+          type: string
+          format: uri
+    NetworkUpdateRequest:
+      type: object
+      properties:
+        network:
+          type: string
+          enum:
+            - none
+            - registries
+        egressAllow:
+          type: array
+          items:
+            type: string
+      additionalProperties: false
+    NetworkUpdateResponse:
+      type: object
+      required:
+        - network
+        - egressAllow
+      properties:
+        network:
+          "$ref": "#/components/schemas/NetworkMode"
+        egressAllow:
+          type: array
+          items:
+            type: string
+    DnsRecord:
+      type: object
+      required:
+        - type
+        - name
+        - value
+        - purpose
+        - required
+      properties:
+        type:
+          type: string
+          enum:
+            - CNAME
+            - TXT
+        name:
+          type: string
+        value:
+          type: string
+        purpose:
+          type: string
+          enum:
+            - ownership
+            - routing
+            - prevalidation
+            - certificate
+        required:
+          type: boolean
+        note:
+          type: string
+    Domain:
+      type: object
+      required:
+        - hostname
+        - label
+        - status
+        - attached
+        - url
+        - records
+        - createdAt
+        - checkedAt
+      properties:
+        hostname:
+          type: string
+        label:
+          type: string
+        page:
+          type: string
+        status:
+          type: string
+        reason:
+          type:
+            - string
+            - "null"
+        attached:
+          type: boolean
+        dcv:
+          type:
+            - string
+            - "null"
+        url:
+          type: string
+          format: uri
+        records:
+          type: array
+          items:
+            "$ref": "#/components/schemas/DnsRecord"
+        missing:
+          type: array
+          items:
+            type: object
+            required:
+              - type
+              - name
+              - value
+            properties:
+              type:
+                type: string
+                enum:
+                  - CNAME
+                  - TXT
+              name:
+                type: string
+              value:
+                type: string
+        createdAt:
+          type: string
+          format: "date-time"
+        checkedAt:
+          type:
+            - string
+            - "null"
+          format: "date-time"
+        detachedAt:
+          type: string
+          format: "date-time"
+        blocked:
+          type: boolean
+        disabled:
+          type: boolean
+    DomainList:
+      type: object
+      required:
+        - domains
+      properties:
+        domains:
+          type: array
+          items:
+            "$ref": "#/components/schemas/Domain"
+    CreateDomainRequest:
+      type: object
+      properties:
+        hostname:
+          type: string
+        label:
+          type: string
+        name:
+          type: string
+      additionalProperties: true
+    Page:
+      type: object
+      required:
+        - name
+        - url
+        - private
+        - bucket
+        - prefix
+        - region
+        - spa
+        - notFound
+        - createdAt
+        - updatedAt
+      properties:
+        name:
+          type: string
+        url:
+          type: string
+          format: uri
+        private:
+          type: boolean
+        bucket:
+          type: string
+        prefix:
+          type: string
+        region:
+          type: string
+        spa:
+          type: boolean
+        notFound:
+          type: string
+        disabled:
+          type: boolean
+        createdAt:
+          type: string
+          format: "date-time"
+        updatedAt:
+          type: string
+          format: "date-time"
+    PageList:
+      type: object
+      required:
+        - pages
+      properties:
+        pages:
+          type: array
+          items:
+            "$ref": "#/components/schemas/Page"
+    PublishPageRequest:
+      type: object
+      required:
+        - bucket
+        - prefix
+      properties:
+        name:
+          type: string
+        hint:
+          type: string
+          maxLength: 200
+        bucket:
+          type: string
+        prefix:
+          type: string
+        public:
+          type: boolean
+        spa:
+          type: boolean
+        notFound:
+          type: string
+          maxLength: 256
+      additionalProperties: false
+    Image:
+      type: object
+      required:
+        - id
+        - name
+        - version
+        - ref
+        - status
+        - region
+        - sha256
+        - bytes
+        - createdAt
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        version:
+          type: integer
+        ref:
+          type: string
+        specKey:
+          type:
+            - string
+            - "null"
+        base:
+          type:
+            - string
+            - "null"
+        status:
+          type: string
+        region:
+          type: string
+        sha256:
+          type: string
+        bytes:
+          type: integer
+          minimum: 0
+        chunks:
+          type: integer
+          minimum: 0
+        dataBytes:
+          type:
+            - integer
+            - "null"
+        storedBytes:
+          type:
+            - integer
+            - "null"
+        digest:
+          type:
+            - string
+            - "null"
+        createdAt:
+          type: string
+          format: "date-time"
+        readyAt:
+          type:
+            - string
+            - "null"
+          format: "date-time"
+        expiresAt:
+          type:
+            - string
+            - "null"
+          format: "date-time"
+        error:
+          type:
+            - string
+            - "null"
+    FleetImage:
+      type: object
+      required:
+        - name
+        - regions
+      properties:
+        name:
+          type: string
+        regions:
+          type: array
+          items:
+            type: object
+            properties:
+              region:
+                type: string
+              available:
+                type: boolean
+              building:
+                type: boolean
+              unknown:
+                type: boolean
+              builds:
+                type: array
+                items:
+                  type: string
+    ImageList:
+      type: object
+      required:
+        - images
+        - account
+      properties:
+        images:
+          type: array
+          items:
+            "$ref": "#/components/schemas/FleetImage"
+        account:
+          type: array
+          items:
+            "$ref": "#/components/schemas/Image"
+    CreateImageRequest:
+      type: object
+      required:
+        - name
+        - sha256
+        - bytes
+        - chunkSize
+        - chunks
+      properties:
+        name:
+          type: string
+        specKey:
+          type: string
+        base:
+          type: string
+        sha256:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        bytes:
+          type: integer
+          minimum: 1
+        chunkSize:
+          type: integer
+          const: 4194304
+        chunks:
+          type: array
+          description: "The image's non-empty chunks as `[index, sha256, key, storedBytes]`, indexes strictly increasing; a chunk not listed is zeros. `sha256` names the plaintext chunk, `key` the sha256 of its stored (zstd) bytes."
+          items:
+            "$ref": "#/components/schemas/ImageChunk"
+        region:
+          type: string
+      additionalProperties: true
+    ImageChunk:
+      type: array
+      minItems: 4
+      maxItems: 4
+      prefixItems:
+        - type: integer
+          minimum: 0
+        - type: string
+          pattern: "^[0-9a-f]{64}$"
+        - type: string
+          pattern: "^[0-9a-f]{64}$"
+        - type: integer
+          minimum: 1
+          maximum: 4259840
+      items: false
+    CreateImageResponse:
+      type: object
+      required:
+        - id
+        - missing
+        - image
+      properties:
+        id:
+          type: string
+        missing:
+          type: array
+          items:
+            type: string
+        image:
+          "$ref": "#/components/schemas/Image"
+    ImageUsage:
+      type: object
+      description: This month's storage of the account's images, and its caps.
+      required:
+        - month
+        - storedBytes
+        - gbMonths
+        - usd
+        - rate
+        - images
+        - caps
+      properties:
+        month:
+          type: string
+          pattern: "^\\d{4}-\\d{2}$"
+          description: The UTC month, `YYYY-MM`.
+        storedBytes:
+          type: integer
+          minimum: 0
+          description: Stored (compressed) bytes the ready images reference now, each chunk counted once.
+        gbMonths:
+          type: number
+          minimum: 0
+          description: GB-months accrued this month.
+        usd:
+          type: number
+          minimum: 0
+          description: This month's storage charge so far, in USD.
+        rate:
+          type: number
+          minimum: 0
+          description: USD per GB-month.
+        images:
+          type: integer
+          minimum: 0
+          description: Uploading and ready images.
+        caps:
+          type: object
+          required:
+            - images
+            - storedBytes
+          properties:
+            images:
+              type: integer
+              minimum: 0
+              description: The most uploading and ready images.
+            storedBytes:
+              type: integer
+              minimum: 0
+              description: The most stored bytes, orphans in their grace included.
+    Bucket:
+      type: object
+      required:
+        - name
+        - region
+        - createdAt
+      properties:
+        name:
+          type: string
+        region:
+          type: string
+        createdAt:
+          type: string
+          format: "date-time"
+        deleting:
+          type: boolean
+    BucketList:
+      type: object
+      required:
+        - buckets
+        - limit
+      properties:
+        buckets:
+          type: array
+          items:
+            "$ref": "#/components/schemas/Bucket"
+        limit:
+          type: integer
+    DeleteBucketResponse:
+      type: object
+      required:
+        - name
+        - deleted
+        - objectsDeleted
+        - done
+      properties:
+        name:
+          type: string
+        deleted:
+          const: true
+        objectsDeleted:
+          type: integer
+          minimum: 0
+          description: Objects this call deleted (with `force`).
+        done:
+          const: true
+    DeleteBucketProgress:
+      type: object
+      required:
+        - name
+        - deleted
+        - objectsDeleted
+        - done
+        - message
+      properties:
+        name:
+          type: string
+        deleted:
+          const: false
+        objectsDeleted:
+          type: integer
+          minimum: 0
+          description: Objects this call deleted.
+        done:
+          const: false
+        message:
+          type: string
+    CreateBucketRequest:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+        region:
+          type: string
+      additionalProperties: false
+    BucketCors:
+      type: object
+      required:
+        - bucket
+        - origins
+        - methods
+        - allowedHeaders
+        - exposeHeaders
+        - maxAgeSeconds
+      properties:
+        bucket:
+          type: string
+        origins:
+          type: array
+          items:
+            type: string
+        methods:
+          type: array
+          items:
+            type: string
+        allowedHeaders:
+          type: array
+          items:
+            type: string
+        exposeHeaders:
+          type: array
+          items:
+            type: string
+        maxAgeSeconds:
+          type: integer
+    SetBucketCorsRequest:
+      type: object
+      required:
+        - origins
+      properties:
+        origins:
+          type: array
+          items:
+            type: string
+      additionalProperties: false
+    PresignRequest:
+      type: object
+      required:
+        - key
+      properties:
+        method:
+          type: string
+          enum:
+            - GET
+            - PUT
+          default: GET
+        key:
+          type: string
+        ttlSeconds:
+          type: integer
+          minimum: 1
+        contentLength:
+          type: integer
+          minimum: 0
+        inline:
+          type: boolean
+      additionalProperties: false
+    PresignResponse:
+      type: object
+      required:
+        - url
+        - method
+        - key
+        - expiresAt
+        - headers
+      properties:
+        url:
+          type: string
+          format: uri
+        method:
+          type: string
+          enum:
+            - GET
+            - PUT
+        key:
+          type: string
+        expiresAt:
+          type: string
+          format: "date-time"
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+        disposition:
+          type: string
+    ObjectList:
+      type: object
+      required:
+        - objects
+        - prefixes
+        - cursor
+      properties:
+        objects:
+          type: array
+          items:
+            type: object
+            required:
+              - key
+              - size
+              - etag
+              - lastModified
+            properties:
+              key:
+                type: string
+              size:
+                type: integer
+                minimum: 0
+              etag:
+                type: string
+              lastModified:
+                type: string
+        prefixes:
+          type: array
+          items:
+            type: string
+        cursor:
+          type:
+            - string
+            - "null"
+    MultipartStartResponse:
+      type: object
+      required:
+        - key
+        - uploadId
+        - maxPartBytes
+        - maxParts
+      properties:
+        key:
+          type: string
+        uploadId:
+          type: string
+        maxPartBytes:
+          type: integer
+        maxParts:
+          type: integer
+    StorageKey:
+      type: object
+      required:
+        - id
+        - hint
+        - bucket
+        - prefix
+        - access
+        - createdAt
+        - expiresAt
+        - lastUsedAt
+      properties:
+        id:
+          type: string
+        hint:
+          type: string
+        bucket:
+          type: string
+        prefix:
+          type: string
+        access:
+          type: string
+        actorId:
+          type: string
+        createdAt:
+          type: string
+          format: "date-time"
+        expiresAt:
+          type: string
+          format: "date-time"
+        lastUsedAt:
+          type:
+            - string
+            - "null"
+          format: "date-time"
+    StorageKeyList:
+      type: object
+      required:
+        - keys
+      properties:
+        keys:
+          type: array
+          items:
+            "$ref": "#/components/schemas/StorageKey"
+    CreateStorageKeyRequest:
+      type: object
+      required:
+        - bucket
+      properties:
+        bucket:
+          type: string
+        prefix:
+          type: string
+        access:
+          type: string
+        ttlSeconds:
+          type: integer
+          minimum: 1
+      additionalProperties: true
+    CreateStorageKeyResponse:
+      allOf:
+        - "$ref": "#/components/schemas/StorageKey"
+        - type: object
+          required:
+            - key
+          properties:
+            key:
+              type: string
+    RevokeStorageKeyResponse:
+      type: object
+      required:
+        - id
+        - revoked
+      properties:
+        id:
+          type: string
+        revoked:
+          type: boolean
+    StorageAudit:
+      type: object
+      required:
+        - events
+      properties:
+        events:
+          type: array
+          items:
+            type: object
+            required:
+              - id
+              - userId
+              - actorId
+              - actor
+              - action
+              - bucket
+              - detail
+              - at
+            properties:
+              id:
+                type: string
+              userId:
+                type: string
+              actorId:
+                type: string
+              actor:
+                type: string
+              action:
+                type: string
+                enum:
+                  - bucket.create
+                  - bucket.delete
+                  - bucket.cors
+                  - key.mint
+                  - key.revoke
+                  - presign
+              bucket:
+                type:
+                  - string
+                  - "null"
+              detail:
+                type: object
+                properties:
+                  region:
+                    type: string
+                  origins:
+                    type: array
+                    items:
+                      type: string
+                  removed:
+                    type: array
+                    items:
+                      type: string
+                  key:
+                    type: string
+                  prefix:
+                    type: string
+                  access:
+                    type: string
+                  ttlSeconds:
+                    type: integer
+                  method:
+                    type: string
+                  contentLength:
+                    type: integer
+                  inline:
+                    type: boolean
+              at:
+                type: string
+                format: "date-time"
+    Share:
+      type: object
+      required:
+        - id
+        - stream
+        - session
+        - expiresAt
+      properties:
+        id:
+          type: string
+        stream:
+          type: string
+          enum:
+            - screen
+            - tty
+        session:
+          type:
+            - string
+            - "null"
+        display:
+          type:
+            - object
+            - "null"
+        quality:
+          type: string
+          enum:
+            - high
+            - low
+        mode:
+          type: string
+          enum:
+            - vnc
+            - broadcast
+        keys:
+          type: string
+        recording:
+          type:
+            - object
+            - "null"
+        expiresAt:
+          type: string
+          format: "date-time"
+        sandboxId:
+          type: string
+        createdAt:
+          type: string
+          format: "date-time"
+        active:
+          type: boolean
+        endedAt:
+          type: string
+          format: "date-time"
+        endedBy:
+          type:
+            - string
+            - "null"
+        token:
+          type: string
+        url:
+          type: string
+          format: uri
+        wsUrl:
+          type: string
+          format: uri
+    ShareList:
+      type: object
+      properties:
+        shares:
+          type: array
+          items:
+            "$ref": "#/components/schemas/Share"
+    CreateShareRequest:
+      type: object
+      required:
+        - stream
+      properties:
+        stream:
+          type: string
+          enum:
+            - screen
+            - tty
+        session:
+          type: string
+        ttlSeconds:
+          type: integer
+          minimum: 1
+        display:
+          type: object
+          additionalProperties: true
+        quality:
+          type: string
+          enum:
+            - high
+            - low
+        mode:
+          type: string
+          enum:
+            - vnc
+            - broadcast
+        keys:
+          type: string
+        record:
+          type: object
+          properties:
+            bucket:
+              type: string
+            prefix:
+              type: string
+            segmentSeconds:
+              type: integer
+          additionalProperties: false
+      additionalProperties: false
+    ComputerRequest:
+      type: object
+      required:
+        - action
+      properties:
+        action:
+          type: string
+          enum:
+            - screenshot
+            - zoom
+            - left_click
+            - right_click
+            - middle_click
+            - double_click
+            - triple_click
+            - left_click_drag
+            - mouse_move
+            - left_mouse_down
+            - left_mouse_up
+            - cursor_position
+            - scroll
+            - type
+            - key
+            - hold_key
+            - wait
+            - info
+        coordinate:
+          type: array
+          items:
+            type: integer
+            minimum: 0
+          minItems: 2
+          maxItems: 2
+        start_coordinate:
+          type: array
+          items:
+            type: integer
+            minimum: 0
+          minItems: 2
+          maxItems: 2
+        region:
+          type: array
+          items:
+            type: integer
+            minimum: 0
+          minItems: 4
+          maxItems: 4
+        text:
+          type: string
+          maxLength: 2000
+        scroll_direction:
+          type: string
+        scroll_amount:
+          type: number
+        repeat:
+          type: integer
+        duration:
+          type: number
+        screenshot:
+          type: boolean
+        screenshotDelayMs:
+          type: integer
+          minimum: 0
+        scale:
+          type: number
+      additionalProperties: true
+    ComputerResponse:
+      type: object
+      additionalProperties: true
+    TerminalSession:
+      type: object
+      additionalProperties: true
+      properties:
+        name:
+          type: string
+        windows:
+          type: integer
+        attached:
+          type: boolean
+        busy:
+          type: boolean
+    TerminalSessionList:
+      type: object
+      required:
+        - sessions
+      properties:
+        sessions:
+          type: array
+          items:
+            "$ref": "#/components/schemas/TerminalSession"
+    CreateTerminalSessionRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 32
+        cmd:
+          type: array
+          items:
+            type: string
+        cwd:
+          type: string
+        env:
+          type: object
+          additionalProperties:
+            type: string
+        cols:
+          type: integer
+          minimum: 1
+          maximum: 1000
+        rows:
+          type: integer
+          minimum: 1
+          maximum: 1000
+      additionalProperties: false
+    CreateTerminalSessionResponse:
+      type: object
+      required:
+        - name
+        - created
+      properties:
+        name:
+          type: string
+        created:
+          type: boolean
+        window:
+          type:
+            - object
+            - "null"
+          additionalProperties: true
+      additionalProperties: true
+    PushFilesResponse:
+      type: object
+      required:
+        - bytes
+        - entries
+        - durationMs
+      properties:
+        bytes:
+          type: integer
+          minimum: 0
+        entries:
+          type: integer
+          minimum: 0
+        durationMs:
+          type: number
+          minimum: 0
+    CreateUploadRequest:
+      type: object
+      properties:
+        dest:
+          type: string
+        contentType:
+          type: string
+      additionalProperties: false
+    CreateUploadResponse:
+      type: object
+      required:
+        - uploadId
+        - partSize
+        - maxPartBytes
+        - expiresAt
+      properties:
+        uploadId:
+          type: string
+        partSize:
+          type: integer
+        maxPartBytes:
+          type: integer
+        expiresAt:
+          type: string
+          format: "date-time"
+    UploadPartResponse:
+      type: object
+      required:
+        - n
+        - etag
+      properties:
+        n:
+          type: integer
+        etag:
+          type: string
+    CompleteUploadRequest:
+      type: object
+      required:
+        - parts
+      properties:
+        parts:
+          type: array
+          minItems: 1
+          maxItems: 10000
+          items:
+            type: object
+            required:
+              - n
+              - etag
+            properties:
+              n:
+                type: integer
+                minimum: 1
+              etag:
+                type: string
+            additionalProperties: false
+      additionalProperties: false
+    CompleteMultipartObjectRequest:
+      type: object
+      required:
+        - parts
+      properties:
+        parts:
+          type: array
+          minItems: 1
+          maxItems: 10000
+          items:
+            type: object
+            required:
+              - partNumber
+              - etag
+            properties:
+              partNumber:
+                type: integer
+              etag:
+                type: string
+    ResolveResponse:
+      type: object
+      required:
+        - id
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+    DeleteSandboxPending:
+      type: object
+      required:
+        - destroyed
+        - pending
+      properties:
+        destroyed:
+          const: false
+        pending:
+          const: true
+    UploadChunkResponse:
+      type: object
+      required:
+        - key
+        - bytes
+        - stored
+      properties:
+        key:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        bytes:
+          type: integer
+          minimum: 1
+        stored:
+          type: boolean
+    PutObjectResponse:
+      type: object
+      required:
+        - key
+        - size
+        - etag
+      properties:
+        key:
+          type: string
+        size:
+          type: integer
+          minimum: 0
+        etag:
+          type: string
+    PutPartResponse:
+      type: object
+      required:
+        - partNumber
+        - etag
+      properties:
+        partNumber:
+          type: integer
+          minimum: 1
+        etag:
+          type: string

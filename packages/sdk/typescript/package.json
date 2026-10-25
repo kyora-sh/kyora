@@ -1,0 +1,57 @@
+{
+  "name": "@kyora-sh/sdk",
+  "version": "0.0.0",
+  "type": "module",
+  "description": "The kyora API for TypeScript: sandboxes, exec, files, snapshots, ports and tokens, with typed errors and retries",
+  "keywords": [
+    "kyora",
+    "sandbox",
+    "microvm",
+    "agents",
+    "sdk"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kyora-sh/kyora.git",
+    "directory": "packages/sdk/typescript"
+  },
+  "author": "Elia Hilse",
+  "homepage": "https://kyora.sh",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./openapi.yaml": "./openapi.yaml"
+  },
+  "files": [
+    "dist",
+    "openapi.yaml",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20.3"
+  },
+  "scripts": {
+    "build": "rm -rf ./dist && tsc -p tsconfig.build.json",
+    "check-types": "tsc --noEmit",
+    "test": "bun test",
+    "generate": "bun scripts/generate.ts",
+    "sync-spec": "bun scripts/sync-spec.ts",
+    "prepublishOnly": "bun run build"
+  },
+  "devDependencies": {
+    "@repo/typescript-config": "workspace:*",
+    "@types/bun": "1.4.2",
+    "typescript": "^5.9.2"
+  }
+}
