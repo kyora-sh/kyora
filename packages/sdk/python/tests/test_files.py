@@ -215,6 +215,25 @@ async def test_download_and_read_unpack_what_the_sandbox_sends(client):
     assert streamed == archive
 
 
+async def test_a_download_closed_before_reading_frees_its_connection(client):
+    import httpx
+    from fakes import Lines
+
+    streams = []
+
+    def handler(r, i):
+        stream = Lines(["tar bytes"], hang=True, broken=False)
+        streams.append(stream)
+        return httpx.Response(200, stream=stream)
+
+    kyora, _ = client(handler)
+    download = await kyora.files.download_tar("sb_1", ["/work"])
+    await download.aclose()
+    async with await kyora.files.download_tar("sb_1", ["/work"]) as second:
+        assert await second.__anext__() == b"tar bytes"
+    assert [stream.closed for stream in streams] == [True, True]
+
+
 async def test_a_broken_archive_is_fetched_again(client):
     import httpx
 

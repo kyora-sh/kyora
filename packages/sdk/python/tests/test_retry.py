@@ -320,3 +320,54 @@ async def test_call_reaches_any_operation(client):
     assert requests[1].headers["idempotency-key"] == "mine"
     with pytest.raises(ValueError):
         await kyora.call("noSuchOperation")
+
+
+async def test_a_stalled_on_queued_is_bounded_by_the_deadline_and_takes_the_create_out_of_line(client):
+    def handler(r, i):
+        if r.method == "POST":
+            return json(202, ticket("q_5"))
+        return json(204)
+
+    async def stalled(current):
+        await hang()
+
+    kyora, requests = client(handler)
+    begun = time.monotonic()
+    with pytest.raises(KyoraError) as caught:
+        await kyora.sandboxes.create({"wait": 60}, on_queued=stalled, timeout=0.3)
+    assert caught.value.code == "timeout"
+    assert time.monotonic() - begun < 1
+    assert [(r.method, r.url.path) for r in requests] == [("POST", "/v1/sandboxes"), ("DELETE", "/v1/queue/q_5")]
+
+
+async def test_an_on_queued_that_raises_takes_the_create_out_of_line(client):
+    def handler(r, i):
+        if r.method == "POST":
+            return json(202, ticket("q_6"))
+        return json(204)
+
+    def refuse(current):
+        raise RuntimeError("no queueing")
+
+    kyora, requests = client(handler)
+    with pytest.raises(RuntimeError, match="no queueing"):
+        await kyora.sandboxes.create({"wait": 30}, on_queued=refuse)
+    assert (requests[-1].method, requests[-1].url.path) == ("DELETE", "/v1/queue/q_6")
+
+
+async def test_cancelling_during_on_queued_takes_the_create_out_of_line(client):
+    def handler(r, i):
+        if r.method == "POST":
+            return json(202, ticket("q_7"))
+        return json(204)
+
+    async def stalled(current):
+        await hang()
+
+    kyora, requests = client(handler)
+    task = asyncio.ensure_future(kyora.sandboxes.create({"wait": 30}, on_queued=stalled))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert (requests[-1].method, requests[-1].url.path) == ("DELETE", "/v1/queue/q_7")

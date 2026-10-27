@@ -88,6 +88,80 @@ def test_a_blocking_call_from_a_callback_is_refused_not_deadlocked(sync):
         kyora.exec.run("sb_1", {"cmd": ["x"]}, on_output=lambda s, d: kyora.me())
 
 
+def test_a_download_closed_before_reading_frees_its_connection(sync):
+    import httpx
+    from fakes import Lines
+
+    streams = []
+
+    def handler(r, i):
+        stream = Lines(["tar bytes"], hang=True, broken=False)
+        streams.append(stream)
+        return httpx.Response(200, stream=stream)
+
+    kyora, _ = sync(handler)
+    kyora.files.download_tar("sb_1", ["/work"]).close()
+    with kyora.files.download_tar("sb_1", ["/work"]) as download:
+        assert next(download) == b"tar bytes"
+    assert [stream.closed for stream in streams] == [True, True]
+
+
+def test_a_token_that_is_refused_leaves_no_thread_behind():
+    import threading
+
+    before = threading.active_count()
+    with pytest.raises(ValueError):
+        Kyora(token="bad token")
+    assert threading.active_count() == before
+
+
+def test_an_interrupted_call_lets_its_cleanup_run_before_raising():
+    import asyncio
+    import os
+    import signal
+    import threading
+
+    from kyora._sync import Portal
+
+    portal = Portal()
+    cleaned = []
+
+    async def call():
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            await asyncio.sleep(0.1)
+            cleaned.append(True)
+            raise
+
+    timer = threading.Timer(0.05, os.kill, (os.getpid(), signal.SIGINT))
+    timer.start()
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            portal.run(call())
+        assert cleaned == [True]
+    finally:
+        timer.cancel()
+        portal.close()
+
+
+def test_close_lets_pending_cleanups_finish():
+    import asyncio
+
+    from kyora._sync import Portal
+
+    portal = Portal()
+    finished = []
+
+    async def cleanup():
+        await asyncio.sleep(0.1)
+        finished.append(True)
+
+    portal.loop.call_soon_threadsafe(lambda: portal.loop.create_task(cleanup()))
+    portal.close()
+    assert finished == [True]
+
+
 def test_close_and_context_manager():
     with Kyora(token="kyora_test") as kyora:
         assert "kyora_test" not in repr(kyora)

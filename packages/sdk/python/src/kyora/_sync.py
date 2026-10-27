@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import threading
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Iterable, Iterator, Mapping
 from typing import Any, Literal, TypeVar
@@ -10,7 +11,7 @@ from typing import Any, Literal, TypeVar
 import httpx
 from typing_extensions import Unpack
 
-from ._client import Archive, AsyncKyora
+from ._client import Archive, AsyncKyora, ByteStream
 from ._exec import ByteOffsets, ExecInput, ExecOptions, ExecResult, ExecStream, Output
 from ._http import DEFAULT_RETRY, CallOptions, Retry, WaitOptions
 from ._models import (
@@ -41,6 +42,8 @@ from ._paging import ListOptions, ListPage
 from ._tar import FileInputs, TarEntry
 
 T = TypeVar("T")
+SETTLE = 5.0
+"""seconds a cancelled call, or the client's close, waits for cleanups to finish"""
 
 
 class Portal:
@@ -59,8 +62,9 @@ class Portal:
         try:
             return future.result()
         except BaseException:
-            # an interrupt (Ctrl-C) cancels the call as cancelling its task would
+            # an interrupt (Ctrl-C) cancels the call as cancelling its task would, and lets its cleanup run
             future.cancel()
+            concurrent.futures.wait([future], timeout=SETTLE)
             raise
 
     def iterate(self, iterator: AsyncIterator[T], close: Callable[[], Awaitable[None]] | None = None) -> Iterator[T]:
@@ -77,10 +81,26 @@ class Portal:
 
     def close(self) -> None:
         if self.loop.is_running():
+            try:
+                asyncio.run_coroutine_threadsafe(_settle(), self.loop).result(3 * SETTLE)
+            except Exception:
+                pass
             self.loop.call_soon_threadsafe(self.loop.stop)
             self.thread.join()
         if not self.loop.is_closed():
             self.loop.close()
+
+
+async def _settle() -> None:
+    """lets the loop's other tasks (cleanups, calls cancelled on the way out) finish, then cancels the rest"""
+    tasks = asyncio.all_tasks() - {asyncio.current_task()}
+    if not tasks:
+        return
+    _, pending = await asyncio.wait(tasks, timeout=SETTLE)
+    for task in pending:
+        task.cancel()
+    if pending:
+        await asyncio.wait(pending, timeout=SETTLE)
 
 
 async def _next(iterator: AsyncIterator[T]) -> T:
@@ -107,7 +127,6 @@ class Kyora:
         user_agent: str | None = None,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
-        self._portal = Portal()
         self.aio = AsyncKyora(
             token=token,
             base_url=base_url,
@@ -118,6 +137,7 @@ class Kyora:
             http_client=http_client,
         )
         """the async client underneath"""
+        self._portal = Portal()
         self.region = region
         self.sandboxes = Sandboxes(self.aio, self._portal)
         self.exec = Exec(self.aio, self._portal)
@@ -291,6 +311,32 @@ class SyncExecStream:
         self.close()
 
 
+class SyncByteStream:
+    """An open answer's body, chunk by chunk; `close` frees the connection."""
+
+    def __init__(self, stream: ByteStream, portal: Portal) -> None:
+        self._stream = stream
+        self._portal = portal
+
+    def __iter__(self) -> Iterator[bytes]:
+        return self
+
+    def __next__(self) -> bytes:
+        try:
+            return self._portal.run(_next(self._stream))
+        except StopAsyncIteration:
+            raise StopIteration from None
+
+    def close(self) -> None:
+        self._portal.run(self._stream.aclose())
+
+    def __enter__(self) -> SyncByteStream:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
+
+
 class Exec(_Resource):
     def run(self, sandbox: str, request: ExecInput, **options: Unpack[ExecOptions]) -> ExecResult:
         """Runs a command and collects its output, reattaching when the stream breaks. See AsyncKyora.exec.run."""
@@ -336,9 +382,9 @@ class Files(_Resource):
             self._aio.files.upload_tar(sandbox, archive, dest=dest, content_type=content_type, **options)
         )
 
-    def download_tar(self, sandbox: str, paths: Iterable[str], **options: Unpack[CallOptions]) -> Iterator[bytes]:
-        """the tar of `paths` as it streams in"""
-        return self._portal.iterate(self._portal.run(self._aio.files.download_tar(sandbox, paths, **options)))
+    def download_tar(self, sandbox: str, paths: Iterable[str], **options: Unpack[CallOptions]) -> SyncByteStream:
+        """the tar of `paths` as it streams in. Read it to its end or close it (`close`, or `with`)."""
+        return SyncByteStream(self._portal.run(self._aio.files.download_tar(sandbox, paths, **options)), self._portal)
 
     def download(self, sandbox: str, paths: Iterable[str], **options: Unpack[CallOptions]) -> list[TarEntry]:
         """the entries of `paths`, read whole into memory; for large trees, use download_tar"""

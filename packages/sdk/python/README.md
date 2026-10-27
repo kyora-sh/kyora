@@ -38,11 +38,16 @@ def process_document(name: str, document: bytes) -> str:
         timeout=60,
     )
     try:
-        kyora.files.upload(sandbox.id, {
-            f"inbox/{name}": document,
-            "extract.sh": "#!/bin/sh\nset -e\nmkdir -p out\nwc -w inbox/* > out/summary.txt\n",
-        })
-        result = kyora.exec.run(sandbox.id, {"cmd": ["sh", "extract.sh"], "cwd": "/work", "timeout_seconds": 300}, timeout=330)
+        kyora.files.upload(
+            sandbox.id,
+            {
+                f"inbox/{name}": document,
+                "extract.sh": "#!/bin/sh\nset -e\nmkdir -p out\nwc -w inbox/* > out/summary.txt\n",
+            },
+        )
+        result = kyora.exec.run(
+            sandbox.id, {"cmd": ["sh", "extract.sh"], "cwd": "/work", "timeout_seconds": 300}, timeout=330
+        )
         if result.exit_code != 0:
             raise RuntimeError(f"extract failed ({result.exit_code}): {result.stderr.decode()}")
         return kyora.files.read(sandbox.id, "/work/out/summary.txt").decode()
@@ -134,7 +139,7 @@ result = kyora.exec.run(
 )
 result.exit_code  # None when a signal ended it, see result.signal
 result.timed_out  # the exec's timeout_seconds stopped it
-result.stdout     # bytes; result.stderr too
+result.stdout  # bytes; result.stderr too
 result.truncated  # .stdout, .stderr: output the result is missing
 
 # or the output as it arrives
@@ -153,8 +158,9 @@ kyora.files.upload(sandbox.id, {"src/main.py": source, "data.bin": data}, dest="
 kyora.files.upload_tar(sandbox.id, tar_bytes_or_file_or_chunks)  # above 64 MiB it goes up in parts
 data = kyora.files.read(sandbox.id, "/work/out/report.json")
 entries = kyora.files.download(sandbox.id, ["/work/out"])  # [TarEntry(name, type, mode, data, ...)]
-for chunk in kyora.files.download_tar(sandbox.id, ["/work/out"]):  # the raw tar as it streams in
-    ...
+with kyora.files.download_tar(sandbox.id, ["/work/out"]) as tar:  # the raw tar as it streams in
+    for chunk in tar:
+        ...
 ```
 
 ## Snapshots, ports and tokens
@@ -168,11 +174,13 @@ for old in kyora.snapshots.iterate(labels={"run": "42"}):
 port = kyora.ports.expose(sandbox.id, 8080, public=True)  # port.url
 kyora.ports.unexpose(sandbox.id, port.label)
 
-created = kyora.tokens.create({
-    "name": "doc-agent",
-    "scopes": ["vms:read", "vms:write", "vms:exec"],
-    "constraints": {"labels": {"app": "doc-agent"}, "max_sandboxes": 10},
-})
+created = kyora.tokens.create(
+    {
+        "name": "doc-agent",
+        "scopes": ["vms:read", "vms:write", "vms:exec"],
+        "constraints": {"labels": {"app": "doc-agent"}, "max_sandboxes": 10},
+    }
+)
 created.token  # the secret, shown once
 ```
 

@@ -303,13 +303,13 @@ class Sandboxes:
     async def _wait_in_line(
         self, ticket: QueueTicket, until: float, on_queued: Callable[[QueueTicket], Any] | None
     ) -> Sandbox:
-        await notify(on_queued, ticket)
         failures = 0
 
         async def read(response: httpx.Response, _: int) -> tuple[int, Any]:
             return response.status_code, read_json("getQueueTicket", response.status_code, await response.aread())
 
         try:
+            await within(notify(on_queued, ticket), until, "createSandbox")
             while True:
                 remaining = until - time.time()
                 if remaining <= 1:
@@ -330,7 +330,7 @@ class Sandboxes:
                 failures = 0
                 if status != 202 or not is_ticket(answer):
                     return load(Sandbox, answer, "getQueueTicket")
-                await notify(on_queued, load(QueueTicket, answer, "getQueueTicket"))
+                await within(notify(on_queued, load(QueueTicket, answer, "getQueueTicket")), until, "createSandbox")
         except BaseException:
             # out of line, so kyora never places a sandbox nobody waits for
             try:
@@ -619,6 +619,35 @@ async def _iter_chunks(chunks: Iterable[bytes]) -> AsyncIterator[bytes]:
         yield chunk
 
 
+class ByteStream:
+    """An open answer's body, chunk by chunk, within the call's deadline; `aclose` frees the connection."""
+
+    def __init__(self, response: httpx.Response, until: float, operation: str) -> None:
+        self._response = response
+        self._chunks = response.aiter_bytes()
+        self._until = until
+        self._operation = operation
+
+    def __aiter__(self) -> ByteStream:
+        return self
+
+    async def __anext__(self) -> bytes:
+        try:
+            return await within(self._chunks.__anext__(), self._until, self._operation)
+        except BaseException:
+            await self.aclose()
+            raise
+
+    async def aclose(self) -> None:
+        await self._response.aclose()
+
+    async def __aenter__(self) -> ByteStream:
+        return self
+
+    async def __aexit__(self, *_: object) -> None:
+        await self.aclose()
+
+
 class Files:
     def __init__(self, transport: Transport) -> None:
         self._transport = transport
@@ -698,26 +727,12 @@ class Files:
                     await asyncio.wait({abort}, timeout=remaining)
             raise
 
-    async def download_tar(
-        self, sandbox: str, paths: Iterable[str], **options: Unpack[CallOptions]
-    ) -> AsyncIterator[bytes]:
-        """the tar of `paths` as it streams in; the deadline bounds the whole download"""
+    async def download_tar(self, sandbox: str, paths: Iterable[str], **options: Unpack[CallOptions]) -> ByteStream:
+        """the tar of `paths` as it streams in; the deadline bounds the whole download. Read it to its end
+        or close it (`aclose`, or `async with`)."""
         until = end_of(options)
         parts = RequestParts(path={"id": sandbox}, query={"path": list(paths)})
-        response = await self._transport.send("pullFiles", parts, options)
-
-        async def chunks() -> AsyncIterator[bytes]:
-            iterator = response.aiter_bytes()
-            try:
-                while True:
-                    try:
-                        yield await within(iterator.__anext__(), until, "pullFiles")
-                    except StopAsyncIteration:
-                        return
-            finally:
-                await response.aclose()
-
-        return chunks()
+        return ByteStream(await self._transport.send("pullFiles", parts, options), until, "pullFiles")
 
     async def download(self, sandbox: str, paths: Iterable[str], **options: Unpack[CallOptions]) -> list[TarEntry]:
         """the entries of `paths`, read whole into memory; for large trees, use download_tar"""
