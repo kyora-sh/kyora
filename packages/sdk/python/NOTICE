@@ -1,0 +1,47 @@
+kyora (Python SDK)
+Copyright 2026 Elia Hilse
+
+This product includes software developed by Elia Hilse
+(https://github.com/eliahilse).
+
+Licensed under the Apache License, Version 2.0. See the LICENSE file
+distributed with this work for the full terms, except for the parts named
+under "Elastic License 2.0" below.
+
+It bundles kyora-switch, kyora usage (@kyora-sh/usage), kyora hostnames
+(@kyora-sh/hostnames) and the kyora image builder, each Copyright 2026
+Elia Hilse and licensed under the Apache License, Version 2.0.
+
+Elastic License 2.0
+-------------------
+
+It also bundles the image chunk format from kyora's packages/vms/shared
+(image-chunks.ts and image-chunks-bun.ts, in dist/index.js and
+dist/kyora.js) and ships its deploy types (dist/types/shared/deploys.d.ts).
+These are Copyright 2025 Elia Hilse and licensed under the Elastic License
+2.0, not the Apache License. See the LICENSE-Elastic-2.0 file distributed
+with this work for the full terms.
+
+Third-party software
+--------------------
+
+It bundles tldts and tldts-core 7.4.16 (https://github.com/remusao/tldts),
+under the MIT License:
+
+Copyright (c) 2017 Thomas Parisot, 2018 Rémi Berson
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+associated documentation files (the "Software"), to deal in the Software without restriction,
+including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense,
+and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+The public suffix data that tldts carries comes from the Public Suffix
+List (https://publicsuffix.org), licensed under the Mozilla Public License,
+v. 2.0 (https://mozilla.org/MPL/2.0/).
