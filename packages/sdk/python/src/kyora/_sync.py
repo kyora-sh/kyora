@@ -190,7 +190,7 @@ class Kyora:
         content_type: str | None = None,
         **options: Unpack[CallOptions],
     ) -> Any:
-        """Any operation of the API by its operationId. JSON operations answer their parsed body; streamed,
+        """Any HTTP operation of the API by its operationId. JSON operations answer their parsed body; streamed,
         binary and HEAD ones the httpx.Response, its body read whole."""
 
         async def call() -> Any:

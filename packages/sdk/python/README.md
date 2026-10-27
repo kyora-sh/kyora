@@ -186,11 +186,11 @@ created.token  # the secret, shown once
 
 ## Everything else
 
-`kyora.call(operation_id, path=..., query=..., body=...)` sends any operation of the API with the same errors, retries and idempotency keys. JSON operations answer their parsed body; streamed, binary and HEAD ones the `httpx.Response` (on `AsyncKyora` still open: read it and `aclose()` it). Operations without a helper yet, the same as the TypeScript SDK's (`COVERAGE` lists every operation and its method or reason):
+`kyora.call(operation_id, path=..., query=..., body=...)` sends any HTTP operation of the API with the same errors, retries and idempotency keys. JSON operations answer their parsed body; streamed, binary and HEAD ones the `httpx.Response` (on `AsyncKyora` still open: read it and `aclose()` it). Operations without a helper yet, the same as the TypeScript SDK's (`COVERAGE` lists every operation and its method or reason):
 
 - custom domains and static pages: `kyora.call()` until a helper lands
-- computer use and live views: a later release
-- interactive terminals (they need a WebSocket client): a later release
+- computer use and live views: a later release; computer actions are HTTP, so `kyora.call()` works meanwhile, but live streams (`streamComputer`) are a WebSocket, which `call()` can't open (kyora answers `426 upgrade_required`)
+- interactive terminals (`openTerminal`, a WebSocket too): a later release
 - account images, built with the kyora CLI: a later release
 - object storage, which speaks S3 too: `kyora.call()` until a helper lands
 

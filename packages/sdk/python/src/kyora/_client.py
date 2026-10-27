@@ -244,7 +244,7 @@ class AsyncKyora:
         content_type: str | None = None,
         **options: Unpack[CallOptions],
     ) -> Any:
-        """Any operation of the API by its operationId, for what the SDK has no helper for yet. Errors,
+        """Any HTTP operation of the API by its operationId, for what the SDK has no helper for yet. Errors,
         retries and idempotency keys work as for every other call. JSON operations answer their parsed
         body; streamed, binary and HEAD ones the open httpx.Response, to read and `aclose`."""
         if operation not in OPERATIONS:
