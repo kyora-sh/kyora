@@ -341,6 +341,43 @@ async def test_a_restore_under_the_callers_key_that_is_cancelled_is_left_running
     assert "DELETE" not in [r.method for r in requests]
 
 
+async def test_a_restore_under_a_header_key_in_any_casing_sends_that_one_key_and_leaves_the_sandbox_running(client):
+    def handler(r, i):
+        if r.method == "POST":
+            return json(202, sandbox("sb_r", status="starting"))
+        return json(200, sandbox("sb_r", status="failed"))
+
+    kyora, requests = client(handler)
+    with pytest.raises(KyoraError) as caught:
+        await kyora.snapshots.restore("snap_1", headers={"IDEMPOTENCY-key": "job-42"}, interval=0.005)
+    assert (caught.value.code, caught.value.sandbox_id) == ("sandbox_ended", "sb_r")
+    assert requests[0].headers.get_list("idempotency-key") == ["job-42"]
+    assert "DELETE" not in [r.method for r in requests]
+
+
+async def test_a_restore_keeps_the_key_it_started_with_when_its_headers_change_under_it(client):
+    def handler(r, i):
+        if r.method == "POST":
+            return json(202, sandbox("sb_r", status="starting"))
+        return json(200, sandbox("sb_r", status="failed"))
+
+    headers = {"Idempotency-Key": "job-42"}
+    kyora, requests = client(handler)
+    with pytest.raises(KyoraError) as caught:
+        await kyora.snapshots.restore(
+            "snap_1", headers=headers, interval=0.005, on_progress=lambda current: headers.clear()
+        )
+    assert caught.value.sandbox_id == "sb_r"
+    assert "DELETE" not in [r.method for r in requests]
+
+
+async def test_a_restore_given_two_different_keys_sends_nothing(client):
+    kyora, requests = client(lambda r, i: json(201, sandbox("sb_r")))
+    with pytest.raises(ValueError, match="two different idempotency keys"):
+        await kyora.snapshots.restore("snap_1", idempotency_key="job-42", headers={"Idempotency-Key": "job-43"})
+    assert requests == []
+
+
 async def test_a_restore_that_replays_anothers_sandbox_under_the_same_key_never_destroys_it(client):
     gets = []
 

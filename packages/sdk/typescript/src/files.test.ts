@@ -129,6 +129,41 @@ describe("snapshots, ports and tokens", () => {
     expect(requests.some((request) => request.method === "DELETE")).toBe(false)
   })
 
+  test("a restore under a header key in any casing sends that one key and leaves the sandbox running", async () => {
+    const { kyora, requests } = client((request) => {
+      if (request.method === "POST") return json(202, sandbox("sb_r", { status: "starting" }))
+      return json(200, sandbox("sb_r", { status: "failed" }))
+    })
+    const failure = await kyora.snapshots.restore("snap_1", {}, { headers: { "IDEMPOTENCY-key": "job-42" }, intervalMs: 5 }).catch((error: unknown) => error)
+    expect(failure).toMatchObject({ code: "sandbox_ended", sandboxId: "sb_r" })
+    expect(requests[0]!.headers.get("idempotency-key")).toBe("job-42")
+    expect(requests.some((request) => request.method === "DELETE")).toBe(false)
+  })
+
+  test("a restore keeps the key it started with when its options change under it", async () => {
+    const { kyora, requests } = client((request) => {
+      if (request.method === "POST") return json(202, sandbox("sb_r", { status: "starting" }))
+      return json(200, sandbox("sb_r", { status: "failed" }))
+    })
+    const options: { idempotencyKey?: string; headers?: Record<string, string>; intervalMs: number; onProgress: () => void } = {
+      idempotencyKey: "job-42",
+      intervalMs: 5,
+      onProgress: () => {
+        delete options.idempotencyKey
+        options.headers = {}
+      },
+    }
+    const failure = await kyora.snapshots.restore("snap_1", {}, options).catch((error: unknown) => error)
+    expect(failure).toMatchObject({ code: "sandbox_ended", sandboxId: "sb_r" })
+    expect(requests.some((request) => request.method === "DELETE")).toBe(false)
+  })
+
+  test("a restore given two different keys sends nothing", async () => {
+    const { kyora, requests } = client(() => json(201, sandbox("sb_r")))
+    await expect(kyora.snapshots.restore("snap_1", {}, { idempotencyKey: "job-42", headers: { "Idempotency-Key": "job-43" } })).rejects.toBeInstanceOf(TypeError)
+    expect(requests).toHaveLength(0)
+  })
+
   test("a restore that replays another's sandbox under the same key never destroys it", async () => {
     let gets = 0
     const { kyora, requests } = client((request) => {

@@ -33,7 +33,7 @@ import type {
   UploadPartResponse,
   Usage,
 } from "./generated/schemas.js"
-import { DEFAULT_BASE_URL, DEFAULT_RETRY, endOf, pause, readJson, timeoutError, Transport, USER_AGENT, type CallOptions, type RequestParts, type RetryOptions, type WaitOptions } from "./http.js"
+import { callerKey, DEFAULT_BASE_URL, DEFAULT_RETRY, endOf, pause, readJson, timeoutError, Transport, USER_AGENT, type CallOptions, type RequestParts, type RetryOptions, type WaitOptions } from "./http.js"
 import { follow, labelQuery, matching, type ListOptions, type ListPage } from "./paging.js"
 import { packFiles, unpack, type FileInput, type TarEntry } from "./tar.js"
 
@@ -300,11 +300,6 @@ export class Kyora {
     if (input.path) parts.path = input.path as Record<string, string | number>
     if (input.query) parts.query = input.query as RequestParts["query"]
     const headers = { ...options.headers, ...(input.headers as Record<string, string> | undefined) }
-    const key = Object.entries(headers).find(([name]) => name.toLowerCase() === "idempotency-key")
-    if (key) {
-      parts.idempotencyKey = key[1]
-      delete headers[key[0]]
-    }
     const spec = OPERATIONS[operation]
     if (spec.method !== "HEAD" && (spec.response === "json" || spec.response === "none")) return (await this.transport.json(operation, parts, { ...options, headers })) as CallResult<O>
     return (await this.transport.send(operation, parts, { ...options, headers })) as CallResult<O>
@@ -481,19 +476,21 @@ export class Snapshots {
   /**
    * A new sandbox from a snapshot, polled until it runs (unless `wait: false`). One that fails or
    * runs out of time is destroyed, so nothing half restored is left behind, unless you passed your
-   * own `idempotencyKey`: the same key answers the sandbox an earlier restore made, which may be
-   * someone else's, so it is never destroyed. The wait's KyoraError then carries its `sandboxId`
-   * (an abort throws the signal's reason as it is; `onProgress` has seen the sandbox by then).
+   * own `idempotencyKey` (or Idempotency-Key header): the same key answers the sandbox an earlier
+   * restore made, which may be someone else's, so it is never destroyed. The wait's KyoraError then
+   * carries its `sandboxId` (an abort throws the signal's reason as it is; `onProgress` has seen the
+   * sandbox by then).
    */
   async restore(snapshot: string, spec: Omit<CreateSandboxRequest, "fromSnapshot" | "image"> = {}, options: CreateOptions & PollOptions<Sandbox> & { wait?: boolean } = {}): Promise<Sandbox> {
     const deadline = endOf(options, POLL_TIMEOUT_MS)
     const { timeoutMs: _whole, ...create } = options
-    const sandbox = await this.kyora.sandboxes.create({ ...spec, fromSnapshot: snapshot }, { ...create, deadline })
+    const key = callerKey("createSandbox", options.idempotencyKey, options.headers)
+    const sandbox = await this.kyora.sandboxes.create({ ...spec, fromSnapshot: snapshot }, { ...create, ...(key ? { idempotencyKey: key } : {}), deadline })
     if (options.wait === false) return sandbox
     try {
       return await this.kyora.sandboxes.waitUntilRunning(sandbox, { ...options, deadline })
     } catch (error) {
-      if (options.idempotencyKey) {
+      if (key) {
         if (error instanceof KyoraError) error.sandboxId = sandbox.id
         throw error
       }

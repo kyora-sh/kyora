@@ -103,6 +103,17 @@ def random_key(prefix: str) -> str:
     return f"{prefix}{uuid.uuid4()}"
 
 
+def caller_key(operation: str, idempotency_key: str | None, headers: Mapping[str, str] | None) -> str | None:
+    """the Idempotency-Key a caller gave, as `idempotency_key` or as a header in any casing; two that differ
+    are a ValueError"""
+    keys = [value for name, value in (headers or {}).items() if name.lower() == "idempotency-key" and value]
+    if idempotency_key:
+        keys.append(idempotency_key)
+    if len(set(keys)) > 1:
+        raise ValueError(f"{operation}: two different idempotency keys, {' and '.join(map(repr, dict.fromkeys(keys)))}")
+    return keys[0] if keys else None
+
+
 def left(until: float) -> float | None:
     """seconds to `until`, None for no bound"""
     return None if until == INF else until - time.time()
@@ -322,10 +333,13 @@ class Transport:
         until = end_of(options, None if streamed else self.timeout)
         override = options.get("retry")
         retry = None if override is False or self.retry is False else override or self.retry
-        headers = dict(options.get("headers") or {})
+        headers = {
+            name: value for name, value in (options.get("headers") or {}).items() if name.lower() != "idempotency-key"
+        }
         keyed = parts.keyed
         if spec["idempotency_key"]:
-            headers["Idempotency-Key"] = parts.idempotency_key or random_key("sdk-")
+            key = caller_key(operation, parts.idempotency_key, options.get("headers"))
+            headers["Idempotency-Key"] = key or random_key("sdk-")
             keyed = True
         replayable = not isinstance(parts.body, AsyncIterable)
 

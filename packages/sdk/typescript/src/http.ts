@@ -105,6 +105,14 @@ export function randomKey(prefix: string): string {
   return `${prefix}${globalThis.crypto.randomUUID()}`
 }
 
+/** the Idempotency-Key a caller gave, as `idempotencyKey` or as a header in any casing; two that differ are a TypeError */
+export function callerKey(operation: string, idempotencyKey: string | undefined, headers: Record<string, string> | undefined): string | undefined {
+  const keys = new Set(Object.entries(headers ?? {}).filter(([name, value]) => name.toLowerCase() === "idempotency-key" && value).map(([, value]) => value))
+  if (idempotencyKey) keys.add(idempotencyKey)
+  if (keys.size > 1) throw new TypeError(`${operation}: two different idempotency keys, ${[...keys].map((key) => JSON.stringify(key)).join(" and ")}`)
+  return keys.values().next().value
+}
+
 /** a token a header can carry: visible ASCII, no spaces */
 const TOKEN = /^[\x21-\x7e]+$/
 
@@ -184,10 +192,10 @@ export class Transport {
     const streamed = spec.response === "ndjson" || spec.response === "binary"
     const until = endOf(options, streamed ? undefined : this.config.timeoutMs)
     const retry = options.retry === false || this.config.retry === false ? null : { ...this.config.retry, ...options.retry }
-    const headers: Record<string, string> = { ...options.headers }
+    const headers: Record<string, string> = Object.fromEntries(Object.entries(options.headers ?? {}).filter(([name]) => name.toLowerCase() !== "idempotency-key"))
     let keyed = parts.keyed === true
     if (spec.idempotencyKey) {
-      headers["Idempotency-Key"] = parts.idempotencyKey ?? randomKey("sdk-")
+      headers["Idempotency-Key"] = callerKey(operation, parts.idempotencyKey, options.headers) ?? randomKey("sdk-")
       keyed = true
     }
     const replayable = !isStream(parts.body)

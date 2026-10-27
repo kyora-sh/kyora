@@ -167,6 +167,25 @@ async def test_an_explicit_key_is_sent_as_given(client):
     assert requests[0].headers["idempotency-key"] == "job-42"
 
 
+async def test_a_key_given_as_a_header_in_any_casing_is_sent_once_as_given(client):
+    kyora, requests = client(lambda r, i: json(201, sandbox("sb_1")))
+    await kyora.sandboxes.create({}, headers={"idempotency-KEY": "job-42"})
+    await kyora.sandboxes.create(
+        {}, idempotency_key="job-43", headers={"Idempotency-Key": "job-43", "idempotency-key": "job-43"}
+    )
+    await kyora.call("createSandbox", body={}, headers={"IDEMPOTENCY-KEY": "job-44"})
+    assert [r.headers.get_list("idempotency-key") for r in requests] == [["job-42"], ["job-43"], ["job-44"]]
+
+
+async def test_two_different_keys_are_a_value_error_before_anything_is_sent(client):
+    kyora, requests = client(lambda r, i: json(201, sandbox("sb_1")))
+    with pytest.raises(ValueError, match="two different idempotency keys"):
+        await kyora.sandboxes.create({}, idempotency_key="job-42", headers={"idempotency-key": "job-43"})
+    with pytest.raises(ValueError, match="two different idempotency keys"):
+        await kyora.sandboxes.create({}, headers={"Idempotency-Key": "job-42", "idempotency-key": "job-43"})
+    assert requests == []
+
+
 async def test_operations_without_a_key_in_the_spec_get_none(client):
     kyora, requests = client(lambda r, i: json(200, sandbox("sb_1")))
     await kyora.sandboxes.get("sb_1")
