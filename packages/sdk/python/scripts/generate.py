@@ -25,6 +25,8 @@ CODEGEN_ARGS = [
     "--snake-case-field",
     "--allow-population-by-field-name",
     "--use-annotated",
+    "--collapse-root-models",
+    "--use-type-alias-type",
     "--use-union-operator",
     "--use-standard-collections",
     "--field-constraints",

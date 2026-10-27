@@ -5,15 +5,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from pydantic import (
-    AnyUrl,
-    AwareDatetime,
-    BaseModel,
-    ConfigDict,
-    Field,
-    RootModel,
-    constr,
-)
+from pydantic import AnyUrl, AwareDatetime, BaseModel, ConfigDict, Field, constr
 from typing_extensions import TypeAliasType
 
 
@@ -69,31 +61,16 @@ LabelsAdditionalProperty = TypeAliasType(
 )
 
 
-class Labels(
-    RootModel[dict[constr(pattern=r'^[A-Za-z0-9][A-Za-z0-9_./-]{0,62}$'), LabelsAdditionalProperty]]
-):
-    root: Annotated[
+Labels = TypeAliasType(
+    "Labels",
+    Annotated[
         dict[constr(pattern=r'^[A-Za-z0-9][A-Za-z0-9_./-]{0,62}$'), LabelsAdditionalProperty],
         Field(
             description='Up to 31 labels. Keys are 1-63 characters of A-Za-z0-9_./- starting with a letter or digit; values up to 256 characters.',
             max_length=31,
         ),
-    ]
-
-
-class NetworkMode(RootModel[Literal['none', 'registries', 'open', 'ci', 'ci-strict'] | str]):
-    root: Annotated[
-        Literal['none', 'registries', 'open', 'ci', 'ci-strict'] | str,
-        Field(
-            description='none: no network. registries: package registries only. open: the internet. ci and ci-strict: the CI profiles.'
-        ),
-    ]
-
-
-class SandboxStatus(
-    RootModel[Literal['starting', 'running', 'moving', 'moved', 'incoming', 'destroyed', 'lost', 'failed'] | str]
-):
-    root: Literal['starting', 'running', 'moving', 'moved', 'incoming', 'destroyed', 'lost', 'failed'] | str
+    ],
+)
 
 
 class Display(BaseModel):
@@ -194,9 +171,14 @@ class Sandbox(BaseModel):
     )
     id: Annotated[str, Field(pattern='^sb_')]
     name: Annotated[str | None, Field(pattern='^[a-z0-9-]{1,32}$')] = None
-    status: SandboxStatus
+    status: Literal['starting', 'running', 'moving', 'moved', 'incoming', 'destroyed', 'lost', 'failed'] | str
     shareable: bool
-    network: NetworkMode
+    network: Annotated[
+        Literal['none', 'registries', 'open', 'ci', 'ci-strict'] | str,
+        Field(
+            description='none: no network. registries: package registries only. open: the internet. ci and ci-strict: the CI profiles.'
+        ),
+    ]
     egress_allow: Annotated[list[str], Field(alias='egressAllow')]
     vcpus: float
     allocated_vcpus: Annotated[float, Field(alias='allocatedVcpus')]
@@ -482,19 +464,9 @@ class SetRegionResponse(BaseModel):
     region: str | None
 
 
-class TokenCapability(
-    RootModel[Literal['vms:read', 'vms:write', 'vms:exec', 'vms:share', 'public-urls', 'images', 'images:build', 'storage', 'storage:presign', 'projects:read', 'deploys', 'relay', 'pages', 'inference'] | str]
-):
-    root: Annotated[
-        Literal['vms:read', 'vms:write', 'vms:exec', 'vms:share', 'public-urls', 'images', 'images:build', 'storage', 'storage:presign', 'projects:read', 'deploys', 'relay', 'pages', 'inference'] | str,
-        Field(
-            description="`images:build`: create image-builder sandboxes (labelled with the token's id) and use vms:read, vms:write and vms:exec on those builders only."
-        ),
-    ]
-
-
-class Image(RootModel[str]):
-    root: Annotated[str, Field(pattern='^[a-z][a-z0-9-]{0,63}\\*?$')]
+Image = TypeAliasType(
+    "Image", Annotated[str, Field(pattern='^[a-z][a-z0-9-]{0,63}\\*?$')]
+)
 
 
 class TokenConstraints(BaseModel):
@@ -511,9 +483,10 @@ class TokenConstraints(BaseModel):
     max_vcpus: Annotated[int | None, Field(alias='maxVcpus', ge=1)] = None
     max_memory_mb: Annotated[int | None, Field(alias='maxMemoryMb', ge=128)] = None
     max_ttl_seconds: Annotated[int | None, Field(alias='maxTtlSeconds', ge=60)] = None
-    network_modes: Annotated[list[NetworkMode] | None, Field(alias='networkModes')] = (
-        None
-    )
+    network_modes: Annotated[
+        list[Literal['none', 'registries', 'open', 'ci', 'ci-strict'] | str] | None,
+        Field(alias='networkModes'),
+    ] = None
     names: list[str] | None = None
     name_prefix: Annotated[str | None, Field(alias='namePrefix')] = None
     projects: list[str] | None = None
@@ -551,7 +524,7 @@ class TokenList(BaseModel):
         populate_by_name=True,
     )
     tokens: list[Token]
-    capabilities: list[TokenCapability]
+    capabilities: list[Literal['vms:read', 'vms:write', 'vms:exec', 'vms:share', 'public-urls', 'images', 'images:build', 'storage', 'storage:presign', 'projects:read', 'deploys', 'relay', 'pages', 'inference'] | str]
 
 
 class CreateTokenRequest(BaseModel):
@@ -560,8 +533,13 @@ class CreateTokenRequest(BaseModel):
         populate_by_name=True,
     )
     name: Annotated[str, Field(max_length=100, min_length=1)]
-    scopes: Annotated[list[TokenCapability], Field(min_length=1)]
-    capabilities: list[TokenCapability] | None = None
+    scopes: Annotated[
+        list[Literal['vms:read', 'vms:write', 'vms:exec', 'vms:share', 'public-urls', 'images', 'images:build', 'storage', 'storage:presign', 'projects:read', 'deploys', 'relay', 'pages', 'inference'] | str],
+        Field(min_length=1),
+    ]
+    capabilities: list[Literal['vms:read', 'vms:write', 'vms:exec', 'vms:share', 'public-urls', 'images', 'images:build', 'storage', 'storage:presign', 'projects:read', 'deploys', 'relay', 'pages', 'inference'] | str] | None = (
+        None
+    )
     constraints: TokenConstraints | None = None
     expires_at: Annotated[AwareDatetime | None, Field(alias='expiresAt')] = None
     expires: Annotated[str | None, Field(pattern='^[0-9]+(d|h)$')] = None
@@ -1041,7 +1019,12 @@ class NetworkUpdateResponse(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
     )
-    network: NetworkMode
+    network: Annotated[
+        Literal['none', 'registries', 'open', 'ci', 'ci-strict'] | str,
+        Field(
+            description='none: no network. registries: package registries only. open: the internet. ci and ci-strict: the CI profiles.'
+        ),
+    ]
     egress_allow: Annotated[list[str], Field(alias='egressAllow')]
 
 
@@ -1193,22 +1176,17 @@ class ImageList(BaseModel):
     account: list[Image1]
 
 
-class ImageChunkItem(RootModel[int]):
-    root: Annotated[int, Field(ge=0)]
+ImageChunkItem = TypeAliasType("ImageChunkItem", Annotated[int, Field(ge=0)])
 
 
-class ImageChunkItem1(RootModel[str]):
-    root: Annotated[str, Field(pattern='^[0-9a-f]{64}$')]
+ImageChunkItem1 = TypeAliasType(
+    "ImageChunkItem1", Annotated[str, Field(pattern='^[0-9a-f]{64}$')]
+)
 
 
-class ImageChunkItem3(RootModel[int]):
-    root: Annotated[int, Field(ge=1, le=4259840)]
-
-
-class ImageChunk(
-    RootModel[tuple[ImageChunkItem, ImageChunkItem1, ImageChunkItem1, ImageChunkItem3]]
-):
-    root: tuple[ImageChunkItem, ImageChunkItem1, ImageChunkItem1, ImageChunkItem3]
+ImageChunkItem3 = TypeAliasType(
+    "ImageChunkItem3", Annotated[int, Field(ge=1, le=4259840)]
+)
 
 
 class CreateImageResponse(BaseModel):
@@ -1539,16 +1517,13 @@ class CreateShareRequest(BaseModel):
     record: Record | None = None
 
 
-class CoordinateItem(RootModel[int]):
-    root: Annotated[int, Field(ge=0)]
+CoordinateItem = TypeAliasType("CoordinateItem", Annotated[int, Field(ge=0)])
 
 
-class StartCoordinateItem(RootModel[int]):
-    root: Annotated[int, Field(ge=0)]
+StartCoordinateItem = TypeAliasType("StartCoordinateItem", Annotated[int, Field(ge=0)])
 
 
-class RegionItem(RootModel[int]):
-    root: Annotated[int, Field(ge=0)]
+RegionItem = TypeAliasType("RegionItem", Annotated[int, Field(ge=0)])
 
 
 class ComputerRequest(BaseModel):
@@ -1734,24 +1709,15 @@ class PutPartResponse(BaseModel):
     etag: str
 
 
-class ExecFrame(
-    RootModel[
-        ExecStartedFrame
-        | ExecAttachedFrame
-        | ExecOutputFrame
-        | ExecGapFrame
-        | ExecPingFrame
-        | ExecExitFrame
-        | ExecErrorFrame
-        | ExecDetachedFrame
-    ]
-):
-    root: Annotated[
+ExecFrame = TypeAliasType(
+    "ExecFrame",
+    Annotated[
         ExecStartedFrame | ExecAttachedFrame | ExecOutputFrame | ExecGapFrame | ExecPingFrame | ExecExitFrame | ExecErrorFrame | ExecDetachedFrame,
         Field(
             description='One line of an exec stream. Read until `exit` (the command ended), `detached` (the connection\nended, a resumable command keeps running: reattach with attachExec) or `error`.\n'
         ),
-    ]
+    ],
+)
 
 
 class CreateImageRequest(BaseModel):
@@ -1766,7 +1732,7 @@ class CreateImageRequest(BaseModel):
     bytes: Annotated[int, Field(ge=1)]
     chunk_size: Annotated[Literal[4194304], Field(alias='chunkSize')]
     chunks: Annotated[
-        list[ImageChunk],
+        list[tuple[ImageChunkItem, ImageChunkItem1, ImageChunkItem1, ImageChunkItem3]],
         Field(
             description="The image's non-empty chunks as `[index, sha256, key, storedBytes]`, indexes strictly increasing; a chunk not listed is zeros. `sha256` names the plaintext chunk, `key` the sha256 of its stored (zstd) bytes."
         ),
