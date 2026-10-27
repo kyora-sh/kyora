@@ -333,11 +333,10 @@ class Transport:
         until = end_of(options, None if streamed else self.timeout)
         override = options.get("retry")
         retry = None if override is False or self.retry is False else override or self.retry
-        headers = {
-            name: value for name, value in (options.get("headers") or {}).items() if name.lower() != "idempotency-key"
-        }
+        headers = dict(options.get("headers") or {})
         keyed = parts.keyed
         if spec["idempotency_key"]:
+            headers = {name: value for name, value in headers.items() if name.lower() != "idempotency-key"}
             key = caller_key(operation, parts.idempotency_key, options.get("headers"))
             headers["Idempotency-Key"] = key or random_key("sdk-")
             keyed = True

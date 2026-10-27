@@ -29,6 +29,13 @@ def test_calls_block_and_answer_models(sync):
     assert requests[0].headers["authorization"] == "Bearer kyora_test"
 
 
+def test_idempotency_key_headers_go_out_once_on_creates_and_as_given_elsewhere(sync):
+    kyora, requests = sync(lambda r, i: json(201 if r.method == "POST" else 200, sandbox("sb_1")))
+    kyora.sandboxes.create({}, headers={"idempotency-KEY": "job-42"})
+    kyora.sandboxes.get("sb_1", headers={"IdemPotency-key": "job-43"})
+    assert [r.headers.get_list("idempotency-key") for r in requests] == [["job-42"], ["job-43"]]
+
+
 def test_errors_raise_as_they_are(sync):
     kyora, _ = sync(lambda r, i: error(409, "name_taken"))
     with pytest.raises(KyoraError) as caught:

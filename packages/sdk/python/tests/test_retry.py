@@ -186,6 +186,13 @@ async def test_two_different_keys_are_a_value_error_before_anything_is_sent(clie
     assert requests == []
 
 
+async def test_operations_without_a_key_in_the_spec_pass_a_callers_idempotency_key_header_through_as_given(client):
+    kyora, requests = client(lambda r, i: json(200, sandbox("sb_1")))
+    await kyora.sandboxes.get("sb_1", headers={"IdemPotency-key": "job-42"})
+    await kyora.call("getSandbox", path={"id": "sb_1"}, headers={"IDEMPOTENCY-KEY": "job-43"})
+    assert [r.headers.get_list("idempotency-key") for r in requests] == [["job-42"], ["job-43"]]
+
+
 async def test_operations_without_a_key_in_the_spec_get_none(client):
     kyora, requests = client(lambda r, i: json(200, sandbox("sb_1")))
     await kyora.sandboxes.get("sb_1")

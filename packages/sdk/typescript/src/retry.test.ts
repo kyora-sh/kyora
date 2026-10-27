@@ -121,6 +121,13 @@ describe("idempotency keys", () => {
     expect(requests).toHaveLength(0)
   })
 
+  test("operations without a key in the spec pass a caller's Idempotency-Key header through as given", async () => {
+    const { kyora, requests } = client(() => json(200, sandbox("sb_1")))
+    await kyora.sandboxes.get("sb_1", { headers: { "IdemPotency-key": "job-42" } })
+    await kyora.call("getSandbox", { path: { id: "sb_1" } }, { headers: { "IDEMPOTENCY-KEY": "job-43" } })
+    expect(requests.map((request) => request.headers.get("idempotency-key"))).toEqual(["job-42", "job-43"])
+  })
+
   test("operations without a key in the spec get none", async () => {
     const { kyora, requests } = client(() => json(200, { snapshot: true, id: "snap_1", status: "ready" }))
     await kyora.snapshots.create("sb_1", {}, { wait: false })

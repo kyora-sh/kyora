@@ -192,9 +192,10 @@ export class Transport {
     const streamed = spec.response === "ndjson" || spec.response === "binary"
     const until = endOf(options, streamed ? undefined : this.config.timeoutMs)
     const retry = options.retry === false || this.config.retry === false ? null : { ...this.config.retry, ...options.retry }
-    const headers: Record<string, string> = Object.fromEntries(Object.entries(options.headers ?? {}).filter(([name]) => name.toLowerCase() !== "idempotency-key"))
+    let headers: Record<string, string> = { ...options.headers }
     let keyed = parts.keyed === true
     if (spec.idempotencyKey) {
+      headers = Object.fromEntries(Object.entries(headers).filter(([name]) => name.toLowerCase() !== "idempotency-key"))
       headers["Idempotency-Key"] = callerKey(operation, parts.idempotencyKey, options.headers) ?? randomKey("sdk-")
       keyed = true
     }
