@@ -77,7 +77,8 @@ more commands (every sandbox argument accepts a name, id or unique id prefix):
   kyora vms ls --label key=value            only sandboxes with that label (repeatable)
   kyora vms domain add <hostname> --to <label> [--dcv http|txt]
                                             serve a public name on your own domain: prints the DNS
-                                            records to add (a CNAME to custom.kyora.run)
+                                            records to add (a CNAME to custom.kyora.run); --page <name>
+                                            instead of --to serves one of your public pages
   kyora vms domain ls | status <hostname> | rm <hostname>
                                             your custom domains and their current status
   kyora vms resize <id> --disk <size>       grow a running sandbox disk, for example --disk 60G
@@ -251,6 +252,7 @@ const OPTIONS = {
   out: { type: "string", short: "o", multiple: true },
   to: { type: "string" },
   dcv: { type: "string" },
+  page: { type: "string" },
   keep: { type: "boolean" },
   dest: { type: "string" },
   "no-git": { type: "boolean" },
@@ -327,7 +329,7 @@ const VERBS: Record<string, Option[]> = {
   computer: ["out", "screenshot", "modifiers", "repeat", "scale"],
   expose: ["name", "private", "public", "trusted", "list"],
   unexpose: [],
-  domain: ["to", "dcv"],
+  domain: ["to", "page", "dcv"],
   shell: ["name", "view", "list", "kill", "env", "cwd", "clipboard"],
   share: ["ttl", "list", "revoke", "socket", "xauthority", "quality", "mode", "keys", "record", "segment-seconds"],
   login: ["url", "org"],
@@ -558,7 +560,7 @@ export async function vmsMain(argv: string[]): Promise<number> {
       return snapshotCommand(api, { verb, positionals, json: asJson, full: Boolean(values.full), name: values.name, ttl: values.ttl, noWait: Boolean(values["no-wait"]), noResume: Boolean(values["no-resume"]), given: Object.keys(values), ...(spec ? { spec } : {}), ...(restoreRequested ? { wait: waitSeconds(values) } : {}) }, usage)
     }
     case "domain":
-      return domainCommand(api, { positionals, to: values.to, dcv: values.dcv, json: asJson }, usage)
+      return domainCommand(api, { positionals, to: values.to, page: values.page, dcv: values.dcv, json: asJson }, usage)
     case "unexpose": {
       const [id, label, extra] = positionals
       if (!id || extra) usage("usage: kyora vms unexpose [<sandbox>] <label>")
