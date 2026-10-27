@@ -179,6 +179,7 @@ async def test_a_stalled_stream_ends_at_the_deadline_and_is_closed(client):
         await kyora.files.upload_tar("sb_1", stalled(), timeout=0.1)
     assert caught.value.code == "timeout"
     assert time.monotonic() - begun < 1
+    await kyora.aclose()
     assert closed == [True]
     assert requests == []
 
@@ -430,3 +431,93 @@ async def test_a_restore_whose_on_progress_stalls_is_destroyed_at_the_deadline(c
     with pytest.raises(KyoraError, match="deadline"):
         await kyora.snapshots.restore("snap_1", on_progress=stalled, timeout=0.2)
     assert (requests[-1].method, requests[-1].url.path) == ("DELETE", "/v1/sandboxes/sb_r")
+
+
+async def test_a_source_whose_finalizer_awaits_never_delays_the_error_or_the_abort(client):
+    big = bytes(33 * MiB)
+
+    async def source():
+        try:
+            yield big
+            yield big
+            await hang()
+        finally:
+            await asyncio.sleep(1)
+
+    deleted = []
+    base = multipart(32 * MiB)
+
+    async def handler(r, i):
+        if r.method == "DELETE":
+            deleted.append(time.monotonic())
+        return await base(r, i)
+
+    kyora, _ = client(handler)
+    begun = time.monotonic()
+    with pytest.raises(KyoraError, match="deadline"):
+        await kyora.files.upload_tar("sb_1", source(), timeout=0.3)
+    assert time.monotonic() - begun < 0.8
+    await asyncio.sleep(0.05)
+    assert len(deleted) == 1 and deleted[0] - begun < 0.8
+    await kyora.aclose()
+
+
+async def test_a_body_whose_close_is_slow_never_delays_the_timeout(client):
+    import httpx
+    from fakes import Lines
+
+    class SlowClose(Lines):
+        async def aclose(self) -> None:
+            await asyncio.sleep(1)
+            self.closed = True
+
+    kyora, _ = client(lambda r, i: httpx.Response(200, stream=SlowClose(["partial"], hang=True, broken=False)))
+    response = await kyora.call("pullFiles", path={"id": "sb_1"}, query={"path": ["/work"]}, timeout=0.3)
+    begun = time.monotonic()
+    with pytest.raises(KyoraError) as caught:
+        await response.aread()
+    assert caught.value.code == "timeout"
+    assert time.monotonic() - begun < 0.8
+    await kyora.aclose()
+
+
+async def test_a_streamed_answer_nobody_reads_is_closed_at_its_deadline(client):
+    import httpx
+    from fakes import Lines
+
+    streams = []
+
+    def handler(r, i):
+        stream = Lines(["partial"], hang=True, broken=False)
+        streams.append(stream)
+        return httpx.Response(200, stream=stream)
+
+    kyora, _ = client(handler)
+    response = await kyora.call("pullFiles", path={"id": "sb_1"}, query={"path": ["/work"]}, timeout=0.3)
+    assert not streams[0].closed
+    await asyncio.sleep(0.6)
+    assert streams[0].closed and response.is_closed
+
+
+async def test_closing_the_client_never_waits_on_a_cleanup_that_ignores_cancellation(client, monkeypatch):
+    from kyora import _http
+
+    monkeypatch.setattr(_http, "CLEANUP_TIMEOUT", 0.1)
+    monkeypatch.setattr(_http, "SETTLE", 0.1)
+    finished = []
+
+    async def stubborn():
+        try:
+            await hang()
+        except asyncio.CancelledError:
+            await asyncio.sleep(0.4)
+            finished.append(True)
+
+    kyora, _ = client(lambda r, i: json(200, {}))
+    kyora.transport.cleanup(stubborn())
+    begun = time.monotonic()
+    await kyora.aclose()
+    assert time.monotonic() - begun < 0.4
+    assert finished == []
+    await asyncio.sleep(0.5)
+    assert finished == [True]

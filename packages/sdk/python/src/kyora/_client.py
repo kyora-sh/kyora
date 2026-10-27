@@ -28,7 +28,6 @@ from ._http import (
     left,
     read_json,
     timeout_error,
-    within,
 )
 from ._models import (
     CreateSandboxRequest,
@@ -134,6 +133,7 @@ async def notify(callback: Callable[[Any], Any] | None, value: Any) -> None:
 
 
 async def poll(
+    transport: Transport,
     operation: str,
     current: M,
     fetch: Callable[[CallOptions], Awaitable[M]],
@@ -144,14 +144,14 @@ async def poll(
     until = end_of(options, POLL_TIMEOUT)  # type: ignore[arg-type]
     delay = options.get("interval", 1.0)
     on_progress = options.get("on_progress")
-    await within(notify(on_progress, current), until, operation)
+    await transport.within(notify(on_progress, current), until, operation)
     while not done(current):
         if time.time() + delay >= until:
             raise timeout_error(operation)
         await asyncio.sleep(delay)
         delay = min(5.0, delay * 2)
         current = await fetch({"deadline": until})
-        await within(notify(on_progress, current), until, operation)
+        await transport.within(notify(on_progress, current), until, operation)
     return current
 
 
@@ -311,7 +311,7 @@ class Sandboxes:
             return response.status_code, read_json("getQueueTicket", response.status_code, await response.aread())
 
         try:
-            await within(notify(on_queued, ticket), until, "createSandbox")
+            await self._transport.within(notify(on_queued, ticket), until, "createSandbox")
             while True:
                 remaining = until - time.time()
                 if remaining <= 1:
@@ -332,11 +332,12 @@ class Sandboxes:
                 failures = 0
                 if status != 202 or not is_ticket(answer):
                     return load(Sandbox, answer, "getQueueTicket")
-                await within(notify(on_queued, load(QueueTicket, answer, "getQueueTicket")), until, "createSandbox")
+                queued = load(QueueTicket, answer, "getQueueTicket")
+                await self._transport.within(notify(on_queued, queued), until, "createSandbox")
         except BaseException:
             # out of line, so kyora never places a sandbox nobody waits for
             try:
-                await asyncio.wait_for(self.cancel_ticket(ticket.ticket), CLEANUP_TIMEOUT)
+                await self._transport.race(self.cancel_ticket(ticket.ticket), CLEANUP_TIMEOUT)
             except (KyoraError, asyncio.TimeoutError):
                 pass
             raise
@@ -437,6 +438,7 @@ class Sandboxes:
             return current.status == "running"
 
         return await poll(
+            self._transport,
             "getSandbox",
             first,
             lambda call: self.get(first.id, **call),
@@ -486,6 +488,7 @@ class Snapshots:
             return current.status == "ready"
 
         return await poll(
+            self._transport,
             "getSnapshot",
             snapshot,
             lambda call: self.get(snapshot.id, **call),
@@ -624,8 +627,9 @@ async def _iter_chunks(chunks: Iterable[bytes]) -> AsyncIterator[bytes]:
 class ByteStream:
     """An open answer's body, chunk by chunk, within the call's deadline; `aclose` frees the connection."""
 
-    def __init__(self, response: httpx.Response, until: float, operation: str) -> None:
+    def __init__(self, response: httpx.Response, transport: Transport, until: float, operation: str) -> None:
         self._response = response
+        self._transport = transport
         self._chunks = response.aiter_bytes()
         self._until = until
         self._operation = operation
@@ -635,13 +639,13 @@ class ByteStream:
 
     async def __anext__(self) -> bytes:
         try:
-            return await within(self._chunks.__anext__(), self._until, self._operation)
+            return await self._transport.within(self._chunks.__anext__(), self._until, self._operation)
         except BaseException:
-            await self.aclose()
+            await self._transport.closing(self._response.aclose(), self._until)
             raise
 
     async def aclose(self) -> None:
-        await self._response.aclose()
+        await self._transport.closing(self._response.aclose())
 
     async def __aenter__(self) -> ByteStream:
         return self
@@ -680,7 +684,7 @@ class Files:
         upload: CreateUploadResponse | None = None
         try:
             # a first part that is the whole archive goes up as it is
-            first = await within(source.next(SINGLE_UPLOAD_BYTES + 1), until, "uploadTar")
+            first = await self._transport.within(source.next(SINGLE_UPLOAD_BYTES + 1), until, "uploadTar")
             if len(first) <= SINGLE_UPLOAD_BYTES:
                 parts = RequestParts(path={"id": sandbox}, query={"dest": dest}, body=first, content_type=content_type)
                 return load(PushFilesResponse, await self._transport.json("pushFiles", parts, call), "pushFiles")
@@ -700,7 +704,7 @@ class Files:
             n = 0
             while True:
                 n += 1
-                part = await within(source.next(size), until, "uploadTar")
+                part = await self._transport.within(source.next(size), until, "uploadTar")
                 if not part:
                     break
                 path = {"id": sandbox, "upload": upload.upload_id, "n": n}
@@ -728,7 +732,8 @@ class Files:
         or close it (`aclose`, or `async with`)."""
         until = end_of(options)
         parts = RequestParts(path={"id": sandbox}, query={"path": list(paths)})
-        return ByteStream(await self._transport.send("pullFiles", parts, options), until, "pullFiles")
+        response = await self._transport.send("pullFiles", parts, options)
+        return ByteStream(response, self._transport, until, "pullFiles")
 
     async def download(self, sandbox: str, paths: Iterable[str], **options: Unpack[CallOptions]) -> list[TarEntry]:
         """the entries of `paths`, read whole into memory; for large trees, use download_tar"""

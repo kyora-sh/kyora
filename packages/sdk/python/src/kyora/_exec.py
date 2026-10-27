@@ -119,6 +119,14 @@ class Collector:
         """a started or attached frame came: the command runs, whether or not kyora named it"""
 
     async def output(self, stream: Stream, data: bytes) -> None:
+        """counts a chunk only once on_output took it, so the offsets never pass what the caller got"""
+        if self.on_output is not None:
+            try:
+                answer = self.on_output(stream, data)
+                if inspect.isawaitable(answer):
+                    await answer
+            except Exception as error:
+                raise OutputCallbackError(error) from error
         setattr(self.offsets, stream, getattr(self.offsets, stream) + len(data))
         room = self.limit - self.kept_bytes[stream]
         if len(data) > room:
@@ -127,14 +135,6 @@ class Collector:
         if keep:
             self.kept[stream].append(keep)
             self.kept_bytes[stream] += len(keep)
-        if self.on_output is None:
-            return
-        try:
-            answer = self.on_output(stream, data)
-            if inspect.isawaitable(answer):
-                await answer
-        except Exception as error:
-            raise OutputCallbackError(error) from error
 
     @property
     def untouched(self) -> bool:
@@ -175,7 +175,7 @@ class Ending:
     progressed: bool = False
 
 
-async def read_stream(response: httpx.Response, collector: Collector, idle: float) -> Ending:
+async def read_stream(response: httpx.Response, collector: Collector, idle: float, transport: Transport) -> Ending:
     """Reads one exec stream to its end or its break, and closes it. A stream counts as broken when it
     ends without an exit, says `detached`, or goes silent past `idle` once the server has shown it sends
     keepalives; and when it carries only kyora cloud's own keepalives, nothing from the machine, that long."""
@@ -245,10 +245,8 @@ async def read_stream(response: httpx.Response, collector: Collector, idle: floa
             if cloud_marks:
                 limits.append(machine + idle)
             try:
-                if limits:
-                    chunk = await asyncio.wait_for(chunks.__anext__(), max(0.0, min(limits) - time.monotonic()))
-                else:
-                    chunk = await chunks.__anext__()
+                timeout = min(limits) - time.monotonic() if limits else None
+                chunk = await transport.race(chunks.__anext__(), timeout)
             except StopAsyncIteration:
                 break
             except asyncio.TimeoutError:
@@ -267,7 +265,7 @@ async def read_stream(response: httpx.Response, collector: Collector, idle: floa
         if ending is None:
             return Ending("break", message=str(error), progressed=progressed)
     finally:
-        await response.aclose()
+        await transport.closing(response.aclose())
     return ending or Ending("break", message="the stream ended without an exit status", progressed=progressed)
 
 
@@ -448,7 +446,7 @@ class Exec:
         async def loop() -> ExecResult:
             asked: tuple[float, KyoraError] | None = None
             try:
-                ending = await read_stream(await first(until), collector, idle)
+                ending = await read_stream(await first(until), collector, idle, self._transport)
             except KyoraError as error:
                 # no answer, or one that may have come after the command started: its key finds it, if it did
                 if rejoin is None or past_deadline() or not ambiguous(error):
@@ -503,19 +501,16 @@ class Exec:
                         last = str(failure)
                         if failure.retry_after is not None:
                             asked = (failure.retry_after, failure)
-                ending = await read_stream(response, collector, idle)
+                ending = await read_stream(response, collector, idle, self._transport)
 
         try:
-            remaining = left(until)
-            if remaining is None:
-                return await loop()
-            return await asyncio.wait_for(loop(), max(0.0, remaining))
+            return await self._transport.race(loop(), left(until))
         except OutputCallbackError as error:
             raise error.error from None
         except asyncio.CancelledError:
             if options.get("cancel_on_cancel", True) and collector.exec_id:
                 try:
-                    await asyncio.wait_for(self.cancel(sandbox, collector.exec_id), CANCEL_TIMEOUT)
+                    await self._transport.race(self.cancel(sandbox, collector.exec_id), CANCEL_TIMEOUT)
                 except (KyoraError, asyncio.TimeoutError):
                     pass
             raise

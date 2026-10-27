@@ -108,46 +108,45 @@ def left(until: float) -> float | None:
     return None if until == INF else until - time.time()
 
 
-async def within(awaitable: Awaitable[T], until: float, operation: str) -> T:
-    """`awaitable`, or a timeout error at `until`"""
-    remaining = left(until)
-    if remaining is None:
-        return await awaitable
-    try:
-        return await asyncio.wait_for(awaitable, max(0.0, remaining))
-    except asyncio.TimeoutError:
-        raise timeout_error(operation) from None
-
-
 Reader = Callable[[httpx.Response, int], Awaitable[T]]
 
 CLEANUP_TIMEOUT = 5.0
 """seconds a best-effort cleanup (an upload's abort, a ticket's cancel) may take"""
+SETTLE = 0.5
+"""seconds `drain` gives the cleanups it cancelled to finish"""
 
 
 class Bounded(httpx.AsyncByteStream):
-    """a response body read within the call's deadline; closed when the reading fails"""
+    """A response body read within the call's deadline. Closed when the reading fails, and at the deadline
+    whether or not anyone reads it, so a paused reader never keeps the connection."""
 
-    def __init__(self, stream: httpx.AsyncByteStream, until: float, operation: str) -> None:
-        self.stream = stream
+    def __init__(self, response: httpx.Response, transport: Transport, until: float, operation: str) -> None:
+        self.stream: httpx.AsyncByteStream = response.stream  # type: ignore[assignment]
+        self.transport = transport
         self.until = until
         self.operation = operation
+        self.timer = asyncio.get_running_loop().call_later(
+            max(0.0, until - time.time()), lambda: transport.cleanup(response.aclose())
+        )
 
     async def __aiter__(self) -> AsyncIterator[bytes]:
         chunks = self.stream.__aiter__()
         try:
             while True:
                 try:
-                    chunk = await within(chunks.__anext__(), self.until, self.operation)
+                    chunk = await self.transport.within(chunks.__anext__(), self.until, self.operation)
                 except StopAsyncIteration:
+                    self.timer.cancel()
                     return
                 yield chunk
         except BaseException:
-            await self.stream.aclose()
+            self.timer.cancel()
+            await self.transport.closing(self.stream.aclose(), self.until)
             raise
 
     async def aclose(self) -> None:
-        await self.stream.aclose()
+        self.timer.cancel()
+        await self.transport.closing(self.stream.aclose())
 
 
 class Transport:
@@ -177,16 +176,66 @@ class Transport:
         return f"Transport(base_url={self.base_url!r}, token={'[token]' if self._token else None})"
 
     def cleanup(self, awaitable: Awaitable[Any], bound: float = CLEANUP_TIMEOUT) -> asyncio.Future[Any]:
-        """runs a best-effort cleanup in the background, bounded on its own; `drain` waits for it"""
-        task = asyncio.ensure_future(asyncio.wait_for(awaitable, bound))
+        """runs a best-effort cleanup in the background, cancelled once it takes `bound`; `drain` waits for it"""
+        task = asyncio.ensure_future(awaitable)
+        timer = asyncio.get_running_loop().call_later(bound, task.cancel)
+
+        def finished(done: asyncio.Future[Any]) -> None:
+            timer.cancel()
+            self._cleanups.discard(done)
+            if not done.cancelled():
+                done.exception()
+
         self._cleanups.add(task)
-        task.add_done_callback(lambda done: (self._cleanups.discard(done), done.cancelled() or done.exception()))
+        task.add_done_callback(finished)
         return task
 
+    async def closing(self, awaitable: Awaitable[Any], until: float = INF) -> None:
+        """a close run as a cleanup and waited for until `until`, at most CLEANUP_TIMEOUT; one that takes
+        longer finishes in the background"""
+        task = self.cleanup(awaitable)
+        remaining = left(until)
+        await asyncio.wait({task}, timeout=CLEANUP_TIMEOUT if remaining is None else max(0.0, remaining))
+
+    async def race(self, awaitable: Awaitable[T], timeout: float | None) -> T:
+        """`awaitable`, or asyncio.TimeoutError after `timeout` seconds. Unlike asyncio.wait_for it never
+        waits for the cancelled work: work past its time, or cancelled with its caller, is cancelled and
+        left to finish as a cleanup, so a slow finalizer can't hold the caller past its deadline."""
+        if timeout is None:
+            return await awaitable
+        task = asyncio.ensure_future(awaitable)
+        try:
+            done, _ = await asyncio.wait({task}, timeout=max(0.0, timeout))
+        except BaseException:
+            self.abandon(task)
+            raise
+        if not done:
+            self.abandon(task)
+            raise asyncio.TimeoutError
+        return task.result()
+
+    def abandon(self, task: asyncio.Future[Any]) -> None:
+        """cancels `task` without waiting for it; it finishes as a cleanup"""
+        task.cancel()
+        self.cleanup(task)
+
+    async def within(self, awaitable: Awaitable[T], until: float, operation: str) -> T:
+        """`awaitable`, or a timeout error at `until`"""
+        try:
+            return await self.race(awaitable, left(until))
+        except asyncio.TimeoutError:
+            raise timeout_error(operation) from None
+
     async def drain(self) -> None:
-        """waits for the cleanups still running, at most their bound"""
-        if self._cleanups:
-            await asyncio.wait(set(self._cleanups), timeout=CLEANUP_TIMEOUT)
+        """waits for the cleanups still running, at most CLEANUP_TIMEOUT, then cancels the rest and gives them
+        a moment to finish; a cleanup that won't end never holds up the close"""
+        if not self._cleanups:
+            return
+        _, pending = await asyncio.wait(set(self._cleanups), timeout=CLEANUP_TIMEOUT)
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.wait(pending, timeout=SETTLE)
 
     def redact(self, text: str) -> str:
         """an error text with the token taken out"""
@@ -306,17 +355,17 @@ class Transport:
                 if reader is None:
                     # the deadline keeps bounding a body the caller reads later
                     if until != INF:
-                        response.stream = Bounded(response.stream, until, operation)  # type: ignore[arg-type]
+                        response.stream = Bounded(response, self, until, operation)
                     keep = True
                     return response
-                return await within(reader(response, attempt), until, operation)
-            text = (await within(response.aread(), until, operation)).decode("utf-8", "replace")
+                return await self.within(reader(response, attempt), until, operation)
+            text = (await self.within(response.aread(), until, operation)).decode("utf-8", "replace")
             raise from_response(operation, response.status_code, text, response.headers.get("retry-after"), time.time())
         except (httpx.HTTPError, OSError) as caught:
             raise self._wrap(operation, "the answer broke off", caught) from None
         finally:
             if not keep:
-                await response.aclose()
+                await self.closing(response.aclose(), until)
 
     def _wrap(self, operation: str, what: str, error: BaseException) -> KyoraError:
         detail = self.redact(str(error) or type(error).__name__)
@@ -355,11 +404,11 @@ class Transport:
         request = self.client.build_request(spec["method"], url, headers=headers, content=content)
         try:
             sending = self.client.send(request, stream=True, follow_redirects=False)
-            response = await (asyncio.wait_for(sending, bound) if bound != INF else sending)
+            response = await self.race(sending, None if bound == INF else bound)
         except asyncio.TimeoutError:
             raise timeout_error(operation) from None
         if 300 <= response.status_code < 400:
-            await response.aclose()
+            await self.closing(response.aclose(), until)
             # a redirect would carry the token to wherever it points
             raise make_error(
                 f"{operation}: {self.base_url} redirected to {response.headers.get('location', '?')}; check base_url",

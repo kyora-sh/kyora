@@ -401,3 +401,34 @@ async def test_leaving_a_stream_early_cancels_the_command_unless_told_not_to(cli
     async with kyora.exec.stream("sb_1", {"cmd": ["x"]}, cancel_on_cancel=False) as stream:
         assert (await stream.__anext__()).data == b"a"
     assert requests[-1].method == "POST" and requests[-1].url.path.endswith("/exec")
+
+
+async def test_a_paused_stream_reader_never_loses_output_to_the_deadline(client):
+    chunks = [{"type": "stdout", "data": "x" * 10} for _ in range(100)]
+    kyora, _ = client(lambda r, i: ndjson([started(), *chunks], hang=True))
+    got = b""
+    with pytest.raises(ExecDetachedError) as caught:
+        async with kyora.exec.stream("sb_1", {"cmd": ["x"]}, timeout=0.3, cancel_on_cancel=False) as stream:
+            got += (await stream.__anext__()).data
+            await asyncio.sleep(0.5)
+            async for chunk in stream:
+                got += chunk.data
+    assert 0 < len(got) < 1000
+    assert caught.value.offsets == ByteOffsets(len(got), 0)
+
+
+async def test_an_on_output_whose_finalizer_awaits_never_holds_the_call_past_its_deadline(client):
+    kyora, _ = client(lambda r, i: ndjson([started(), {"type": "stdout", "data": "a"}], hang=True))
+
+    async def sink(stream, data):
+        try:
+            await hang()
+        finally:
+            await asyncio.sleep(1)
+
+    begun = time.monotonic()
+    with pytest.raises(ExecDetachedError) as caught:
+        await kyora.exec.run("sb_1", {"cmd": ["x"]}, on_output=sink, timeout=0.3)
+    assert time.monotonic() - begun < 0.8
+    assert (caught.value.code, caught.value.offsets) == ("timeout", ByteOffsets(0, 0))
+    await kyora.aclose()
