@@ -6,7 +6,7 @@ import math
 import re
 import time
 import uuid
-from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal, TypedDict, TypeVar
@@ -121,6 +121,34 @@ async def within(awaitable: Awaitable[T], until: float, operation: str) -> T:
 
 Reader = Callable[[httpx.Response, int], Awaitable[T]]
 
+CLEANUP_TIMEOUT = 5.0
+"""seconds a best-effort cleanup (an upload's abort, a ticket's cancel) may take"""
+
+
+class Bounded(httpx.AsyncByteStream):
+    """a response body read within the call's deadline; closed when the reading fails"""
+
+    def __init__(self, stream: httpx.AsyncByteStream, until: float, operation: str) -> None:
+        self.stream = stream
+        self.until = until
+        self.operation = operation
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        chunks = self.stream.__aiter__()
+        try:
+            while True:
+                try:
+                    chunk = await within(chunks.__anext__(), self.until, self.operation)
+                except StopAsyncIteration:
+                    return
+                yield chunk
+        except BaseException:
+            await self.stream.aclose()
+            raise
+
+    async def aclose(self) -> None:
+        await self.stream.aclose()
+
 
 class Transport:
     def __init__(
@@ -143,9 +171,22 @@ class Transport:
         self.timeout = timeout
         self.retry = retry
         self.user_agent = user_agent
+        self._cleanups: set[asyncio.Future[Any]] = set()
 
     def __repr__(self) -> str:
         return f"Transport(base_url={self.base_url!r}, token={'[token]' if self._token else None})"
+
+    def cleanup(self, awaitable: Awaitable[Any], bound: float = CLEANUP_TIMEOUT) -> asyncio.Future[Any]:
+        """runs a best-effort cleanup in the background, bounded on its own; `drain` waits for it"""
+        task = asyncio.ensure_future(asyncio.wait_for(awaitable, bound))
+        self._cleanups.add(task)
+        task.add_done_callback(lambda done: (self._cleanups.discard(done), done.cancelled() or done.exception()))
+        return task
+
+    async def drain(self) -> None:
+        """waits for the cleanups still running, at most their bound"""
+        if self._cleanups:
+            await asyncio.wait(set(self._cleanups), timeout=CLEANUP_TIMEOUT)
 
     def redact(self, text: str) -> str:
         """an error text with the token taken out"""
@@ -263,6 +304,9 @@ class Transport:
         try:
             if response.is_success or response.status_code in parts.accept:
                 if reader is None:
+                    # the deadline keeps bounding a body the caller reads later
+                    if until != INF:
+                        response.stream = Bounded(response.stream, until, operation)  # type: ignore[arg-type]
                     keep = True
                     return response
                 return await within(reader(response, attempt), until, operation)

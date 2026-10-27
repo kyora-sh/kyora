@@ -338,3 +338,95 @@ async def test_ports_and_tokens_reach_their_operations(client):
         "DELETE /v1/tokens/tok_1",
     ]
     assert requests[3].json["constraints"] == {"labels": {"ci": "1"}, "maxSandboxes": 2}
+
+
+async def test_a_streamed_call_keeps_its_deadline_through_the_body(client):
+    import httpx
+    from fakes import Lines
+
+    streams = []
+
+    def handler(r, i):
+        stream = Lines(["partial"], hang=True, broken=False)
+        streams.append(stream)
+        return httpx.Response(200, stream=stream)
+
+    kyora, _ = client(handler)
+    response = await kyora.call("pullFiles", path={"id": "sb_1"}, query={"path": ["/work"]}, timeout=0.05)
+    begun = time.monotonic()
+    with pytest.raises(KyoraError) as caught:
+        await response.aread()
+    assert caught.value.code == "timeout"
+    assert time.monotonic() - begun < 0.5
+    assert streams[0].closed
+
+
+async def test_closing_the_client_waits_for_an_upload_abort_still_running(client):
+    deleted = []
+    base = multipart(32 * MiB, delay=0.08)
+
+    async def handler(r, i):
+        if r.method == "DELETE":
+            await asyncio.sleep(0.05)
+            deleted.append(r.url.path)
+            return json(204)
+        return await base(r, i)
+
+    kyora, _ = client(handler)
+    with pytest.raises(KyoraError, match="deadline"):
+        async with kyora:
+            await kyora.files.upload_tar("sb_1", bytes(65 * MiB), timeout=0.2)
+    assert deleted == ["/v1/sandboxes/sb_1/uploads/up_1"]
+
+
+async def test_a_failed_upload_aborts_at_once_while_its_source_closes(client):
+    closed = []
+    big = bytes(33 * MiB)
+
+    async def source():
+        try:
+            yield big
+            yield big
+        finally:
+            await asyncio.sleep(1)
+            closed.append(True)
+
+    kyora, requests = client(multipart(32 * MiB, delay=0.6))
+    begun = time.monotonic()
+    with pytest.raises(KyoraError, match="deadline"):
+        await kyora.files.upload_tar("sb_1", source(), timeout=0.5)
+    assert time.monotonic() - begun < 0.9
+    await asyncio.sleep(0.1)
+    assert requests[-1].method == "DELETE"
+    assert closed == []
+    await kyora.aclose()
+    assert closed == [True]
+
+
+async def test_a_stalled_on_progress_is_bounded_by_the_deadline(client):
+    kyora, _ = client(lambda r, i: json(200, sandbox("sb_1", status="starting")))
+
+    async def stalled(current):
+        await hang()
+
+    begun = time.monotonic()
+    with pytest.raises(KyoraError, match="deadline"):
+        await kyora.sandboxes.wait_until_running("sb_1", on_progress=stalled, timeout=0.1)
+    assert time.monotonic() - begun < 1
+
+
+async def test_a_restore_whose_on_progress_stalls_is_destroyed_at_the_deadline(client):
+    def handler(r, i):
+        if r.method == "POST":
+            return json(202, sandbox("sb_r", status="starting"))
+        if r.method == "DELETE":
+            return json(204)
+        return json(200, sandbox("sb_r", status="starting"))
+
+    async def stalled(current):
+        await hang()
+
+    kyora, requests = client(handler)
+    with pytest.raises(KyoraError, match="deadline"):
+        await kyora.snapshots.restore("snap_1", on_progress=stalled, timeout=0.2)
+    assert (requests[-1].method, requests[-1].url.path) == ("DELETE", "/v1/sandboxes/sb_r")

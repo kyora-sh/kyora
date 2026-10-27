@@ -300,7 +300,7 @@ class Output:
 class ExecStream:
     """A running command's output as it arrives, Output(stream, data) by Output; `.result` once it ends.
     Use it as `async with kyora.exec.stream(...) as stream: async for chunk in stream: ...`. Leaving early
-    stops waiting; the command keeps running (cancel_on_cancel cancels it)."""
+    cancels the call, and with it the command unless cancel_on_cancel=False."""
 
     def __init__(self, start: Callable[[OnOutput], Awaitable[ExecResult]], buffer: int = 64) -> None:
         self._queue: asyncio.Queue[Output] = asyncio.Queue(buffer)

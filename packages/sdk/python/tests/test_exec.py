@@ -385,3 +385,19 @@ async def test_cancel_stops_a_command(client):
     kyora, requests = client(lambda r, i: json(200, {"cancelled": True, "running": False}))
     assert (await kyora.exec.cancel("sb_1", ID)).cancelled is True
     assert (requests[0].method, requests[0].url.path) == ("POST", f"/v1/sandboxes/sb_1/execs/{ID}/cancel")
+
+
+async def test_leaving_a_stream_early_cancels_the_command_unless_told_not_to(client):
+    kyora, requests = client(
+        lambda r, i: (
+            json(200, {"cancelled": True})
+            if r.url.path.endswith("/cancel")
+            else ndjson([started(), {"type": "stdout", "data": "a"}], hang=True)
+        )
+    )
+    async with kyora.exec.stream("sb_1", {"cmd": ["x"]}) as stream:
+        assert (await stream.__anext__()).data == b"a"
+    assert requests[-1].url.path == f"/v1/sandboxes/sb_1/execs/{ID}/cancel"
+    async with kyora.exec.stream("sb_1", {"cmd": ["x"]}, cancel_on_cancel=False) as stream:
+        assert (await stream.__anext__()).data == b"a"
+    assert requests[-1].method == "POST" and requests[-1].url.path.endswith("/exec")

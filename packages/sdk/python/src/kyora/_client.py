@@ -15,6 +15,7 @@ from typing_extensions import Unpack
 from ._errors import KyoraError, make_error
 from ._exec import Exec
 from ._http import (
+    CLEANUP_TIMEOUT,
     DEFAULT_BASE_URL,
     DEFAULT_RETRY,
     USER_AGENT,
@@ -79,7 +80,6 @@ TRANSFER_TIMEOUT = 600.0
 """one request per part of a large upload may take this long"""
 MIN_PART_BYTES = 64 * 1024
 MAX_PART_BYTES = 256 * 1024 * 1024
-ABORT_UPLOAD_TIMEOUT = 5.0
 
 Archive = bytes | bytearray | memoryview | IO[bytes] | Iterable[bytes] | AsyncIterable[bytes]
 
@@ -144,14 +144,14 @@ async def poll(
     until = end_of(options, POLL_TIMEOUT)  # type: ignore[arg-type]
     delay = options.get("interval", 1.0)
     on_progress = options.get("on_progress")
-    await notify(on_progress, current)
+    await within(notify(on_progress, current), until, operation)
     while not done(current):
         if time.time() + delay >= until:
             raise timeout_error(operation)
         await asyncio.sleep(delay)
         delay = min(5.0, delay * 2)
         current = await fetch({"deadline": until})
-        await notify(on_progress, current)
+        await within(notify(on_progress, current), until, operation)
     return current
 
 
@@ -203,6 +203,8 @@ class AsyncKyora:
         return f"AsyncKyora(base_url={self.transport.base_url!r}, region={self.region!r})"
 
     async def aclose(self) -> None:
+        """waits for background cleanups (at most a few seconds), then closes the connections"""
+        await self.transport.drain()
         if self._owned:
             await self.transport.client.aclose()
 
@@ -334,7 +336,7 @@ class Sandboxes:
         except BaseException:
             # out of line, so kyora never places a sandbox nobody waits for
             try:
-                await asyncio.wait_for(self.cancel_ticket(ticket.ticket), ABORT_UPLOAD_TIMEOUT)
+                await asyncio.wait_for(self.cancel_ticket(ticket.ticket), CLEANUP_TIMEOUT)
             except (KyoraError, asyncio.TimeoutError):
                 pass
             raise
@@ -547,8 +549,8 @@ class Snapshots:
             )
         except BaseException:
             try:
-                await asyncio.wait_for(self._kyora.sandboxes.delete(sandbox.id), CREATE_TIMEOUT)
-            except (KyoraError, asyncio.TimeoutError):
+                await self._kyora.sandboxes.delete(sandbox.id)
+            except KyoraError:
                 pass
             raise
 
@@ -651,7 +653,6 @@ class ByteStream:
 class Files:
     def __init__(self, transport: Transport) -> None:
         self._transport = transport
-        self._cleanups: set[asyncio.Future[Any]] = set()
 
     async def upload(
         self, sandbox: str, files: FileInputs, *, dest: str | None = None, **options: Unpack[CallOptions]
@@ -708,23 +709,18 @@ class Files:
             parts = RequestParts(path={"id": sandbox, "upload": upload.upload_id}, body={"parts": done})
             return load(PushFilesResponse, await self._transport.json("completeUpload", parts, call), "completeUpload")
         except BaseException as error:
-            await source.close()
+            # best effort, each bounded on its own; the caller hears back by its deadline, at once on cancellation
+            cleanups = {self._transport.cleanup(source.close())}
             if upload is not None:
-                # best effort, bounded on its own; the caller hears back by its deadline, at once on cancellation
-                abort = asyncio.ensure_future(
-                    self._transport.json(
-                        "abortUpload",
-                        RequestParts(path={"id": sandbox, "upload": upload.upload_id}),
-                        {"retry": False, "timeout": ABORT_UPLOAD_TIMEOUT},
+                path = {"id": sandbox, "upload": upload.upload_id}
+                cleanups.add(
+                    self._transport.cleanup(
+                        self._transport.json("abortUpload", RequestParts(path=path), {"retry": False})
                     )
                 )
-                self._cleanups.add(abort)
-                abort.add_done_callback(
-                    lambda task: (self._cleanups.discard(task), task.cancelled() or task.exception())
-                )
-                remaining = left(until)
-                if not isinstance(error, asyncio.CancelledError) and (remaining is None or remaining > 0):
-                    await asyncio.wait({abort}, timeout=remaining)
+            remaining = left(until)
+            if not isinstance(error, asyncio.CancelledError) and (remaining is None or remaining > 0):
+                await asyncio.wait(cleanups, timeout=remaining)
             raise
 
     async def download_tar(self, sandbox: str, paths: Iterable[str], **options: Unpack[CallOptions]) -> ByteStream:

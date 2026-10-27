@@ -166,3 +166,39 @@ def test_close_and_context_manager():
     with Kyora(token="kyora_test") as kyora:
         assert "kyora_test" not in repr(kyora)
     assert not kyora._portal.thread.is_alive()
+
+
+def test_a_streamed_call_keeps_its_deadline_through_the_body(sync):
+    import time
+
+    import httpx
+    from fakes import Lines
+
+    kyora, _ = sync(lambda r, i: httpx.Response(200, stream=Lines(["partial"], hang=True, broken=False)))
+    begun = time.monotonic()
+    with pytest.raises(KyoraError) as caught:
+        kyora.call("pullFiles", path={"id": "sb_1"}, query={"path": ["/work"]}, timeout=0.05)
+    assert caught.value.code == "timeout"
+    assert time.monotonic() - begun < 0.5
+
+
+def test_close_waits_for_an_upload_abort_still_running(sync):
+    import asyncio
+
+    from test_files import MiB, multipart
+
+    deleted = []
+    base = multipart(32 * MiB, delay=0.08)
+
+    async def handler(r, i):
+        if r.method == "DELETE":
+            await asyncio.sleep(0.05)
+            deleted.append(r.url.path)
+            return json(204)
+        return await base(r, i)
+
+    kyora, _ = sync(handler)
+    with pytest.raises(KyoraError, match="deadline"):
+        kyora.files.upload_tar("sb_1", bytes(65 * MiB), timeout=0.2)
+    kyora.close()
+    assert deleted == ["/v1/sandboxes/sb_1/uploads/up_1"]
