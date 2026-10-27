@@ -202,3 +202,31 @@ def test_close_waits_for_an_upload_abort_still_running(sync):
         kyora.files.upload_tar("sb_1", bytes(65 * MiB), timeout=0.2)
     kyora.close()
     assert deleted == ["/v1/sandboxes/sb_1/uploads/up_1"]
+
+
+def test_what_an_interrupted_call_answers_anyway_is_closed():
+    import os
+    import signal
+    import time
+
+    from kyora._sync import Portal
+
+    portal = Portal()
+    closed = []
+
+    class Stream:
+        async def aclose(self):
+            closed.append(True)
+
+    async def call():
+        os.kill(os.getpid(), signal.SIGINT)
+        time.sleep(0.2)
+        return Stream()
+
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            portal.run(call())
+        time.sleep(0.1)
+        assert closed == [True]
+    finally:
+        portal.close()

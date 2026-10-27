@@ -58,13 +58,33 @@ class Portal:
         if threading.current_thread() is self.thread:
             coroutine.close()
             raise RuntimeError("a blocking Kyora call from inside one of its own callbacks; use AsyncKyora there")
-        future = asyncio.run_coroutine_threadsafe(coroutine, self.loop)
+        answer: concurrent.futures.Future[T] = concurrent.futures.Future()
+        tasks: list[asyncio.Task[T]] = []
+
+        def finish(task: asyncio.Task[T]) -> None:
+            if task.cancelled():
+                answer.cancel()
+            elif task.exception() is not None:
+                answer.set_exception(task.exception())
+            else:
+                answer.set_result(task.result())
+
+        def start() -> None:
+            tasks.append(self.loop.create_task(coroutine))
+            tasks[0].add_done_callback(finish)
+
+        def give_up() -> None:
+            # on the loop's thread, so the call can't finish in between: what it answers anyway is closed
+            tasks[0].add_done_callback(_discard)
+            tasks[0].cancel()
+
+        self.loop.call_soon_threadsafe(start)
         try:
-            return future.result()
+            return answer.result()
         except BaseException:
             # an interrupt (Ctrl-C) cancels the call as cancelling its task would, and lets its cleanup run
-            future.cancel()
-            concurrent.futures.wait([future], timeout=SETTLE)
+            self.loop.call_soon_threadsafe(give_up)
+            concurrent.futures.wait([answer], timeout=SETTLE)
             raise
 
     def iterate(self, iterator: AsyncIterator[T], close: Callable[[], Awaitable[None]] | None = None) -> Iterator[T]:
@@ -101,6 +121,15 @@ async def _settle() -> None:
         task.cancel()
     if pending:
         await asyncio.wait(pending, timeout=SETTLE)
+
+
+def _discard(task: asyncio.Task[Any]) -> None:
+    """closes what an abandoned call answered: an open stream, say"""
+    if task.cancelled() or task.exception() is not None:
+        return
+    closer = getattr(task.result(), "aclose", None)
+    if closer is not None:
+        asyncio.get_running_loop().create_task(closer())
 
 
 async def _next(iterator: AsyncIterator[T]) -> T:

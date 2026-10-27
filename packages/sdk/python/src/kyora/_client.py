@@ -292,15 +292,35 @@ class Sandboxes:
         until = end_of(options, wait + QUEUE_GRACE if wait else CREATE_TIMEOUT)
         parts = RequestParts(body=body, idempotency_key=idempotency_key)
 
+        queued: str | None = None
+
         async def read(response: httpx.Response, _: int) -> tuple[int, Any]:
+            nonlocal queued
             # read inside the call: a body that breaks off is asked again, under the same Idempotency-Key
-            return response.status_code, read_json("createSandbox", response.status_code, await response.aread())
+            answer = read_json("createSandbox", response.status_code, await response.aread())
+            if response.status_code == 202 and is_ticket(answer):
+                # in line from here on, even when the call ends before the answer reaches it
+                queued = answer["ticket"]
+            return response.status_code, answer
 
         call: CallOptions = {**options, "timeout": math.inf, "deadline": until}
-        status, answer = await self._transport.read("createSandbox", parts, call, read)
-        if status == 202 and is_ticket(answer):
-            return await self._wait_in_line(load(QueueTicket, answer, "createSandbox"), until, on_queued)
-        return load(Sandbox, answer, "createSandbox")
+        try:
+            _, answer = await self._transport.read("createSandbox", parts, call, read)
+            if queued is None:
+                return load(Sandbox, answer, "createSandbox")
+            ticket = load(QueueTicket, answer, "createSandbox")
+        except BaseException:
+            if queued is not None:
+                await self._leave_line(queued)
+            raise
+        return await self._wait_in_line(ticket, until, on_queued)
+
+    async def _leave_line(self, ticket: str) -> None:
+        """out of line, so kyora never places a sandbox nobody waits for"""
+        try:
+            await self._transport.race(self.cancel_ticket(ticket), CLEANUP_TIMEOUT)
+        except (KyoraError, asyncio.TimeoutError):
+            pass
 
     async def _wait_in_line(
         self, ticket: QueueTicket, until: float, on_queued: Callable[[QueueTicket], Any] | None
@@ -335,11 +355,7 @@ class Sandboxes:
                 queued = load(QueueTicket, answer, "getQueueTicket")
                 await self._transport.within(notify(on_queued, queued), until, "createSandbox")
         except BaseException:
-            # out of line, so kyora never places a sandbox nobody waits for
-            try:
-                await self._transport.race(self.cancel_ticket(ticket.ticket), CLEANUP_TIMEOUT)
-            except (KyoraError, asyncio.TimeoutError):
-                pass
+            await self._leave_line(ticket.ticket)
             raise
 
     async def ticket(

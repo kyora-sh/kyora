@@ -197,25 +197,39 @@ class Transport:
         remaining = left(until)
         await asyncio.wait({task}, timeout=CLEANUP_TIMEOUT if remaining is None else max(0.0, remaining))
 
-    async def race(self, awaitable: Awaitable[T], timeout: float | None) -> T:
+    async def race(
+        self,
+        awaitable: Awaitable[T],
+        timeout: float | None,
+        on_discard: Callable[[T], Awaitable[Any]] | None = None,
+    ) -> T:
         """`awaitable`, or asyncio.TimeoutError after `timeout` seconds. Unlike asyncio.wait_for it never
         waits for the cancelled work: work past its time, or cancelled with its caller, is cancelled and
-        left to finish as a cleanup, so a slow finalizer can't hold the caller past its deadline."""
+        left to finish as a cleanup, so a slow finalizer can't hold the caller past its deadline. A result
+        that comes anyway, too late or as the caller is cancelled, goes to `on_discard` as a cleanup."""
         if timeout is None:
             return await awaitable
         task = asyncio.ensure_future(awaitable)
         try:
             done, _ = await asyncio.wait({task}, timeout=max(0.0, timeout))
         except BaseException:
-            self.abandon(task)
+            self.abandon(task, on_discard)
             raise
         if not done:
-            self.abandon(task)
+            self.abandon(task, on_discard)
             raise asyncio.TimeoutError
         return task.result()
 
-    def abandon(self, task: asyncio.Future[Any]) -> None:
-        """cancels `task` without waiting for it; it finishes as a cleanup"""
+    def abandon(self, task: asyncio.Future[T], on_discard: Callable[[T], Awaitable[Any]] | None = None) -> None:
+        """cancels `task` without waiting for it; it finishes as a cleanup, its result (if it still has one)
+        handed to `on_discard`"""
+        if on_discard is not None:
+
+            def discarded(done: asyncio.Future[T]) -> None:
+                if not done.cancelled() and done.exception() is None:
+                    self.cleanup(on_discard(done.result()))
+
+            task.add_done_callback(discarded)
         task.cancel()
         self.cleanup(task)
 
@@ -404,7 +418,7 @@ class Transport:
         request = self.client.build_request(spec["method"], url, headers=headers, content=content)
         try:
             sending = self.client.send(request, stream=True, follow_redirects=False)
-            response = await self.race(sending, None if bound == INF else bound)
+            response = await self.race(sending, None if bound == INF else bound, lambda late: late.aclose())
         except asyncio.TimeoutError:
             raise timeout_error(operation) from None
         if 300 <= response.status_code < 400:

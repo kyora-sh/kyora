@@ -1,4 +1,5 @@
 import asyncio
+import json as jsonlib
 import re
 import time
 
@@ -371,3 +372,48 @@ async def test_cancelling_during_on_queued_takes_the_create_out_of_line(client):
     with pytest.raises(asyncio.CancelledError):
         await task
     assert (requests[-1].method, requests[-1].url.path) == ("DELETE", "/v1/queue/q_7")
+
+
+async def test_an_answer_that_comes_as_the_call_is_cancelled_is_closed(client):
+    from fakes import Lines
+
+    streams = []
+
+    def handler(r, i):
+        stream = Lines(["partial"], hang=True, broken=False)
+        streams.append(stream)
+        return httpx.Response(200, stream=stream)
+
+    calls = []
+
+    async def cancel_the_call(response):
+        calls[0].cancel()
+
+    http = httpx.AsyncClient(event_hooks={"response": [cancel_the_call]})
+    kyora, _ = client(handler, http_client=http)
+    calls.append(asyncio.ensure_future(kyora.call("pullFiles", path={"id": "sb_1"}, query={"path": ["/w"]}, timeout=5)))
+    with pytest.raises(asyncio.CancelledError):
+        await calls[0]
+    await kyora.aclose()
+    await http.aclose()
+    assert streams[0].closed
+
+
+async def test_a_create_cancelled_as_its_ticket_arrives_takes_it_out_of_line(client):
+    calls = []
+
+    class Queued(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield jsonlib.dumps(ticket("q_9")).encode()
+            calls[0].cancel()
+
+    def handler(r, i):
+        if r.method == "DELETE":
+            return json(204)
+        return httpx.Response(202, headers={"content-type": "application/json"}, stream=Queued())
+
+    kyora, requests = client(handler)
+    calls.append(asyncio.ensure_future(kyora.sandboxes.create({"wait": 30})))
+    with pytest.raises(asyncio.CancelledError):
+        await calls[0]
+    assert (requests[-1].method, requests[-1].url.path) == ("DELETE", "/v1/queue/q_9")
