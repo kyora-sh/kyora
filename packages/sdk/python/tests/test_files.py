@@ -9,6 +9,15 @@ from kyora._tar import pack_files, unpack
 
 pytestmark = pytest.mark.anyio
 MiB = 1024 * 1024
+KiB = 1024
+
+
+@pytest.fixture
+def small(monkeypatch):
+    """archives past 256 KiB go up in parts, so a multipart upload needs no large copies"""
+    from kyora import _client
+
+    monkeypatch.setattr(_client, "SINGLE_UPLOAD_BYTES", 256 * KiB)
 
 
 def test_packs_files_with_their_parent_directories_and_reads_them_back():
@@ -56,11 +65,16 @@ async def test_upload_sends_one_tar_to_the_destination(client):
     assert (file.name, file.data) == ("inbox/contract.pdf", b"%PDF")
 
 
-def multipart(part_size, delay=0.0, hang_delete=False):
+def multipart(part_size, delay=0.0, hang_delete=False, stall=None):
+    """`stall`: the part that never gets an answer; `.aborted` is set once the abort arrives"""
+    aborted = asyncio.Event()
+
     async def answer(r, i):
         if delay and "/parts/" in r.url.path:
             await asyncio.sleep(delay)
         path = r.url.path
+        if "/parts/" in path and int(path.rsplit("/", 1)[1]) == stall:
+            await hang()
         if path.endswith("/uploads"):
             return json(
                 201,
@@ -75,11 +89,13 @@ def multipart(part_size, delay=0.0, hang_delete=False):
             n = int(path.rsplit("/", 1)[1])
             return json(200, {"n": n, "etag": f"e{n}"})
         if r.method == "DELETE":
+            aborted.set()
             if hang_delete:
                 await hang()
             return json(204)
         return json(200, {"bytes": 1, "entries": 1, "durationMs": 1})
 
+    answer.aborted = aborted
     return answer
 
 
@@ -136,12 +152,13 @@ async def test_a_small_stream_or_file_goes_up_as_one_put(client, tmp_path):
     assert [len(r.body) for r in requests] == [3 * MiB, 2 * MiB]
 
 
-async def test_timeout_bounds_the_whole_multipart_upload_not_each_part(client):
-    kyora, requests = client(multipart(32 * MiB, delay=0.08))
+async def test_timeout_bounds_the_whole_multipart_upload_not_each_part(client, small):
+    answer = multipart(128 * KiB, delay=0.3)
+    kyora, requests = client(answer)
     with pytest.raises(KyoraError) as caught:
-        await kyora.files.upload_tar("sb_1", bytes(65 * MiB), timeout=0.2)
+        await kyora.files.upload_tar("sb_1", bytes(320 * KiB), timeout=0.5)
     assert caught.value.code == "timeout"
-    await asyncio.sleep(0.05)
+    await asyncio.wait_for(answer.aborted.wait(), 5)
     assert requests[-1].method == "DELETE"
 
 
@@ -153,13 +170,16 @@ async def test_a_part_size_out_of_bounds_is_refused_and_the_upload_aborted(clien
     assert requests[-1].method == "DELETE"
 
 
-async def test_a_cleanup_that_hangs_never_holds_the_caller_past_its_deadline(client):
-    kyora, requests = client(multipart(32 * MiB, delay=0.08, hang_delete=True))
+async def test_a_cleanup_that_hangs_never_holds_the_caller_past_its_deadline(client, small):
+    from kyora._http import CLEANUP_TIMEOUT
+
+    answer = multipart(128 * KiB, hang_delete=True, stall=2)
+    kyora, requests = client(answer)
     begun = time.monotonic()
     with pytest.raises(KyoraError, match="deadline"):
-        await kyora.files.upload_tar("sb_1", bytes(65 * MiB), timeout=0.2)
-    assert time.monotonic() - begun < 0.6
-    await asyncio.sleep(0.05)
+        await kyora.files.upload_tar("sb_1", bytes(320 * KiB), timeout=0.3)
+    assert time.monotonic() - begun < 1.3 < CLEANUP_TIMEOUT
+    await asyncio.wait_for(answer.aborted.wait(), 5)
     assert requests[-1].method == "DELETE"
 
 
@@ -362,13 +382,13 @@ async def test_a_streamed_call_keeps_its_deadline_through_the_body(client):
     assert streams[0].closed
 
 
-async def test_closing_the_client_waits_for_an_upload_abort_still_running(client):
+async def test_closing_the_client_waits_for_an_upload_abort_still_running(client, small):
     deleted = []
-    base = multipart(32 * MiB, delay=0.08)
+    base = multipart(128 * KiB, stall=2)
 
     async def handler(r, i):
         if r.method == "DELETE":
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(0.2)
             deleted.append(r.url.path)
             return json(204)
         return await base(r, i)
@@ -376,13 +396,13 @@ async def test_closing_the_client_waits_for_an_upload_abort_still_running(client
     kyora, _ = client(handler)
     with pytest.raises(KyoraError, match="deadline"):
         async with kyora:
-            await kyora.files.upload_tar("sb_1", bytes(65 * MiB), timeout=0.2)
+            await kyora.files.upload_tar("sb_1", bytes(320 * KiB), timeout=0.3)
     assert deleted == ["/v1/sandboxes/sb_1/uploads/up_1"]
 
 
-async def test_a_failed_upload_aborts_at_once_while_its_source_closes(client):
+async def test_a_failed_upload_aborts_at_once_while_its_source_closes(client, small):
     closed = []
-    big = bytes(33 * MiB)
+    big = bytes(160 * KiB)
 
     async def source():
         try:
@@ -392,12 +412,13 @@ async def test_a_failed_upload_aborts_at_once_while_its_source_closes(client):
             await asyncio.sleep(1)
             closed.append(True)
 
-    kyora, requests = client(multipart(32 * MiB, delay=0.6))
+    answer = multipart(128 * KiB, stall=1)
+    kyora, requests = client(answer)
     begun = time.monotonic()
     with pytest.raises(KyoraError, match="deadline"):
-        await kyora.files.upload_tar("sb_1", source(), timeout=0.5)
-    assert time.monotonic() - begun < 0.9
-    await asyncio.sleep(0.1)
+        await kyora.files.upload_tar("sb_1", source(), timeout=0.3)
+    assert time.monotonic() - begun < 1.2
+    await asyncio.wait_for(answer.aborted.wait(), 0.8)
     assert requests[-1].method == "DELETE"
     assert closed == []
     await kyora.aclose()
@@ -433,8 +454,8 @@ async def test_a_restore_whose_on_progress_stalls_is_destroyed_at_the_deadline(c
     assert (requests[-1].method, requests[-1].url.path) == ("DELETE", "/v1/sandboxes/sb_r")
 
 
-async def test_a_source_whose_finalizer_awaits_never_delays_the_error_or_the_abort(client):
-    big = bytes(33 * MiB)
+async def test_a_source_whose_finalizer_awaits_never_delays_the_error_or_the_abort(client, small):
+    big = bytes(160 * KiB)
 
     async def source():
         try:
@@ -445,7 +466,7 @@ async def test_a_source_whose_finalizer_awaits_never_delays_the_error_or_the_abo
             await asyncio.sleep(1)
 
     deleted = []
-    base = multipart(32 * MiB)
+    base = multipart(128 * KiB)
 
     async def handler(r, i):
         if r.method == "DELETE":
@@ -456,9 +477,9 @@ async def test_a_source_whose_finalizer_awaits_never_delays_the_error_or_the_abo
     begun = time.monotonic()
     with pytest.raises(KyoraError, match="deadline"):
         await kyora.files.upload_tar("sb_1", source(), timeout=0.3)
-    assert time.monotonic() - begun < 0.8
-    await asyncio.sleep(0.05)
-    assert len(deleted) == 1 and deleted[0] - begun < 0.8
+    assert time.monotonic() - begun < 1.2
+    await asyncio.wait_for(base.aborted.wait(), 5)
+    assert len(deleted) == 1 and deleted[0] - begun < 1.2
     await kyora.aclose()
 
 

@@ -182,24 +182,27 @@ def test_a_streamed_call_keeps_its_deadline_through_the_body(sync):
     assert time.monotonic() - begun < 0.5
 
 
-def test_close_waits_for_an_upload_abort_still_running(sync):
+def test_close_waits_for_an_upload_abort_still_running(sync, monkeypatch):
     import asyncio
 
-    from test_files import MiB, multipart
+    from test_files import KiB, multipart
 
+    from kyora import _client
+
+    monkeypatch.setattr(_client, "SINGLE_UPLOAD_BYTES", 256 * KiB)
     deleted = []
-    base = multipart(32 * MiB, delay=0.08)
+    base = multipart(128 * KiB, stall=2)
 
     async def handler(r, i):
         if r.method == "DELETE":
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(0.2)
             deleted.append(r.url.path)
             return json(204)
         return await base(r, i)
 
     kyora, _ = sync(handler)
     with pytest.raises(KyoraError, match="deadline"):
-        kyora.files.upload_tar("sb_1", bytes(65 * MiB), timeout=0.2)
+        kyora.files.upload_tar("sb_1", bytes(320 * KiB), timeout=0.3)
     kyora.close()
     assert deleted == ["/v1/sandboxes/sb_1/uploads/up_1"]
 
