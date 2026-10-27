@@ -521,3 +521,65 @@ async def test_closing_the_client_never_waits_on_a_cleanup_that_ignores_cancella
     assert finished == []
     await asyncio.sleep(0.5)
     assert finished == [True]
+
+
+class CancelsAtTheEnd:
+    """a JSON body that cancels `calls[0]` as its last byte is read"""
+
+    def __init__(self, calls, body):
+        self.calls = calls
+        self.body = body
+
+    def __call__(self, status):
+        import httpx
+
+        calls, body = self.calls, self.body
+
+        class Body(httpx.AsyncByteStream):
+            async def __aiter__(self):
+                yield body
+                calls[0].cancel()
+
+        return httpx.Response(status, headers={"content-type": "application/json"}, stream=Body())
+
+
+async def test_an_upload_cancelled_as_kyora_opens_it_is_aborted(client):
+    import json as jsonlib
+
+    calls = []
+    opened = CancelsAtTheEnd(
+        calls,
+        jsonlib.dumps(
+            {"uploadId": "up_1", "partSize": 32 * MiB, "maxPartBytes": 32 * MiB, "expiresAt": "2026-01-02T00:00:00Z"}
+        ).encode(),
+    )
+
+    def handler(r, i):
+        if r.url.path.endswith("/uploads"):
+            return opened(201)
+        return json(204)
+
+    kyora, requests = client(handler)
+    calls.append(asyncio.ensure_future(kyora.files.upload_tar("sb_1", bytes(65 * MiB))))
+    with pytest.raises(asyncio.CancelledError):
+        await calls[0]
+    await kyora.aclose()
+    assert (requests[-1].method, requests[-1].url.path) == ("DELETE", "/v1/sandboxes/sb_1/uploads/up_1")
+
+
+async def test_a_restore_cancelled_as_its_sandbox_is_made_destroys_it(client):
+    import json as jsonlib
+
+    calls = []
+    made = CancelsAtTheEnd(calls, jsonlib.dumps(sandbox("sb_r", status="starting")).encode())
+
+    def handler(r, i):
+        if r.method == "POST":
+            return made(201)
+        return json(204)
+
+    kyora, requests = client(handler)
+    calls.append(asyncio.ensure_future(kyora.snapshots.restore("snap_1")))
+    with pytest.raises(asyncio.CancelledError):
+        await calls[0]
+    assert (requests[-1].method, requests[-1].url.path) == ("DELETE", "/v1/sandboxes/sb_r")

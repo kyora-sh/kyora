@@ -430,5 +430,20 @@ async def test_an_on_output_whose_finalizer_awaits_never_holds_the_call_past_its
     with pytest.raises(ExecDetachedError) as caught:
         await kyora.exec.run("sb_1", {"cmd": ["x"]}, on_output=sink, timeout=0.3)
     assert time.monotonic() - begun < 0.8
-    assert (caught.value.code, caught.value.offsets) == ("timeout", ByteOffsets(0, 0))
+    assert (caught.value.code, caught.value.offsets) == ("timeout", ByteOffsets(1, 0))
+    await kyora.aclose()
+
+
+async def test_output_on_output_got_counts_though_the_deadline_hits_while_it_awaits(client):
+    kyora, _ = client(lambda r, i: ndjson([started(), {"type": "stdout", "data": "hello"}], hang=True))
+    written = []
+
+    async def sink(stream, data):
+        written.append(data)
+        await hang()
+
+    with pytest.raises(ExecDetachedError) as caught:
+        await kyora.exec.run("sb_1", {"cmd": ["x"]}, on_output=sink, timeout=0.3)
+    assert written == [b"hello"]
+    assert caught.value.offsets == ByteOffsets(5, 0)
     await kyora.aclose()

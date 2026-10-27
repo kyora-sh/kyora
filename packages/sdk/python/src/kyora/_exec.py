@@ -119,7 +119,11 @@ class Collector:
         """a started or attached frame came: the command runs, whether or not kyora named it"""
 
     async def output(self, stream: Stream, data: bytes) -> None:
-        """counts a chunk only once on_output took it, so the offsets never pass what the caller got"""
+        """Counts a chunk as on_output gets it, so a reattach never hands it over twice; an ExecStream's
+        chunk only once its queue took it, so the offsets never pass what its reader can get."""
+        queued = isinstance(self.on_output, Enqueue)
+        if not queued:
+            self.count(stream, data)
         if self.on_output is not None:
             try:
                 answer = self.on_output(stream, data)
@@ -127,6 +131,10 @@ class Collector:
                     await answer
             except Exception as error:
                 raise OutputCallbackError(error) from error
+        if queued:
+            self.count(stream, data)
+
+    def count(self, stream: Stream, data: bytes) -> None:
         setattr(self.offsets, stream, getattr(self.offsets, stream) + len(data))
         room = self.limit - self.kept_bytes[stream]
         if len(data) > room:
@@ -295,6 +303,16 @@ class Output:
     data: bytes
 
 
+class Enqueue:
+    """an ExecStream's on_output: each chunk onto its queue"""
+
+    def __init__(self, queue: asyncio.Queue[Output]) -> None:
+        self.queue = queue
+
+    def __call__(self, stream: Stream, data: bytes) -> Awaitable[None]:
+        return self.queue.put(Output(stream, data))
+
+
 class ExecStream:
     """A running command's output as it arrives, Output(stream, data) by Output; `.result` once it ends.
     Use it as `async with kyora.exec.stream(...) as stream: async for chunk in stream: ...`. Leaving early
@@ -311,7 +329,7 @@ class ExecStream:
 
     async def __anext__(self) -> Output:
         if self._task is None:
-            self._task = asyncio.ensure_future(self._start(lambda stream, data: self._queue.put(Output(stream, data))))
+            self._task = asyncio.ensure_future(self._start(Enqueue(self._queue)))
         while True:
             if not self._queue.empty():
                 return self._queue.get_nowait()

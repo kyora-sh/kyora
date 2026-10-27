@@ -121,6 +121,12 @@ def lost_on_the_way(error: KyoraError) -> bool:
     )
 
 
+def made(placed: Callable[[str], None] | None, response: httpx.Response, answer: Any) -> None:
+    """tells `placed` the id of a sandbox an answer names"""
+    if placed is not None and response.is_success and isinstance(answer, dict) and isinstance(answer.get("id"), str):
+        placed(answer["id"])
+
+
 def is_ticket(body: Any) -> bool:
     return isinstance(body, dict) and body.get("status") == "queued" and isinstance(body.get("ticket"), str)
 
@@ -285,6 +291,17 @@ class Sandboxes:
         the spec, a create kyora has no room for waits in line: this long-polls its ticket until the sandbox
         is placed, calling `on_queued` with each ticket, and takes it out of line at the deadline or on
         cancellation."""
+        return await self._create(spec, idempotency_key, on_queued, options)
+
+    async def _create(
+        self,
+        spec: CreateSandboxRequest | Mapping[str, Any] | None,
+        idempotency_key: str | None,
+        on_queued: Callable[[QueueTicket], Any] | None,
+        options: CallOptions,
+        placed: Callable[[str], None] | None = None,
+    ) -> Sandbox:
+        """`create`; `placed` hears the sandbox's id as soon as an answer names it, before the call ends"""
         body = dump(CreateSandboxRequest, spec)
         if self._kyora.region is not None and "region" not in body:
             body["region"] = self._kyora.region
@@ -301,6 +318,8 @@ class Sandboxes:
             if response.status_code == 202 and is_ticket(answer):
                 # in line from here on, even when the call ends before the answer reaches it
                 queued = answer["ticket"]
+            else:
+                made(placed, response, answer)
             return response.status_code, answer
 
         call: CallOptions = {**options, "timeout": math.inf, "deadline": until}
@@ -313,7 +332,7 @@ class Sandboxes:
             if queued is not None:
                 await self._leave_line(queued)
             raise
-        return await self._wait_in_line(ticket, until, on_queued)
+        return await self._wait_in_line(ticket, until, on_queued, placed)
 
     async def _leave_line(self, ticket: str) -> None:
         """out of line, so kyora never places a sandbox nobody waits for"""
@@ -323,12 +342,19 @@ class Sandboxes:
             pass
 
     async def _wait_in_line(
-        self, ticket: QueueTicket, until: float, on_queued: Callable[[QueueTicket], Any] | None
+        self,
+        ticket: QueueTicket,
+        until: float,
+        on_queued: Callable[[QueueTicket], Any] | None,
+        placed: Callable[[str], None] | None,
     ) -> Sandbox:
         failures = 0
 
         async def read(response: httpx.Response, _: int) -> tuple[int, Any]:
-            return response.status_code, read_json("getQueueTicket", response.status_code, await response.aread())
+            answer = read_json("getQueueTicket", response.status_code, await response.aread())
+            if response.status_code != 202:
+                made(placed, response, answer)
+            return response.status_code, answer
 
         try:
             await self._transport.within(notify(on_queued, ticket), until, "createSandbox")
@@ -559,18 +585,20 @@ class Snapshots:
         until = end_of(options, POLL_TIMEOUT)
         body = {**dump(CreateSandboxRequest, spec), "fromSnapshot": snapshot}
         call: CallOptions = {**without(options, "timeout"), "deadline": until}  # type: ignore[typeddict-item]
-        sandbox = await self._kyora.sandboxes.create(body, idempotency_key=idempotency_key, on_queued=on_queued, **call)
-        if not wait:
-            return sandbox
+        placed: list[str] = []
         try:
+            sandbox = await self._kyora.sandboxes._create(body, idempotency_key, on_queued, call, placed.append)
+            if not wait:
+                return sandbox
             return await self._kyora.sandboxes.wait_until_running(
                 sandbox, on_progress=on_progress, interval=interval, deadline=until
             )
         except BaseException:
-            try:
-                await self._kyora.sandboxes.delete(sandbox.id)
-            except KyoraError:
-                pass
+            if placed:
+                try:
+                    await self._kyora.sandboxes.delete(placed[-1])
+                except KyoraError:
+                    pass
             raise
 
 
@@ -697,7 +725,16 @@ class Files:
         if until != math.inf:
             call["deadline"] = until
         source = PartSource(archive)
-        upload: CreateUploadResponse | None = None
+        upload_id: str | None = None
+
+        async def opened(response: httpx.Response, _: int) -> Any:
+            nonlocal upload_id
+            answer = read_json("createUpload", response.status_code, await response.aread())
+            if isinstance(answer, dict) and isinstance(answer.get("uploadId"), str):
+                # aborted on failure from here on, even when the call ends before the answer reaches it
+                upload_id = answer["uploadId"]
+            return answer
+
         try:
             # a first part that is the whole archive goes up as it is
             first = await self._transport.within(source.next(SINGLE_UPLOAD_BYTES + 1), until, "uploadTar")
@@ -705,7 +742,9 @@ class Files:
                 parts = RequestParts(path={"id": sandbox}, query={"dest": dest}, body=first, content_type=content_type)
                 return load(PushFilesResponse, await self._transport.json("pushFiles", parts, call), "pushFiles")
             create = {**({"dest": dest} if dest else {}), "contentType": content_type}
-            answer = await self._transport.json("createUpload", RequestParts(path={"id": sandbox}, body=create), call)
+            answer = await self._transport.read(
+                "createUpload", RequestParts(path={"id": sandbox}, body=create), call, opened
+            )
             upload = load(CreateUploadResponse, answer, "createUpload")
             size = min(upload.part_size, upload.max_part_bytes)
             if size < MIN_PART_BYTES or size > MAX_PART_BYTES:
@@ -731,8 +770,8 @@ class Files:
         except BaseException as error:
             # best effort, each bounded on its own; the caller hears back by its deadline, at once on cancellation
             cleanups = {self._transport.cleanup(source.close())}
-            if upload is not None:
-                path = {"id": sandbox, "upload": upload.upload_id}
+            if upload_id is not None:
+                path = {"id": sandbox, "upload": upload_id}
                 cleanups.add(
                     self._transport.cleanup(
                         self._transport.json("abortUpload", RequestParts(path=path), {"retry": False})
