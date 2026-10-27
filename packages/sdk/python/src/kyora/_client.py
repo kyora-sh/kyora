@@ -593,6 +593,14 @@ class PartSource:
         self._held_bytes = len(rest)
         return out
 
+    async def close(self) -> None:
+        closer = getattr(self._chunks, "aclose", None)
+        if closer is not None:
+            try:
+                await closer()
+            except Exception:
+                pass
+
     def unread(self, part: bytes) -> None:
         if self._bytes is not None:
             self._offset -= len(part)
@@ -671,6 +679,7 @@ class Files:
             parts = RequestParts(path={"id": sandbox, "upload": upload.upload_id}, body={"parts": done})
             return load(PushFilesResponse, await self._transport.json("completeUpload", parts, call), "completeUpload")
         except BaseException as error:
+            await source.close()
             if upload is not None:
                 # best effort, bounded on its own; the caller hears back by its deadline, at once on cancellation
                 abort = asyncio.ensure_future(

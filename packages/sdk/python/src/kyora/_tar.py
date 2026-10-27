@@ -20,7 +20,7 @@ EntryType = Literal["file", "dir", "symlink", "hardlink", "other"]
 @dataclass
 class TarEntry:
     name: str
-    """the name as the archive has it"""
+    """the name as the archive has it; a directory's without its trailing slash"""
     type: EntryType
     mode: int
     size: int
