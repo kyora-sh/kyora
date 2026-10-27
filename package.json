@@ -6,7 +6,7 @@
     "check-types": "turbo run check-types",
     "test": "turbo run test",
     "changeset": "changeset",
-    "version-packages": "changeset version && bun install --lockfile-only"
+    "version-packages": "changeset version && bun .github/scripts/release.ts pypi-version-sync && bun install --lockfile-only"
   },
   "devDependencies": {
     "@changesets/cli": "^3.0.3",

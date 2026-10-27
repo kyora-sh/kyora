@@ -15,7 +15,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
 
-# Linux jobs (the Rust jobs and ts, the TypeScript CLIs) run on a fresh kyora VM (kyora-2x4-apac: 2 vCPU / 4 GB, in apac only). Fork pull
+# Linux jobs (the Rust jobs, ts, the TypeScript CLIs and SDK, and python, the Python SDK) run on a fresh kyora VM (kyora-2x4-apac: 2 vCPU / 4 GB, in apac only). Fork pull
 # requests stay on GitHub-hosted runners, so they never wait for a runner that won't come. macOS has
 # no kyora runner and stays on GitHub's, as does the ci-ok gate (one shell test, no VM needed).
 
@@ -70,12 +70,32 @@ jobs:
       - run: bunx turbo run test --concurrency=1 --continue=dependencies-successful
       - run: bun test ./.github/scripts/
 
+  python:
+    strategy:
+      matrix:
+        python: ["3.10", "3.13"]
+    runs-on: ${{ github.event.pull_request && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'kyora-2x4-apac' }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: packages/sdk/python
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: ${{ matrix.python }}
+      - run: uv sync --locked
+      - run: uv run ruff check
+      - run: uv run ruff format --check
+      - run: uv run scripts/generate.py --check
+      - run: uv run pytest
+
   ci-ok:
     if: ${{ always() }}
-    needs: [fmt, clippy, test, ts]
+    needs: [fmt, clippy, test, ts, python]
     runs-on: ubuntu-latest
     steps:
       - name: Require all checks to pass
         env:
-          CHECKS_PASSED: ${{ needs.fmt.result == 'success' && needs.clippy.result == 'success' && needs.test.result == 'success' && needs.ts.result == 'success' }}
+          CHECKS_PASSED: ${{ needs.fmt.result == 'success' && needs.clippy.result == 'success' && needs.test.result == 'success' && needs.ts.result == 'success' && needs.python.result == 'success' }}
         run: test "$CHECKS_PASSED" = true
