@@ -104,6 +104,44 @@ describe("snapshots, ports and tokens", () => {
     expect((requests[0]!.json as { fromSnapshot: string }).fromSnapshot).toBe("snap_1")
     expect(requests.at(-1)!.method).toBe("DELETE")
     expect(requests.at(-1)!.url.pathname).toBe("/v1/sandboxes/sb_r")
+    expect(requests[0]!.headers.get("idempotency-key")).toStartWith("sdk-")
+  })
+
+  test("a restore under the caller's key that fails is left running, its id on the error", async () => {
+    const { kyora, requests } = client((request) => {
+      if (request.method === "POST") return json(202, sandbox("sb_r", { status: "starting" }))
+      return json(200, sandbox("sb_r", { status: "failed" }))
+    })
+    const failure = await kyora.snapshots.restore("snap_1", {}, { idempotencyKey: "job-42", intervalMs: 5 }).catch((error: unknown) => error)
+    expect(failure).toMatchObject({ code: "sandbox_ended", sandboxId: "sb_r" })
+    expect(requests[0]!.headers.get("idempotency-key")).toBe("job-42")
+    expect(requests.some((request) => request.method === "DELETE")).toBe(false)
+  })
+
+  test("a restore under the caller's key that is aborted is left running", async () => {
+    const { kyora, requests } = client((request) => {
+      if (request.method === "POST") return json(202, sandbox("sb_r", { status: "starting" }))
+      return json(200, sandbox("sb_r", { status: "starting" }))
+    })
+    const abort = new AbortController()
+    const reason = new Error("stop")
+    await expect(kyora.snapshots.restore("snap_1", {}, { idempotencyKey: "job-42", intervalMs: 5, signal: abort.signal, onProgress: () => abort.abort(reason) })).rejects.toBe(reason)
+    expect(requests.some((request) => request.method === "DELETE")).toBe(false)
+  })
+
+  test("a restore that replays another's sandbox under the same key never destroys it", async () => {
+    let gets = 0
+    const { kyora, requests } = client((request) => {
+      if (request.method === "POST") return json(201, sandbox("sb_r", { status: "starting" }))
+      if (request.method === "DELETE") return json(204, null)
+      return json(200, sandbox("sb_r", { status: ++gets === 1 ? "running" : "starting" }))
+    })
+    const first = await kyora.snapshots.restore("snap_1", {}, { idempotencyKey: "job-42", intervalMs: 5 })
+    expect(first.status).toBe("running")
+    const failure = await kyora.snapshots.restore("snap_1", {}, { idempotencyKey: "job-42", intervalMs: 5, timeoutMs: 50 }).catch((error: unknown) => error)
+    expect(failure).toMatchObject({ code: "timeout", sandboxId: "sb_r" })
+    expect(requests.filter((request) => request.method === "POST").map((request) => request.headers.get("idempotency-key"))).toEqual(["job-42", "job-42"])
+    expect(requests.some((request) => request.method === "DELETE")).toBe(false)
   })
 
   test("ports and tokens reach their operations", async () => {

@@ -555,7 +555,10 @@ class Snapshots:
         **options: Unpack[CallOptions],
     ) -> Sandbox:
         """A new sandbox from a snapshot, polled until it runs (unless `wait=False`). One that fails or runs
-        out of time is destroyed, so nothing half restored is left behind."""
+        out of time is destroyed, so nothing half restored is left behind, unless you passed your own
+        `idempotency_key`: the same key answers the sandbox an earlier restore made, which may be someone
+        else's, so it is never destroyed. The wait's KyoraError then carries its `sandbox_id` (a
+        cancellation propagates as it is; `on_progress` has seen the sandbox by then)."""
         until = end_of(options, POLL_TIMEOUT)
         body = {**dump(CreateSandboxRequest, spec), "fromSnapshot": snapshot}
         call: CallOptions = {**without(options, "timeout"), "deadline": until}  # type: ignore[typeddict-item]
@@ -566,7 +569,11 @@ class Snapshots:
             return await self._kyora.sandboxes.wait_until_running(
                 sandbox, on_progress=on_progress, interval=interval, deadline=until
             )
-        except BaseException:
+        except BaseException as error:
+            if idempotency_key:
+                if isinstance(error, KyoraError):
+                    error.sandbox_id = sandbox.id
+                raise
             try:
                 await self._kyora.sandboxes.delete(sandbox.id)
             except KyoraError:

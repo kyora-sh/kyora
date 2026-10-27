@@ -307,6 +307,59 @@ async def test_a_restore_that_fails_is_destroyed(client):
     assert caught.value.code == "sandbox_ended"
     assert requests[0].json == {"vcpus": 2, "fromSnapshot": "snap_1"}
     assert (requests[-1].method, requests[-1].url.path) == ("DELETE", "/v1/sandboxes/sb_r")
+    assert requests[0].headers["idempotency-key"].startswith("sdk-")
+    assert caught.value.sandbox_id is None
+
+
+async def test_a_restore_under_the_callers_key_that_fails_is_left_running_its_id_on_the_error(client):
+    def handler(r, i):
+        if r.method == "POST":
+            return json(202, sandbox("sb_r", status="starting"))
+        return json(200, sandbox("sb_r", status="failed"))
+
+    kyora, requests = client(handler)
+    with pytest.raises(KyoraError) as caught:
+        await kyora.snapshots.restore("snap_1", idempotency_key="job-42", interval=0.005)
+    assert (caught.value.code, caught.value.sandbox_id) == ("sandbox_ended", "sb_r")
+    assert requests[0].headers["idempotency-key"] == "job-42"
+    assert "DELETE" not in [r.method for r in requests]
+
+
+async def test_a_restore_under_the_callers_key_that_is_cancelled_is_left_running(client):
+    calls = []
+    kyora, requests = client(lambda r, i: json(201 if r.method == "POST" else 200, sandbox("sb_r", status="starting")))
+    calls.append(
+        asyncio.ensure_future(
+            kyora.snapshots.restore(
+                "snap_1", idempotency_key="job-42", interval=0.005, on_progress=lambda current: calls[0].cancel()
+            )
+        )
+    )
+    with pytest.raises(asyncio.CancelledError):
+        await calls[0]
+    await kyora.aclose()
+    assert "DELETE" not in [r.method for r in requests]
+
+
+async def test_a_restore_that_replays_anothers_sandbox_under_the_same_key_never_destroys_it(client):
+    gets = []
+
+    def handler(r, i):
+        if r.method == "POST":
+            return json(201, sandbox("sb_r", status="starting"))
+        if r.method == "DELETE":
+            return json(204)
+        gets.append(r)
+        return json(200, sandbox("sb_r", status="running" if len(gets) == 1 else "starting"))
+
+    kyora, requests = client(handler)
+    first = await kyora.snapshots.restore("snap_1", idempotency_key="job-42", interval=0.005)
+    assert first.status == "running"
+    with pytest.raises(KyoraError, match="deadline") as caught:
+        await kyora.snapshots.restore("snap_1", idempotency_key="job-42", interval=0.005, timeout=0.05)
+    assert caught.value.sandbox_id == "sb_r"
+    assert [r.headers["idempotency-key"] for r in requests if r.method == "POST"] == ["job-42", "job-42"]
+    assert "DELETE" not in [r.method for r in requests]
 
 
 async def test_wait_until_runnings_first_request_is_inside_its_deadline(client):

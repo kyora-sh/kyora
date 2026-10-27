@@ -467,7 +467,8 @@ class Snapshots(_Resource):
         interval: float = 1.0,
         **options: Unpack[CallOptions],
     ) -> Sandbox:
-        """A new sandbox from a snapshot, polled until it runs (unless `wait=False`); destroyed on failure."""
+        """A new sandbox from a snapshot, polled until it runs (unless `wait=False`); destroyed on failure
+        unless you passed your own `idempotency_key`, when the KyoraError carries its `sandbox_id` instead."""
         return self._portal.run(
             self._aio.snapshots.restore(
                 snapshot,

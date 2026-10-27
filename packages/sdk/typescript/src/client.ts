@@ -480,7 +480,10 @@ export class Snapshots {
 
   /**
    * A new sandbox from a snapshot, polled until it runs (unless `wait: false`). One that fails or
-   * runs out of time is destroyed, so nothing half restored is left behind.
+   * runs out of time is destroyed, so nothing half restored is left behind, unless you passed your
+   * own `idempotencyKey`: the same key answers the sandbox an earlier restore made, which may be
+   * someone else's, so it is never destroyed. The wait's KyoraError then carries its `sandboxId`
+   * (an abort throws the signal's reason as it is; `onProgress` has seen the sandbox by then).
    */
   async restore(snapshot: string, spec: Omit<CreateSandboxRequest, "fromSnapshot" | "image"> = {}, options: CreateOptions & PollOptions<Sandbox> & { wait?: boolean } = {}): Promise<Sandbox> {
     const deadline = endOf(options, POLL_TIMEOUT_MS)
@@ -490,6 +493,10 @@ export class Snapshots {
     try {
       return await this.kyora.sandboxes.waitUntilRunning(sandbox, { ...options, deadline })
     } catch (error) {
+      if (options.idempotencyKey) {
+        if (error instanceof KyoraError) error.sandboxId = sandbox.id
+        throw error
+      }
       await this.kyora.sandboxes.delete(sandbox.id).catch(() => false)
       throw error
     }

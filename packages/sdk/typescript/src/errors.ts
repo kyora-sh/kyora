@@ -44,6 +44,8 @@ export class KyoraError extends Error {
   readonly operation: string | undefined
   /** the error body as kyora sent it, with any fields beyond `error` and `message` */
   readonly body: unknown
+  /** the sandbox a restore under your own `idempotencyKey` made or answered, left running when its wait failed */
+  sandboxId: string | undefined = undefined
 
   constructor(init: KyoraErrorInit) {
     super(init.message, init.cause === undefined ? undefined : { cause: init.cause })

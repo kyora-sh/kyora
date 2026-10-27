@@ -22,6 +22,8 @@ class KyoraError(Exception):
 
     Branch on `code` (or `class_` for a family of codes), never on `message`. `status` is the HTTP
     status, or 0 when nothing answered. `retry_after` is the least wait kyora asked for, in seconds.
+    `sandbox_id` is the sandbox a restore under your own `idempotency_key` made or answered, left
+    running when its wait failed.
     """
 
     def __init__(
@@ -46,6 +48,7 @@ class KyoraError(Exception):
         self.retry_after = retry_after
         self.operation = operation
         self.body = body
+        self.sandbox_id: str | None = None
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}(code={self.code!r}, status={self.status}, message={self.message!r})"
