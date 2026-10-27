@@ -4,9 +4,10 @@
 //   crates-preflight publishable crates whose version is not on crates.io: cargo publish --dry-run
 //   crates-publish   the same crates: cargo publish, then tag
 //   pypi-version-sync  sets the Python SDK's version (pyproject.toml, uv.lock) to @kyora-sh/sdk's, run by version-packages
-//   pypi-preflight   the Python SDK, when its version is not on PyPI: uv build, twine check
-//   pypi-build       the same: uv build into packages/sdk/python/dist for the publish action
-//   pypi-finish      tag and create a GitHub release for what reached PyPI
+//   pypi-preflight   the Python SDK, when PyPI lacks its version's wheel or sdist: uv build, twine check
+//   pypi-build       the same: the missing files into packages/sdk/python/dist for the publish action, built from the
+//                    commit an interrupted upload came from
+//   pypi-finish      once PyPI shows both files: tag and create a GitHub release
 // Preflights write the pending count to $GITHUB_OUTPUT. Publish steps check every package before publishing any.
 // A version published by an earlier run but left without its tag or GitHub release is finished on the next run:
 // its tag goes on the commit the registry says it was built from (npm's gitHead, crates' .cargo_vcs_info.json,
@@ -405,46 +406,82 @@ async function lockstepVersion() {
   return { ts, python }
 }
 
-/** PyPI answers 200 for a published version and 404 otherwise */
-async function pypiInfo(version: string): Promise<{ project_urls?: Record<string, string> | null } | undefined> {
+type PypiRelease = { projectUrls?: Record<string, string> | null; files: string[] }
+
+/** the version's project URLs and uploaded file names, from PyPI's JSON API */
+export const pypiRelease = (json: { info?: { project_urls?: Record<string, string> | null }; urls?: { filename: string }[] }): PypiRelease => ({
+  projectUrls: json.info?.project_urls,
+  files: (json.urls ?? []).map(file => file.filename),
+})
+
+/** the wheel and the sdist every version publishes */
+export const pypiFiles = (version: string) => [`${PYPI_NAME}-${version}-py3-none-any.whl`, `${PYPI_NAME}-${version}.tar.gz`]
+
+/** PyPI shows a version once its first file is up, so a version is published only with both files; the tag goes on after that */
+export function pypiProgress(version: string, tagged: boolean, release?: PypiRelease) {
+  const uploaded = pypiFiles(version).filter(file => release?.files.includes(file))
+  const missing = tagged ? [] : pypiFiles(version).filter(file => !uploaded.includes(file))
+  return { uploaded, missing, published: missing.length === 0, partial: missing.length > 0 && uploaded.length > 0 }
+}
+
+/** PyPI answers 200 for a version with any file uploaded and 404 otherwise */
+async function pypiInfo(version: string): Promise<PypiRelease | undefined> {
   return retry(`pypi ${PYPI_NAME}`, async () => {
     const response = await fetch(`https://pypi.org/pypi/${PYPI_NAME}/${version}/json`, { headers: { "user-agent": USER_AGENT } })
-    if (response.status === 200) return (await response.json()).info
+    if (response.status === 200) return pypiRelease(await response.json())
     if (response.status === 404) return undefined
     throw new Error(`pypi.org answered ${response.status}`)
   })
 }
 
-/** as with npm: unpublished, or published without its tag or GitHub release; a tagged version PyPI does not show yet is registry lag */
+/** as with npm: unpublished, partly uploaded, or published without its tag or GitHub release; a tagged version PyPI does not show yet is registry lag */
 async function pypiState() {
   const { ts, python } = await lockstepVersion()
   const name = pypiTag(python)
   const isTagged = await tagged(name)
-  const published = isTagged || (await pypiInfo(python)) !== undefined
+  const release = isTagged ? undefined : await pypiInfo(python)
+  const progress = pypiProgress(python, isTagged, release)
   const isReleased = isTagged && (await released(name))
-  return { ts, version: python, name, published, pending: needsRelease({ published, tagged: isTagged, released: isReleased }) }
+  // a partial upload is finished from the commit its first file was built from, never from HEAD
+  const commit = async () => (progress.partial ? publishedCommit(name, sourceCommit(release?.projectUrls), "PyPI's Source project URL") : head())
+  return { ts, version: python, name, ...progress, commit, pending: needsRelease({ published: progress.published, tagged: isTagged, released: isReleased }) }
 }
 
-/** builds the sdist and wheel with this commit as the Source project URL, then checks them */
-async function pypiBuild(version: string, commit: string, out: string) {
-  const manifestFile = join(PYTHON_DIR, "pyproject.toml")
-  const original = await Bun.file(manifestFile).text()
-  await Bun.write(manifestFile, withSourceCommit(original, commit))
+/** runs fn in a checkout of commit: this one when it is HEAD, a temporary worktree otherwise */
+async function atCommit<T>(commit: string, fn: (tree: string) => Promise<T>): Promise<T> {
+  if (commit === (await head())) return fn(root)
+  const tree = join(await mkdtemp(join(tmpdir(), "kyora-tree-")), "tree")
+  await $`git worktree add --detach ${tree} ${commit}`
   try {
-    await $`uv build --out-dir ${out}`.cwd(PYTHON_DIR)
+    return await fn(tree)
   } finally {
-    await Bun.write(manifestFile, original)
+    await $`git worktree remove --force ${tree}`.quiet().nothrow()
   }
+}
+
+/** builds the sdist and wheel at commit, recording it as the Source project URL, checks them, then drops the files PyPI already has */
+async function pypiBuild(version: string, commit: string, out: string, uploaded: string[] = []) {
+  await atCommit(commit, async tree => {
+    const dir = join(tree, "packages/sdk/python")
+    const manifestFile = join(dir, "pyproject.toml")
+    const original = await Bun.file(manifestFile).text()
+    await Bun.write(manifestFile, withSourceCommit(original, commit))
+    try {
+      await $`uv build --out-dir ${out}`.cwd(dir)
+    } finally {
+      await Bun.write(manifestFile, original)
+    }
+  })
   // uv drops a .gitignore into the out dir; the publish action uploads every file there
   await rm(join(out, ".gitignore"), { force: true })
   const files = (await readdir(out)).sort()
-  const wheel = `${PYPI_NAME}-${version}-py3-none-any.whl`
-  const expected = [wheel, `${PYPI_NAME}-${version}.tar.gz`]
+  const expected = pypiFiles(version)
   if (JSON.stringify(files) !== JSON.stringify(expected)) throw new Error(`${PYPI_NAME}: built ${files.join(", ") || "nothing"}, expected ${expected.join(", ")}`)
-  const metadata = await $`unzip -p ${join(out, wheel)} ${`${PYPI_NAME}-${version}.dist-info/METADATA`}`.quiet().text()
+  const metadata = await $`unzip -p ${join(out, expected[0]!)} ${`${PYPI_NAME}-${version}.dist-info/METADATA`}`.quiet().text()
   const problems = metadataProblems(metadata, version, commit)
   if (problems.length) throw new Error(`${PYPI_NAME}: the wheel's metadata is wrong: ${problems.join("; ")}`)
   await $`uvx --from twine==7.0.0 twine check --strict ${files.map(file => join(out, file))}`
+  for (const file of uploaded) await rm(join(out, file))
 }
 
 async function pypiPreflight() {
@@ -452,32 +489,32 @@ async function pypiPreflight() {
   if (!state.pending) await summary("- pypi: nothing to publish")
   else if (state.published) await summary(`- pypi: ${PYPI_NAME}==${state.version} is published but its tag or GitHub release is missing`)
   else {
-    await pypiBuild(state.version, await head(), await mkdtemp(join(tmpdir(), "kyora-pypi-")))
-    await summary(`- pypi: ${PYPI_NAME}==${state.version} ready`)
+    const commit = await state.commit()
+    await pypiBuild(state.version, commit, await mkdtemp(join(tmpdir(), "kyora-pypi-")), state.uploaded)
+    await summary(`- pypi: ${PYPI_NAME}==${state.version} ready${state.partial ? ` (PyPI lacks ${state.missing.join(", ")}: rebuilt from ${commit})` : ""}`)
   }
   await output("pypi", state.pending ? "1" : "0")
 }
 
-/** the dist directory for the publish action, built only when PyPI does not have the version yet */
+/** the dist directory for the publish action: the files PyPI does not have yet */
 async function pypiBuildStep() {
   const state = await pypiState()
-  if (!state.published) await pypiBuild(state.version, await head(), join(PYTHON_DIR, "dist"))
+  if (!state.published) await pypiBuild(state.version, await state.commit(), join(PYTHON_DIR, "dist"), state.uploaded)
   await output("publish", state.published ? "0" : "1")
 }
 
-/** after the publish action: PUBLISHED_HERE says it uploaded this commit's build; otherwise the commit comes from PyPI */
+/** tags the commit PyPI's Source project URL names, once PyPI shows both files */
 async function pypiFinish() {
   const state = await pypiState()
   if (!state.pending) return summary("- pypi: nothing to publish")
-  const ours = Bun.env.PUBLISHED_HERE === "true"
   const commit = async () => {
-    if (ours) return head()
-    const info = await retry(`pypi ${PYPI_NAME}==${state.version}`, async () => {
-      const info = await pypiInfo(state.version)
-      if (!info) throw new Error("not visible yet")
-      return info
-    })
-    return publishedCommit(state.name, sourceCommit(info.project_urls), "PyPI's Source project URL")
+    const release = await retry(`pypi ${PYPI_NAME}==${state.version}`, async () => {
+      const release = await pypiInfo(state.version)
+      const { missing } = pypiProgress(state.version, false, release)
+      if (missing.length) throw new Error(`PyPI does not show ${missing.join(", ")} yet`)
+      return release!
+    }, 6)
+    return publishedCommit(state.name, sourceCommit(release.projectUrls), "PyPI's Source project URL")
   }
   const section = await changelogSection({ dir: TS_SDK_DIR, name: "@kyora-sh/sdk", version: state.ts, isNew: false, published: true })
   const notes = `The Python SDK, released with @kyora-sh/sdk@${state.ts}.${section === `@kyora-sh/sdk@${state.ts}` ? "" : `\n\n${section}`}`

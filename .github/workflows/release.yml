@@ -170,12 +170,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
       # trusted publishing (OIDC): the publisher on PyPI names this workflow and the pypi environment
-      - id: publish
-        if: steps.build.outputs.publish == '1'
+      - if: steps.build.outputs.publish == '1'
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
         with:
           packages-dir: packages/sdk/python/dist
+          # dist holds only the files PyPI lacked; this covers one it shows late
+          skip-existing: true
       - run: bun .github/scripts/release.ts pypi-finish
         env:
           GH_TOKEN: ${{ github.token }}
-          PUBLISHED_HERE: ${{ steps.publish.outcome == 'success' }}

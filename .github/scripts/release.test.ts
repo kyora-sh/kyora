@@ -8,6 +8,8 @@ import {
   pep440,
   publishOutcome,
   publishedCommit,
+  pypiProgress,
+  pypiRelease,
   pypiTag,
   pyprojectVersion,
   sourceCommit,
@@ -146,4 +148,24 @@ test("a wheel is checked for its name, version, commit and repository", () => {
   expect(metadataProblems(metadata([...good.slice(0, 3), "Project-URL: Repository, https://github.com/kyora-sh/kyora-platform"]), "1.2.3", sha)).toEqual([
     "Repository project URL is not github.com/kyora-sh/kyora",
   ])
+})
+
+const pypiJson = (files: string[]) => ({
+  info: { project_urls: { Source: `https://github.com/kyora-sh/kyora/tree/${sha}` } },
+  urls: files.map(filename => ({ filename, packagetype: filename.endsWith(".whl") ? "bdist_wheel" : "sdist" })),
+})
+
+test("an upload interrupted after the wheel is not published: the sdist is rebuilt from the wheel's commit, and nothing is tagged yet", () => {
+  const release = pypiRelease(pypiJson(["kyora-1.2.3-py3-none-any.whl"]))
+  expect(pypiProgress("1.2.3", false, release)).toEqual({ uploaded: ["kyora-1.2.3-py3-none-any.whl"], missing: ["kyora-1.2.3.tar.gz"], published: false, partial: true })
+  expect(sourceCommit(release.projectUrls)).toBe(sha)
+  expect(pypiProgress("1.2.3", false, pypiRelease(pypiJson(["kyora-1.2.3.tar.gz"])))).toMatchObject({ missing: ["kyora-1.2.3-py3-none-any.whl"], published: false, partial: true })
+})
+
+test("a version is published only with both files on PyPI, or once tagged", () => {
+  const both = pypiRelease(pypiJson(["kyora-1.2.3-py3-none-any.whl", "kyora-1.2.3.tar.gz"]))
+  expect(pypiProgress("1.2.3", false, both)).toEqual({ uploaded: ["kyora-1.2.3-py3-none-any.whl", "kyora-1.2.3.tar.gz"], missing: [], published: true, partial: false })
+  expect(pypiProgress("1.2.3", false, undefined)).toEqual({ uploaded: [], missing: ["kyora-1.2.3-py3-none-any.whl", "kyora-1.2.3.tar.gz"], published: false, partial: false })
+  expect(pypiProgress("1.2.3", false, pypiRelease(pypiJson(["kyora-1.2.2.tar.gz"])))).toMatchObject({ published: false, partial: false })
+  expect(pypiProgress("1.2.3", true, undefined)).toMatchObject({ missing: [], published: true, partial: false })
 })
