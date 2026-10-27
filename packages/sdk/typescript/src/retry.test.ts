@@ -106,6 +106,28 @@ describe("idempotency keys", () => {
     expect(requests[0]!.headers.get("idempotency-key")).toBe("job-42")
   })
 
+  test("a key given as a header in any casing is sent once, as given", async () => {
+    const { kyora, requests } = client(() => json(201, sandbox("sb_1")))
+    await kyora.sandboxes.create({}, { headers: { "idempotency-KEY": "job-42" } })
+    await kyora.sandboxes.create({}, { idempotencyKey: "job-43", headers: { "Idempotency-Key": "job-43", "idempotency-key": "job-43" } })
+    await kyora.call("createSandbox", { body: {} }, { headers: { "IDEMPOTENCY-KEY": "job-44" } })
+    expect(requests.map((request) => request.headers.get("idempotency-key"))).toEqual(["job-42", "job-43", "job-44"])
+  })
+
+  test("two different keys are a TypeError, before anything is sent", async () => {
+    const { kyora, requests } = client(() => json(201, sandbox("sb_1")))
+    await expect(kyora.sandboxes.create({}, { idempotencyKey: "job-42", headers: { "idempotency-key": "job-43" } })).rejects.toBeInstanceOf(TypeError)
+    await expect(kyora.sandboxes.create({}, { headers: { "Idempotency-Key": "job-42", "idempotency-key": "job-43" } })).rejects.toBeInstanceOf(TypeError)
+    expect(requests).toHaveLength(0)
+  })
+
+  test("operations without a key in the spec pass a caller's Idempotency-Key header through as given", async () => {
+    const { kyora, requests } = client(() => json(200, sandbox("sb_1")))
+    await kyora.sandboxes.get("sb_1", { headers: { "IdemPotency-key": "job-42" } })
+    await kyora.call("getSandbox", { path: { id: "sb_1" } }, { headers: { "IDEMPOTENCY-KEY": "job-43" } })
+    expect(requests.map((request) => request.headers.get("idempotency-key"))).toEqual(["job-42", "job-43"])
+  })
+
   test("operations without a key in the spec get none", async () => {
     const { kyora, requests } = client(() => json(200, { snapshot: true, id: "snap_1", status: "ready" }))
     await kyora.snapshots.create("sb_1", {}, { wait: false })

@@ -24,6 +24,7 @@ from ._http import (
     Retry,
     Transport,
     WaitOptions,
+    caller_key,
     end_of,
     left,
     read_json,
@@ -253,9 +254,6 @@ class AsyncKyora:
             raise ValueError(f"{operation}: no such operation")
         parts = RequestParts(path=path, query=query, body=body, content_type=content_type)
         merged = {**(options.get("headers") or {}), **(headers or {})}
-        for name in list(merged):
-            if name.lower() == "idempotency-key":
-                parts.idempotency_key = merged.pop(name)
         call: CallOptions = {**options, "headers": merged}
         spec = OPERATIONS[operation]
         if spec["method"] != "HEAD" and spec["response"] in ("json", "none"):
@@ -555,18 +553,26 @@ class Snapshots:
         **options: Unpack[CallOptions],
     ) -> Sandbox:
         """A new sandbox from a snapshot, polled until it runs (unless `wait=False`). One that fails or runs
-        out of time is destroyed, so nothing half restored is left behind."""
+        out of time is destroyed, so nothing half restored is left behind, unless you passed your own
+        `idempotency_key` (or Idempotency-Key header): the same key answers the sandbox an earlier restore
+        made, which may be someone else's, so it is never destroyed. The wait's KyoraError then carries its
+        `sandbox_id` (a cancellation propagates as it is; `on_progress` has seen the sandbox by then)."""
         until = end_of(options, POLL_TIMEOUT)
         body = {**dump(CreateSandboxRequest, spec), "fromSnapshot": snapshot}
         call: CallOptions = {**without(options, "timeout"), "deadline": until}  # type: ignore[typeddict-item]
-        sandbox = await self._kyora.sandboxes.create(body, idempotency_key=idempotency_key, on_queued=on_queued, **call)
+        key = caller_key("createSandbox", idempotency_key, options.get("headers"))
+        sandbox = await self._kyora.sandboxes.create(body, idempotency_key=key, on_queued=on_queued, **call)
         if not wait:
             return sandbox
         try:
             return await self._kyora.sandboxes.wait_until_running(
                 sandbox, on_progress=on_progress, interval=interval, deadline=until
             )
-        except BaseException:
+        except BaseException as error:
+            if key:
+                if isinstance(error, KyoraError):
+                    error.sandbox_id = sandbox.id
+                raise
             try:
                 await self._kyora.sandboxes.delete(sandbox.id)
             except KyoraError:

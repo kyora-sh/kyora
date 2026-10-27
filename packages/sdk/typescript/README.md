@@ -136,6 +136,8 @@ await kyora.ports.unexpose(sandbox.id, port.label)
 const { token } = await kyora.tokens.create({ name: "doc-agent", scopes: ["vms:read", "vms:write", "vms:exec"], constraints: { labels: { app: "doc-agent" }, maxSandboxes: 10 } })
 ```
 
+A restore whose sandbox fails or runs out of time destroys it, unless you pass your own `idempotencyKey` (or `Idempotency-Key` header): the same key answers the sandbox an earlier restore with that key made, which may be another caller's, so the SDK never destroys it. The error then carries the sandbox's id in `sandboxId` (an abort throws the signal's reason as it is; `onProgress` has seen the sandbox by then), and destroying it is up to you.
+
 ## Everything else
 
 `kyora.call(operationId, { path, query, body })` sends any operation of the API, typed from the spec, with the same errors, retries and idempotency keys. JSON operations answer their parsed body; streamed, binary and HEAD ones the `Response`. Operations without a helper yet: custom domains, pages, computer use and live views, terminals, account images and object storage. `OPERATIONS` lists every operation; the generated types (`Sandbox`, `Snapshot`, `ExecFrame`, ...) are exported too.
