@@ -1,6 +1,6 @@
 [project]
 name = "kyora"
-version = "0.1.0"
+version = "0.1.1"
 description = "Python SDK for kyora cloud sandboxes"
 readme = "README.md"
 license = "Apache-2.0"
