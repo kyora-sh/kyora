@@ -567,19 +567,22 @@ async def test_an_upload_cancelled_as_kyora_opens_it_is_aborted(client):
     assert (requests[-1].method, requests[-1].url.path) == ("DELETE", "/v1/sandboxes/sb_1/uploads/up_1")
 
 
-async def test_a_restore_cancelled_as_its_sandbox_is_made_destroys_it(client):
+async def test_a_replayed_restore_cancelled_before_it_returns_never_destroys_the_sandbox(client):
     import json as jsonlib
 
     calls = []
-    made = CancelsAtTheEnd(calls, jsonlib.dumps(sandbox("sb_r", status="starting")).encode())
+    replay = CancelsAtTheEnd(calls, jsonlib.dumps(sandbox("sb_r", status="starting")).encode())
 
     def handler(r, i):
         if r.method == "POST":
-            return made(201)
+            return json(201, sandbox("sb_r", status="starting")) if i == 0 else replay(201)
         return json(204)
 
     kyora, requests = client(handler)
-    calls.append(asyncio.ensure_future(kyora.snapshots.restore("snap_1")))
+    first = await kyora.snapshots.restore("snap_1", idempotency_key="job-42", wait=False)
+    assert first.id == "sb_r"
+    calls.append(asyncio.ensure_future(kyora.snapshots.restore("snap_1", idempotency_key="job-42", wait=False)))
     with pytest.raises(asyncio.CancelledError):
         await calls[0]
-    assert (requests[-1].method, requests[-1].url.path) == ("DELETE", "/v1/sandboxes/sb_r")
+    await kyora.aclose()
+    assert [r.method for r in requests] == ["POST", "POST"]
