@@ -179,6 +179,44 @@ describe("snapshots, ports and tokens", () => {
     expect(requests.some((request) => request.method === "DELETE")).toBe(false)
   })
 
+  test("a restore under the caller's key that kyora says this call made is destroyed when it fails", async () => {
+    const { kyora, requests } = client((request) => {
+      if (request.method === "POST") return json(202, sandbox("sb_r", { status: "starting" }), { "idempotent-replayed": "false" })
+      if (request.method === "DELETE") return json(204, null)
+      return json(200, sandbox("sb_r", { status: "failed" }))
+    })
+    const seen: Array<boolean | null> = []
+    const failure = await kyora.snapshots.restore("snap_1", {}, { idempotencyKey: "job-42", intervalMs: 5, onReplayed: (replayed) => seen.push(replayed) }).catch((error: unknown) => error)
+    expect(failure).toMatchObject({ code: "sandbox_ended" })
+    expect((failure as { sandboxId?: string }).sandboxId).toBeUndefined()
+    expect(seen).toEqual([false])
+    expect(requests.at(-1)!.method).toBe("DELETE")
+    expect(requests.at(-1)!.url.pathname).toBe("/v1/sandboxes/sb_r")
+  })
+
+  test("a restore under the caller's key that kyora answers as replayed, or doesn't say, is left running", async () => {
+    for (const header of [{ "idempotent-replayed": "true" }, {}, { "idempotent-replayed": "maybe" }] as Array<Record<string, string>>) {
+      const { kyora, requests } = client((request) => {
+        if (request.method === "POST") return json(202, sandbox("sb_r", { status: "starting" }), header)
+        if (request.method === "DELETE") return json(204, null)
+        return json(200, sandbox("sb_r", { status: "failed" }))
+      })
+      const failure = await kyora.snapshots.restore("snap_1", {}, { idempotencyKey: "job-42", intervalMs: 5 }).catch((error: unknown) => error)
+      expect(failure).toMatchObject({ code: "sandbox_ended", sandboxId: "sb_r" })
+      expect(requests.some((request) => request.method === "DELETE")).toBe(false)
+    }
+  })
+
+  test("a restore under the SDK's key is destroyed when it fails, even when kyora answers it as replayed", async () => {
+    const { kyora, requests } = client((request) => {
+      if (request.method === "POST") return json(202, sandbox("sb_r", { status: "starting" }), { "idempotent-replayed": "true" })
+      if (request.method === "DELETE") return json(204, null)
+      return json(200, sandbox("sb_r", { status: "failed" }))
+    })
+    await expect(kyora.snapshots.restore("snap_1", {}, { intervalMs: 5 })).rejects.toMatchObject({ code: "sandbox_ended" })
+    expect(requests.at(-1)!.method).toBe("DELETE")
+  })
+
   test("ports and tokens reach their operations", async () => {
     const { kyora, requests } = client((request) => {
       if (request.url.pathname.endsWith("/ports") && request.method === "GET") return json(200, { ports: [] })

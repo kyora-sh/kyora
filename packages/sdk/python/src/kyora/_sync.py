@@ -249,12 +249,15 @@ class Sandboxes(_Resource):
         *,
         idempotency_key: str | None = None,
         on_queued: Callable[[QueueTicket], Any] | None = None,
+        on_replayed: Callable[[bool | None], Any] | None = None,
         **options: Unpack[CallOptions],
     ) -> Sandbox:
         """Creates a sandbox under an Idempotency-Key, so a retry never creates a second one; with `wait`
         in the spec, waits in line for room. See AsyncKyora.sandboxes.create."""
         return self._portal.run(
-            self._aio.sandboxes.create(spec, idempotency_key=idempotency_key, on_queued=on_queued, **options)
+            self._aio.sandboxes.create(
+                spec, idempotency_key=idempotency_key, on_queued=on_queued, on_replayed=on_replayed, **options
+            )
         )
 
     def ticket(self, ticket: str, wait: int | None = None, **options: Unpack[CallOptions]) -> QueueTicket | Sandbox:
@@ -463,12 +466,14 @@ class Snapshots(_Resource):
         wait: bool = True,
         idempotency_key: str | None = None,
         on_queued: Callable[[QueueTicket], Any] | None = None,
+        on_replayed: Callable[[bool | None], Any] | None = None,
         on_progress: Callable[[Sandbox], Any] | None = None,
         interval: float = 1.0,
         **options: Unpack[CallOptions],
     ) -> Sandbox:
         """A new sandbox from a snapshot, polled until it runs (unless `wait=False`); destroyed on failure
-        unless you passed your own `idempotency_key`, when the KyoraError carries its `sandbox_id` instead."""
+        unless you passed your own `idempotency_key` and kyora didn't say this call made it, when the
+        KyoraError carries its `sandbox_id` instead."""
         return self._portal.run(
             self._aio.snapshots.restore(
                 snapshot,
@@ -476,6 +481,7 @@ class Snapshots(_Resource):
                 wait=wait,
                 idempotency_key=idempotency_key,
                 on_queued=on_queued,
+                on_replayed=on_replayed,
                 on_progress=on_progress,
                 interval=interval,
                 **options,

@@ -136,7 +136,7 @@ await kyora.ports.unexpose(sandbox.id, port.label)
 const { token } = await kyora.tokens.create({ name: "doc-agent", scopes: ["vms:read", "vms:write", "vms:exec"], constraints: { labels: { app: "doc-agent" }, maxSandboxes: 10 } })
 ```
 
-A restore whose sandbox fails or runs out of time destroys it, unless you pass your own `idempotencyKey` (or `Idempotency-Key` header): the same key answers the sandbox an earlier restore with that key made, which may be another caller's, so the SDK never destroys it. The error then carries the sandbox's id in `sandboxId` (an abort throws the signal's reason as it is; `onProgress` has seen the sandbox by then), and destroying it is up to you.
+A restore whose sandbox fails or runs out of time destroys it. Under your own `idempotencyKey` (or `Idempotency-Key` header) the same key answers the sandbox an earlier restore with that key made, which may be another caller's, so the SDK destroys it only when kyora's `Idempotent-Replayed` header says this call's request made it (`onReplayed` gets `false`), never when the answer is replayed (`true`) or kyora doesn't say (`null`). Otherwise the error carries the sandbox's id in `sandboxId` (an abort throws the signal's reason as it is; `onProgress` has seen the sandbox by then), and destroying it is up to you.
 
 ## Everything else
 

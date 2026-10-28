@@ -143,6 +143,31 @@ describe("idempotency keys", () => {
   })
 })
 
+describe("Idempotent-Replayed", () => {
+  test("a create reports whether its answer is an earlier request's create: true, false, or null when kyora doesn't say", async () => {
+    const headers: Array<Record<string, string>> = [{ "idempotent-replayed": "true" }, { "idempotent-replayed": "false" }, {}, { "Idempotent-Replayed": "False" }]
+    const { kyora } = client((_, index) => json(201, sandbox(`sb_${index}`), headers[index]))
+    const seen: Array<boolean | null> = []
+    for (let i = 0; i < headers.length; i++) await kyora.sandboxes.create({}, { onReplayed: (replayed) => seen.push(replayed) })
+    expect(seen).toEqual([true, false, null, false])
+  })
+
+  test("a create answered with an error never calls onReplayed", async () => {
+    const { kyora } = client(() => error(409, "name_taken", {}, { "idempotent-replayed": "true" }))
+    const seen: Array<boolean | null> = []
+    await expect(kyora.sandboxes.create({ name: "taken" }, { onReplayed: (replayed) => seen.push(replayed) })).rejects.toMatchObject({ code: "name_taken" })
+    expect(seen).toEqual([])
+  })
+
+  test("a create retried after a lost answer reports the answer that reached it", async () => {
+    const { kyora, requests } = client((_, index) => (index === 0 ? error(503, "do_reset", {}, { "retry-after": "0" }) : json(201, sandbox("sb_1"), { "idempotent-replayed": "true" })))
+    const seen: Array<boolean | null> = []
+    await kyora.sandboxes.create({}, { onReplayed: (replayed) => seen.push(replayed) })
+    expect(requests).toHaveLength(2)
+    expect(seen).toEqual([true])
+  })
+})
+
 describe("the create queue", () => {
   test("a queued create long-polls its ticket until the sandbox is placed", async () => {
     const ticket = { ticket: "q_1", status: "queued", position: 1, ahead: 0, depth: 1, enqueuedAt: "x", waitUntil: "y", poll: "/v1/queue/q_1" }
@@ -152,11 +177,20 @@ describe("the create queue", () => {
       if (index === 1) return json(202, { ...ticket, position: 0 })
       return json(201, sandbox("sb_placed"))
     })
-    const placed = await kyora.sandboxes.create({ wait: 30 }, { onQueued: (current) => seen.push(String(current.position)) })
+    const placed = await kyora.sandboxes.create({ wait: 30 }, { onQueued: (current) => seen.push(String(current.position)), onReplayed: (replayed) => seen.push(`replayed ${replayed}`) })
     expect(placed.id).toBe("sb_placed")
-    expect(seen).toEqual(["1", "0"])
+    expect(seen).toEqual(["replayed null", "1", "0"])
     expect(requests[1]!.url.pathname).toBe("/v1/queue/q_1")
     expect(Number(requests[1]!.url.searchParams.get("wait"))).toBeGreaterThan(0)
+  })
+
+  test("an onQueued or onReplayed that throws takes the create out of line", async () => {
+    const ticket = { ticket: "q_5", status: "queued", position: 1, ahead: 0, depth: 1, enqueuedAt: "x", waitUntil: "y", poll: "/v1/queue/q_5" }
+    for (const options of [{ onQueued: () => { throw new Error("refused") } }, { onReplayed: () => { throw new Error("refused") } }]) {
+      const { kyora, requests } = client((request) => (request.method === "POST" ? json(202, ticket) : json(204, null)))
+      await expect(kyora.sandboxes.create({ wait: 30 }, options)).rejects.toThrow("refused")
+      expect(requests.map((request) => `${request.method} ${request.url.pathname}`)).toEqual(["POST /v1/sandboxes", "DELETE /v1/queue/q_5"])
+    }
   })
 
   test("a deadline in line takes the create out of line", async () => {

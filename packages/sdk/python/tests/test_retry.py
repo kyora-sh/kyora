@@ -227,11 +227,56 @@ async def test_a_queued_create_long_polls_its_ticket_until_the_sandbox_is_placed
         return json(201, sandbox("sb_placed"))
 
     kyora, requests = client(handler)
-    placed = await kyora.sandboxes.create({"wait": 30}, on_queued=lambda current: seen.append(current.position))
+    placed = await kyora.sandboxes.create(
+        {"wait": 30}, on_queued=lambda current: seen.append(current.position), on_replayed=seen.append
+    )
     assert placed.id == "sb_placed"
-    assert seen == [1, 0]
+    assert seen == [None, 1, 0]
     assert requests[1].url.path == "/v1/queue/q_1"
     assert int(requests[1].url.params["wait"]) > 0
+
+
+async def test_a_create_reports_whether_its_answer_is_an_earlier_requests_create(client):
+    headers = [{"idempotent-replayed": "true"}, {"idempotent-replayed": "false"}, {}, {"Idempotent-Replayed": "False"}]
+    kyora, _ = client(lambda r, i: json(201, sandbox(f"sb_{i}"), headers[i]))
+    seen = []
+    for _ in headers:
+        await kyora.sandboxes.create({}, on_replayed=seen.append)
+    assert seen == [True, False, None, False]
+
+
+async def test_a_create_retried_after_a_lost_answer_reports_the_answer_that_reached_it(client):
+    kyora, requests = client(
+        lambda r, i: (
+            error(503, "do_reset", headers={"retry-after": "0"})
+            if i == 0
+            else json(201, sandbox("sb_1"), {"idempotent-replayed": "true"})
+        )
+    )
+    seen = []
+    await kyora.sandboxes.create({}, on_replayed=seen.append)
+    assert len(requests) == 2
+    assert seen == [True]
+
+
+async def test_a_create_answered_with_an_error_never_calls_on_replayed(client):
+    kyora, _ = client(lambda r, i: error(409, "name_taken", headers={"idempotent-replayed": "true"}))
+    seen = []
+    with pytest.raises(KyoraError):
+        await kyora.sandboxes.create({"name": "taken"}, on_replayed=seen.append)
+    assert seen == []
+
+
+async def test_an_async_on_replayed_is_awaited(client):
+    kyora, _ = client(lambda r, i: json(201, sandbox("sb_1"), {"idempotent-replayed": "false"}))
+    seen = []
+
+    async def remember(replayed):
+        await asyncio.sleep(0)
+        seen.append(replayed)
+
+    await kyora.sandboxes.create({}, on_replayed=remember)
+    assert seen == [False]
 
 
 async def test_a_deadline_in_line_takes_the_create_out_of_line(client):
