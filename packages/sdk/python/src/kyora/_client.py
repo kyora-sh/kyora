@@ -288,9 +288,10 @@ class Sandboxes:
         made its sandbox: the same create with the same key answers that sandbox. With `wait` (seconds) in
         the spec, a create kyora has no room for waits in line: this long-polls its ticket until the sandbox
         is placed, calling `on_queued` with each ticket, and takes it out of line at the deadline or on
-        cancellation. `on_replayed` gets the answer's Idempotent-Replayed: True when it is a create an earlier
-        request under the same key started (with your own key, possibly someone else's), False when this
-        call's request made it, None when kyora doesn't say."""
+        cancellation. Once the create answers its sandbox or its ticket (never for an error), `on_replayed`
+        gets the answer's Idempotent-Replayed: True when it is a create an earlier request under the same key
+        started (with your own key, possibly someone else's), False when this call's request made it, None
+        when kyora doesn't say."""
         body = dump(CreateSandboxRequest, spec)
         if self._kyora.region is not None and "region" not in body:
             body["region"] = self._kyora.region

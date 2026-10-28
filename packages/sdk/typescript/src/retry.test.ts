@@ -152,6 +152,13 @@ describe("Idempotent-Replayed", () => {
     expect(seen).toEqual([true, false, null, false])
   })
 
+  test("a create answered with an error never calls onReplayed", async () => {
+    const { kyora } = client(() => error(409, "name_taken", {}, { "idempotent-replayed": "true" }))
+    const seen: Array<boolean | null> = []
+    await expect(kyora.sandboxes.create({ name: "taken" }, { onReplayed: (replayed) => seen.push(replayed) })).rejects.toMatchObject({ code: "name_taken" })
+    expect(seen).toEqual([])
+  })
+
   test("a create retried after a lost answer reports the answer that reached it", async () => {
     const { kyora, requests } = client((_, index) => (index === 0 ? error(503, "do_reset", {}, { "retry-after": "0" }) : json(201, sandbox("sb_1"), { "idempotent-replayed": "true" })))
     const seen: Array<boolean | null> = []

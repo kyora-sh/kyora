@@ -259,6 +259,14 @@ async def test_a_create_retried_after_a_lost_answer_reports_the_answer_that_reac
     assert seen == [True]
 
 
+async def test_a_create_answered_with_an_error_never_calls_on_replayed(client):
+    kyora, _ = client(lambda r, i: error(409, "name_taken", headers={"idempotent-replayed": "true"}))
+    seen = []
+    with pytest.raises(KyoraError):
+        await kyora.sandboxes.create({"name": "taken"}, on_replayed=seen.append)
+    assert seen == []
+
+
 async def test_an_async_on_replayed_is_awaited(client):
     kyora, _ = client(lambda r, i: json(201, sandbox("sb_1"), {"idempotent-replayed": "false"}))
     seen = []

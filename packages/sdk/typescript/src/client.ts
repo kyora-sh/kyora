@@ -63,9 +63,10 @@ export interface CreateOptions extends CallOptions {
   /** each ticket while a create with `wait` waits in line for room */
   onQueued?: (ticket: QueueTicket) => void
   /**
-   * The create's answer, from its Idempotent-Replayed header: true when it is a create an earlier
-   * request under the same key started (with your own key, possibly someone else's), false when this
-   * call's request made it, null when kyora doesn't say.
+   * Once the create answers its sandbox or its ticket (never for an error), from the answer's
+   * Idempotent-Replayed header: true when it is a create an earlier request under the same key started
+   * (with your own key, possibly someone else's), false when this call's request made it, null when
+   * kyora doesn't say.
    */
   onReplayed?: (replayed: boolean | null) => void
 }
