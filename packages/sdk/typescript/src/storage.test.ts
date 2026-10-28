@@ -46,6 +46,13 @@ describe("storage", () => {
     expect(requests[6]!.json).toEqual({ key: "a.txt", method: "PUT", ttlSeconds: 60 })
   })
 
+  test("a bucket goes to the client's region unless the create names one", async () => {
+    const { kyora, requests } = client(() => json(201, bucket("site")), { region: "eu" })
+    await kyora.storage.buckets.create("site")
+    await kyora.storage.buckets.create("site", { region: "us" })
+    expect(requests.map((request) => request.json)).toEqual([{ name: "site", region: "eu" }, { name: "site", region: "us" }])
+  })
+
   test("a forced bucket delete is called again until kyora answers it deleted, counting every object", async () => {
     const { kyora, requests } = client((_, index) => (index < 2 ? json(202, { name: "site", deleted: false, objectsDeleted: 1000, done: false, message: "more" }) : json(200, { name: "site", deleted: true, objectsDeleted: 7, done: true })))
     expect(await kyora.storage.buckets.delete("site", { force: true })).toEqual({ name: "site", deleted: true, objectsDeleted: 2007, done: true })

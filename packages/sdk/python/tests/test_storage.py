@@ -108,6 +108,13 @@ async def test_buckets_cors_keys_audit_and_presign_reach_their_operations(client
     assert requests[8].json == {"bucket": "site", "prefix": "build/", "access": "read"}
 
 
+async def test_a_bucket_goes_to_the_clients_region_unless_the_create_names_one(client):
+    kyora, requests = client(lambda r, i: json(201, bucket("site")), region="eu")
+    await kyora.storage.buckets.create("site")
+    await kyora.storage.buckets.create("site", region="us")
+    assert [r.json for r in requests] == [{"name": "site", "region": "eu"}, {"name": "site", "region": "us"}]
+
+
 async def test_a_forced_bucket_delete_is_called_again_until_kyora_answers_it_deleted_counting_every_object(client):
     progress = {"name": "site", "deleted": False, "objectsDeleted": 1000, "done": False, "message": "more"}
     finished = {"name": "site", "deleted": True, "objectsDeleted": 7, "done": True}
@@ -213,6 +220,13 @@ async def test_a_large_object_goes_up_in_parts_and_is_completed(client, small):
     assert requests[0].headers["content-type"] == "video/mp4"
     assert [len(r.body) for r in requests[1:4]] == [128 * KiB, 128 * KiB, 1]
     assert requests[-1].json == {"parts": [{"partNumber": n, "etag": f"e{n}"} for n in (1, 2, 3)]}
+
+
+async def test_a_view_of_wider_items_goes_up_byte_for_byte(client, small):
+    kyora, requests = client(multipart())
+    data = bytes(range(256)) * 1025
+    await kyora.storage.objects.put("site", "big", memoryview(bytearray(data)).cast("I"))
+    assert b"".join(r.body for r in requests if r.method == "PUT") == data
 
 
 async def test_a_failed_part_aborts_the_multipart_upload(client, small):

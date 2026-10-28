@@ -275,7 +275,7 @@ export class Kyora {
     this.files = new Files(this.transport)
     this.snapshots = new Snapshots(this)
     this.ports = new Ports(this.transport)
-    this.storage = new Storage(this.transport)
+    this.storage = new Storage(this)
     this.tokens = new Tokens(this.transport)
   }
 
@@ -663,10 +663,14 @@ export class Storage {
   readonly objects: Objects
   readonly keys: StorageKeys
 
-  constructor(private readonly transport: Transport) {
-    this.buckets = new Buckets(transport)
-    this.objects = new Objects(transport)
-    this.keys = new StorageKeys(transport)
+  constructor(private readonly kyora: Kyora) {
+    this.buckets = new Buckets(kyora)
+    this.objects = new Objects(kyora.transport)
+    this.keys = new StorageKeys(kyora.transport)
+  }
+
+  private get transport(): Transport {
+    return this.kyora.transport
   }
 
   /** the account's storage events, newest first */
@@ -677,14 +681,19 @@ export class Storage {
 }
 
 export class Buckets {
-  constructor(private readonly transport: Transport) {}
+  constructor(private readonly kyora: Kyora) {}
+
+  private get transport(): Transport {
+    return this.kyora.transport
+  }
 
   async list(options: CallOptions = {}): Promise<Bucket[]> {
     return (await this.transport.json<BucketList>("listBuckets", {}, options)).buckets
   }
 
+  /** a bucket in `region`, else the client's region, else where kyora picks */
   create(name: string, options: Omit<CreateBucketRequest, "name"> & CallOptions = {}): Promise<Bucket> {
-    const { region, ...call } = options
+    const { region = this.kyora.region, ...call } = options
     return this.transport.json("createBucket", { body: { name, ...(region !== undefined ? { region } : {}) } }, call)
   }
 

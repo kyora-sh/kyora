@@ -219,7 +219,7 @@ class AsyncKyora:
         self.files = Files(self.transport)
         self.snapshots = Snapshots(self)
         self.ports = Ports(self.transport)
-        self.storage = Storage(self.transport)
+        self.storage = Storage(self)
         self.tokens = Tokens(self.transport)
 
     def __repr__(self) -> str:
@@ -613,7 +613,8 @@ class PartSource:
         self._done = False
         self._chunks: AsyncIterator[bytes] | None = None
         if isinstance(archive, (bytes, bytearray, memoryview)):
-            self._bytes = memoryview(archive)
+            view = memoryview(archive)
+            self._bytes = view.cast("B") if view.c_contiguous else memoryview(view.tobytes())
         elif isinstance(archive, AsyncIterable):
             self._chunks = archive.__aiter__()
         elif hasattr(archive, "read"):
@@ -881,11 +882,11 @@ class ObjectInfo:
 class Storage:
     """Object storage: buckets, their objects and CORS, S3 keys, and the audit trail."""
 
-    def __init__(self, transport: Transport) -> None:
-        self._transport = transport
-        self.buckets = Buckets(transport)
-        self.objects = Objects(transport)
-        self.keys = StorageKeys(transport)
+    def __init__(self, kyora: AsyncKyora) -> None:
+        self._transport = kyora.transport
+        self.buckets = Buckets(kyora)
+        self.objects = Objects(kyora.transport)
+        self.keys = StorageKeys(kyora.transport)
 
     async def audit(self, *, limit: int | None = None, **options: Unpack[CallOptions]) -> list[Event]:
         """the account's storage events, newest first"""
@@ -894,13 +895,16 @@ class Storage:
 
 
 class Buckets:
-    def __init__(self, transport: Transport) -> None:
-        self._transport = transport
+    def __init__(self, kyora: AsyncKyora) -> None:
+        self._kyora = kyora
+        self._transport = kyora.transport
 
     async def list(self, **options: Unpack[CallOptions]) -> list[Bucket]:
         return load(BucketList, await self._transport.json("listBuckets", None, options), "listBuckets").buckets
 
     async def create(self, name: str, *, region: str | None = None, **options: Unpack[CallOptions]) -> Bucket:
+        """a bucket in `region`, else the client's region, else where kyora picks"""
+        region = region if region is not None else self._kyora.region
         body = dump(CreateBucketRequest, {"name": name, **({"region": region} if region is not None else {})})
         return load(
             Bucket, await self._transport.json("createBucket", RequestParts(body=body), options), "createBucket"
