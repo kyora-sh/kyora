@@ -694,8 +694,9 @@ export class Buckets {
 
   /**
    * Deletes a bucket. Without `force` one that holds objects is a `bucket_not_empty` error; with it
-   * its objects go first, a call at a time until kyora answers it deleted. `objectsDeleted` counts them all;
-   * `timeoutMs` and `deadline` bound the whole delete.
+   * its objects go first, a call at a time until kyora answers it deleted. `objectsDeleted` sums what each
+   * answer reports, so a call retried after its answer was lost leaves that batch uncounted: take it as a
+   * lower bound. `timeoutMs` and `deadline` bound the whole delete.
    */
   async delete(name: string, options: { force?: boolean } & CallOptions = {}): Promise<DeleteBucketResponse> {
     const { force, ...rest } = options

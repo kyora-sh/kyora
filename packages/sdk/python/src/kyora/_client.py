@@ -912,8 +912,9 @@ class Buckets:
 
     async def delete(self, name: str, *, force: bool = False, **options: Unpack[CallOptions]) -> DeleteBucketResponse:
         """Deletes a bucket. Without `force` one that holds objects is a `bucket_not_empty` error; with it
-        its objects go first, a call at a time until kyora answers it deleted. `objects_deleted` counts them
-        all; `timeout` and `deadline` bound the whole delete."""
+        its objects go first, a call at a time until kyora answers it deleted. `objects_deleted` sums what each
+        answer reports, so a call retried after its answer was lost leaves that batch uncounted: take it as a
+        lower bound. `timeout` and `deadline` bound the whole delete."""
         until = end_of(options)
         call: CallOptions = without(options, "timeout", "deadline")  # type: ignore[assignment]
         if until != math.inf:
