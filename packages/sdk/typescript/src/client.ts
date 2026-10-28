@@ -2,22 +2,36 @@ import { KyoraError } from "./errors.js"
 import { Exec } from "./exec.js"
 import { OPERATIONS, type OperationId, type Operations } from "./generated/operations.js"
 import type {
+  Bucket,
+  BucketCors,
+  BucketList,
+  CreateBucketRequest,
   CreateSandboxRequest,
   CreateSnapshotRequest,
+  CreateStorageKeyRequest,
+  CreateStorageKeyResponse,
   CreateTokenRequest,
   CreateTokenResponse,
   CreateUploadResponse,
+  DeleteBucketProgress,
+  DeleteBucketResponse,
   ExposePortRequest,
   Health,
   HeldPortList,
   LoginResponse,
   Me,
+  MultipartStartResponse,
   NetworkUpdateRequest,
   NetworkUpdateResponse,
+  ObjectList,
   Port,
   PortList,
   PortWithSandbox,
+  PresignRequest,
+  PresignResponse,
   PushFilesResponse,
+  PutObjectResponse,
+  PutPartResponse,
   QueueTicket,
   RegionList,
   ResolveResponse,
@@ -27,6 +41,10 @@ import type {
   SetRegionResponse,
   Snapshot,
   SnapshotList,
+  StorageAudit,
+  StorageKey,
+  StorageKeyList,
+  RevokeStorageKeyResponse,
   Token,
   TokenList,
   UpdateSandboxRequest,
@@ -235,6 +253,7 @@ export class Kyora {
   readonly files: Files
   readonly snapshots: Snapshots
   readonly ports: Ports
+  readonly storage: Storage
   readonly tokens: Tokens
 
   constructor(options: KyoraOptions = {}) {
@@ -256,6 +275,7 @@ export class Kyora {
     this.files = new Files(this.transport)
     this.snapshots = new Snapshots(this)
     this.ports = new Ports(this.transport)
+    this.storage = new Storage(this.transport)
     this.tokens = new Tokens(this.transport)
   }
 
@@ -612,6 +632,197 @@ export class Ports {
   /** a one-time login URL for a private port */
   login(sandbox: string, label: string, options: CallOptions = {}): Promise<LoginResponse> {
     return this.transport.json("createPortLogin", { path: { id: sandbox, label } }, options)
+  }
+}
+
+export interface ObjectListOptions extends CallOptions {
+  /** only keys that start with it */
+  prefix?: string
+  /** the most objects a page holds */
+  limit?: number
+  /** the nextCursor of the previous page */
+  cursor?: string
+}
+
+/** an object's headers, as a HEAD answers them */
+export interface ObjectInfo {
+  size: number
+  etag: string | null
+  contentType: string | null
+  lastModified: string | null
+}
+
+export interface PutObjectOptions extends CallOptions {
+  /** stored with the object and answered on reads */
+  contentType?: string
+}
+
+/** an object storage bucket's objects, CORS, keys and audit trail */
+export class Storage {
+  readonly buckets: Buckets
+  readonly objects: Objects
+  readonly keys: StorageKeys
+
+  constructor(private readonly transport: Transport) {
+    this.buckets = new Buckets(transport)
+    this.objects = new Objects(transport)
+    this.keys = new StorageKeys(transport)
+  }
+
+  /** the account's storage events, newest first */
+  async audit(options: { limit?: number } & CallOptions = {}): Promise<StorageAudit["events"]> {
+    const { limit, ...call } = options
+    return (await this.transport.json<StorageAudit>("getStorageAudit", { query: { limit } }, call)).events
+  }
+}
+
+export class Buckets {
+  constructor(private readonly transport: Transport) {}
+
+  async list(options: CallOptions = {}): Promise<Bucket[]> {
+    return (await this.transport.json<BucketList>("listBuckets", {}, options)).buckets
+  }
+
+  create(name: string, options: Omit<CreateBucketRequest, "name"> & CallOptions = {}): Promise<Bucket> {
+    const { region, ...call } = options
+    return this.transport.json("createBucket", { body: { name, ...(region !== undefined ? { region } : {}) } }, call)
+  }
+
+  get(name: string, options: CallOptions = {}): Promise<Bucket> {
+    return this.transport.json("getBucket", { path: { name } }, options)
+  }
+
+  /**
+   * Deletes a bucket. Without `force` one that holds objects is a `bucket_not_empty` error; with it
+   * its objects go first, a call at a time until kyora answers it deleted. `objectsDeleted` counts them all.
+   */
+  async delete(name: string, options: { force?: boolean } & CallOptions = {}): Promise<DeleteBucketResponse> {
+    const { force, ...call } = options
+    let objectsDeleted = 0
+    for (;;) {
+      const answer = await this.transport.json<DeleteBucketResponse | DeleteBucketProgress>("deleteBucket", { path: { name }, query: { force: force ? "true" : undefined } }, call)
+      objectsDeleted += answer.objectsDeleted
+      if (answer.done) return { ...answer, objectsDeleted }
+    }
+  }
+
+  cors(name: string, options: CallOptions = {}): Promise<BucketCors> {
+    return this.transport.json("getBucketCors", { path: { name } }, options)
+  }
+
+  /** the origins browsers may reach the bucket's objects from */
+  setCors(name: string, origins: string[], options: CallOptions = {}): Promise<BucketCors> {
+    return this.transport.json("setBucketCors", { path: { name }, body: { origins } }, options)
+  }
+
+  clearCors(name: string, options: CallOptions = {}): Promise<BucketCors> {
+    return this.transport.json("deleteBucketCors", { path: { name } }, options)
+  }
+}
+
+export class Objects {
+  constructor(private readonly transport: Transport) {}
+
+  /** one page of the bucket's objects; `prefixes` as kyora answers them */
+  async list(bucket: string, options: ObjectListOptions = {}): Promise<ListPage<ObjectList["objects"][number]> & { prefixes: string[] }> {
+    const { prefix, cursor, limit, ...call } = options
+    const answer = await this.transport.json<ObjectList>("listObjects", { path: { name: bucket }, query: { prefix, cursor, limit } }, call)
+    return { ...pageOf(answer.objects, answer.cursor ?? undefined), prefixes: answer.prefixes ?? [] }
+  }
+
+  /** every object under `prefix`, page after page */
+  iterate(bucket: string, options: Omit<ObjectListOptions, "cursor"> = {}): AsyncGenerator<ObjectList["objects"][number]> {
+    return follow("listObjects", (cursor) => this.list(bucket, { ...options, ...(cursor ? { cursor } : {}) }), undefined)
+  }
+
+  /** the object's bytes, read whole into memory; for large objects, use getStream */
+  get(bucket: string, key: string, options: CallOptions = {}): Promise<Uint8Array> {
+    return this.transport.read("getObject", { path: { name: bucket, objectKey: key } }, options, async (response) => new Uint8Array(await response.arrayBuffer()))
+  }
+
+  /** the object as it streams in */
+  async getStream(bucket: string, key: string, options: CallOptions = {}): Promise<ReadableStream<Uint8Array>> {
+    const response = await this.transport.send("getObject", { path: { name: bucket, objectKey: key } }, options)
+    if (!response.body) throw new KyoraError({ code: "bad_response", status: response.status, message: "getObject: the answer had no body", operation: "getObject" })
+    return response.body
+  }
+
+  /** the object's size, etag, type and last change; a missing object is a not_found error */
+  async head(bucket: string, key: string, options: CallOptions = {}): Promise<ObjectInfo> {
+    const response = await this.transport.send("headObject", { path: { name: bucket, objectKey: key } }, options)
+    await response.body?.cancel().catch(() => {})
+    const headers = response.headers
+    return { size: Number(headers.get("content-length") ?? 0), etag: headers.get("etag"), contentType: headers.get("content-type"), lastModified: headers.get("last-modified") }
+  }
+
+  /**
+   * Stores `data` at `key`. Up to 64 MiB it goes up in one PUT, past that in parts (a failed one
+   * aborts the upload); a stream is read part by part, never held whole. `timeoutMs` and
+   * `deadline` bound the whole upload.
+   */
+  async put(bucket: string, key: string, data: Uint8Array | string | ReadableStream<Uint8Array>, options: PutObjectOptions = {}): Promise<PutObjectResponse> {
+    const { contentType, ...rest } = options
+    const deadline = endOf(rest)
+    const call: CallOptions = { deadline, timeoutMs: TRANSFER_TIMEOUT_MS, ...(rest.signal ? { signal: rest.signal } : {}), ...(rest.retry !== undefined ? { retry: rest.retry } : {}), ...(rest.headers ? { headers: rest.headers } : {}) }
+    const path = { name: bucket, objectKey: key }
+    const source = typeof data === "string" ? bytesSource(new TextEncoder().encode(data)) : data instanceof Uint8Array ? bytesSource(data) : streamSource(data)
+    const read = (size: number) => bounded(source.next(size), deadline, rest.signal, "putObject")
+    let upload: MultipartStartResponse | null = null
+    try {
+      const first = await read(SINGLE_UPLOAD_BYTES + 1)
+      if (first.length <= SINGLE_UPLOAD_BYTES) {
+        return await this.transport.json<PutObjectResponse>("putObject", { path, body: first, contentType: contentType ?? "application/octet-stream" }, call)
+      }
+      upload = await this.transport.json<MultipartStartResponse>("multipartObject", { path, query: { uploads: "" } }, { ...call, headers: { ...call.headers, ...(contentType ? { "content-type": contentType } : {}) } })
+      const size = Math.min(SINGLE_UPLOAD_BYTES, upload.maxPartBytes)
+      if (!Number.isInteger(size) || size < MIN_PART_BYTES || size > MAX_PART_BYTES) {
+        throw new KyoraError({ code: "bad_response", status: 0, message: `multipartObject: kyora allows ${size}-byte parts`, operation: "multipartObject" })
+      }
+      source.unread(first)
+      const parts: Array<{ partNumber: number; etag: string }> = []
+      for (let partNumber = 1; ; partNumber++) {
+        const part = await read(size)
+        if (part.length === 0) break
+        if (partNumber > upload.maxParts) throw new KyoraError({ code: "invalid_request", status: 0, message: `putObject: more than ${upload.maxParts} parts of ${size} bytes`, operation: "putObject", class: "invalid", retryable: false })
+        const answer = await this.transport.json<PutPartResponse>("putObject", { path, query: { uploadId: upload.uploadId, partNumber }, body: part, contentType: "application/octet-stream" }, call)
+        parts.push({ partNumber, etag: answer.etag })
+      }
+      return await this.transport.json<PutObjectResponse>("multipartObject", { path, query: { uploadId: upload.uploadId }, body: { parts } }, call)
+    } catch (error) {
+      source.cancel()
+      if (upload) {
+        const abort = this.transport.json("deleteObject", { path, query: { uploadId: upload.uploadId } }, { retry: false, timeoutMs: ABORT_UPLOAD_TIMEOUT_MS }).catch(() => undefined)
+        await settleWithin(abort, rest.signal?.aborted ? 0 : deadline - Date.now())
+      }
+      throw error
+    }
+  }
+
+  /** deletes an object; one that is not there is no error */
+  async delete(bucket: string, key: string, options: CallOptions = {}): Promise<void> {
+    await this.transport.json("deleteObject", { path: { name: bucket, objectKey: key } }, options)
+  }
+
+  /** a URL that GETs or PUTs one object without a token, until it expires */
+  presign(bucket: string, request: PresignRequest, options: CallOptions = {}): Promise<PresignResponse> {
+    return this.transport.json("presignObject", { path: { name: bucket }, body: request }, options)
+  }
+}
+
+export class StorageKeys {
+  constructor(private readonly transport: Transport) {}
+
+  async list(options: CallOptions = {}): Promise<StorageKey[]> {
+    return (await this.transport.json<StorageKeyList>("listStorageKeys", {}, options)).keys
+  }
+
+  /** an S3 key for a bucket (or a prefix of it); its secret is in the answer only */
+  create(request: CreateStorageKeyRequest, options: CallOptions = {}): Promise<CreateStorageKeyResponse> {
+    return this.transport.json("createStorageKey", { body: request }, options)
+  }
+
+  revoke(id: string, options: CallOptions = {}): Promise<RevokeStorageKeyResponse> {
+    return this.transport.json("deleteStorageKey", { path: { id } }, options)
   }
 }
 
