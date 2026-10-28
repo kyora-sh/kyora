@@ -5114,14 +5114,30 @@ components:
             "$ref": "#/components/schemas/Domain"
     CreateDomainRequest:
       type: object
+      description: "Exactly one of label and page."
+      required:
+        - hostname
+      oneOf:
+        - required:
+            - label
+        - required:
+            - page
       properties:
         hostname:
           type: string
         label:
           type: string
-        name:
+          description: "One of your public URL names."
+        page:
           type: string
-      additionalProperties: true
+          description: "One of your page names."
+        dcv:
+          type: string
+          enum:
+            - http
+            - txt
+          description: "How the certificate is validated: http (the default) or txt. A domain already being validated keeps its method."
+      additionalProperties: false
     Page:
       type: object
       required:

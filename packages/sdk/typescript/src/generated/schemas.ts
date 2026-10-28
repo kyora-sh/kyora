@@ -590,12 +590,8 @@ export interface DomainList {
   domains: Domain[]
 }
 
-export interface CreateDomainRequest {
-  hostname?: string
-  label?: string
-  name?: string
-  [key: string]: unknown
-}
+/** Exactly one of label and page. */
+export type CreateDomainRequest = unknown
 
 export interface Page {
   name: string

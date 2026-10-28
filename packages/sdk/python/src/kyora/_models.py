@@ -1077,14 +1077,55 @@ class DomainList(BaseModel):
     domains: list[Domain]
 
 
-class CreateDomainRequest(BaseModel):
+class CreateDomainRequest1(BaseModel):
+    """
+    Exactly one of label and page.
+    """
+
     model_config = ConfigDict(
-        extra='allow',
+        extra='forbid',
         populate_by_name=True,
     )
-    hostname: str | None = None
-    label: str | None = None
-    name: str | None = None
+    hostname: str
+    label: Annotated[str, Field(description='One of your public URL names.')]
+    page: Annotated[str | None, Field(description='One of your page names.')] = None
+    dcv: Annotated[
+        Literal['http', 'txt'] | str | None,
+        Field(
+            description='How the certificate is validated: http (the default) or txt. A domain already being validated keeps its method.'
+        ),
+    ] = None
+
+
+class CreateDomainRequest2(BaseModel):
+    """
+    Exactly one of label and page.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+        populate_by_name=True,
+    )
+    hostname: str
+    label: Annotated[str | None, Field(description='One of your public URL names.')] = (
+        None
+    )
+    page: Annotated[str, Field(description='One of your page names.')]
+    dcv: Annotated[
+        Literal['http', 'txt'] | str | None,
+        Field(
+            description='How the certificate is validated: http (the default) or txt. A domain already being validated keeps its method.'
+        ),
+    ] = None
+
+
+CreateDomainRequest = TypeAliasType(
+    "CreateDomainRequest",
+    Annotated[
+        CreateDomainRequest1 | CreateDomainRequest2,
+        Field(description='Exactly one of label and page.'),
+    ],
+)
 
 
 class Page(BaseModel):
