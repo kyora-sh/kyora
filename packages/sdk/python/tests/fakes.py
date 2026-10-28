@@ -118,6 +118,37 @@ def sandbox(id: str, **extra: Any) -> dict[str, Any]:
     }
 
 
+def page(name: str, prefix: str) -> dict[str, Any]:
+    return {
+        "name": name,
+        "url": f"https://{name}.example.test/",
+        "private": False,
+        "bucket": "site",
+        "prefix": prefix,
+        "region": "eu",
+        "spa": False,
+        "notFound": "404.html",
+        "createdAt": "2026-01-01T00:00:00Z",
+        "updatedAt": "2026-01-01T00:00:00Z",
+    }
+
+
+def domain(hostname: str, **target: str) -> dict[str, Any]:
+    return {
+        "hostname": hostname,
+        "label": target.get("page") or target["label"],
+        **target,
+        "status": "unverified",
+        "reason": None,
+        "attached": True,
+        "dcv": "http",
+        "url": f"https://{hostname}/",
+        "records": [],
+        "createdAt": "2026-01-01T00:00:00Z",
+        "checkedAt": None,
+    }
+
+
 @pytest.fixture
 def client(respx_mock: respx.MockRouter):
     made: list[AsyncKyora] = []

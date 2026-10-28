@@ -138,9 +138,21 @@ const { token } = await kyora.tokens.create({ name: "doc-agent", scopes: ["vms:r
 
 A restore whose sandbox fails or runs out of time destroys it, unless you pass your own `idempotencyKey` (or `Idempotency-Key` header): the same key answers the sandbox an earlier restore with that key made, which may be another caller's, so the SDK never destroys it. The error then carries the sandbox's id in `sandboxId` (an abort throws the signal's reason as it is; `onProgress` has seen the sandbox by then), and destroying it is up to you.
 
+## Pages and domains
+
+```ts
+const page = await kyora.pages.publish({ name: "docs-site", bucket: "site", prefix: "build/42/", public: true }) // page.url
+await kyora.pages.publish({ name: "docs-site", bucket: "site", prefix: "build/43/", public: true }) // repoints it at once
+
+const domain = await kyora.domains.create("docs.example.com", { page: "docs-site" }) // or { label } for a public port name
+domain.records // the DNS records to add; kyora.domains.get(domain.hostname) shows which are still missing
+```
+
+`pages.delete` and `domains.delete` answer `false` when the page or domain was already gone. A private page is reached through `pages.login(name)`, a one-time login URL.
+
 ## Everything else
 
-`kyora.call(operationId, { path, query, body })` sends any operation of the API, typed from the spec, with the same errors, retries and idempotency keys. JSON operations answer their parsed body; streamed, binary and HEAD ones the `Response`. Operations without a helper yet: custom domains, pages, computer use and live views, terminals, account images and object storage. `OPERATIONS` lists every operation; the generated types (`Sandbox`, `Snapshot`, `ExecFrame`, ...) are exported too.
+`kyora.call(operationId, { path, query, body })` sends any operation of the API, typed from the spec, with the same errors, retries and idempotency keys. JSON operations answer their parsed body; streamed, binary and HEAD ones the `Response`. Operations without a helper yet: computer use and live views, terminals, account images and object storage. `OPERATIONS` lists every operation; the generated types (`Sandbox`, `Snapshot`, `ExecFrame`, ...) are exported too.
 
 ## Versions
 

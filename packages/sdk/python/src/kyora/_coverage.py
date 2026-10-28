@@ -11,8 +11,6 @@ class Coverage(TypedDict, total=False):
     not_yet: str
 
 
-DOMAINS = "custom domains: kyora.call() until a helper lands"
-PAGES = "static pages: kyora.call() until a helper lands"
 COMPUTER = "computer use and live views: a later release"
 TERMINALS = "interactive terminals need a WebSocket client: a later release"
 IMAGES = "account images are built with the kyora CLI: a later release"
@@ -58,15 +56,15 @@ COVERAGE: dict[str, Coverage] = {
     "createPortLogin": {"method": "ports.login"},
     "listPorts": {"method": "ports.held"},
     "deletePort": {"method": "ports.release"},
-    "createDomain": {"not_yet": DOMAINS},
-    "listDomains": {"not_yet": DOMAINS},
-    "getDomain": {"not_yet": DOMAINS},
-    "deleteDomain": {"not_yet": DOMAINS},
-    "publishPage": {"not_yet": PAGES},
-    "listPages": {"not_yet": PAGES},
-    "getPage": {"not_yet": PAGES},
-    "deletePage": {"not_yet": PAGES},
-    "createPageLogin": {"not_yet": PAGES},
+    "createDomain": {"method": "domains.create"},
+    "listDomains": {"method": "domains.list"},
+    "getDomain": {"method": "domains.get"},
+    "deleteDomain": {"method": "domains.delete"},
+    "publishPage": {"method": "pages.publish"},
+    "listPages": {"method": "pages.list"},
+    "getPage": {"method": "pages.get"},
+    "deletePage": {"method": "pages.delete"},
+    "createPageLogin": {"method": "pages.login"},
     "computerAction": {"not_yet": COMPUTER},
     "streamComputer": {"not_yet": COMPUTER},
     "createShare": {"not_yet": COMPUTER},

@@ -36,6 +36,8 @@ from ._models import (
     CreateTokenRequest,
     CreateTokenResponse,
     CreateUploadResponse,
+    Domain,
+    DomainList,
     ExposePortRequest,
     Health,
     HeldPortList,
@@ -43,9 +45,12 @@ from ._models import (
     Me,
     NetworkUpdateRequest,
     NetworkUpdateResponse,
+    Page,
+    PageList,
     Port,
     PortList,
     PortWithSandbox,
+    PublishPageRequest,
     PushFilesResponse,
     QueueTicket,
     RegionList,
@@ -156,13 +161,13 @@ async def poll(
     return current
 
 
-async def deleted(transport: Transport, operation: str, id: str, options: CallOptions) -> bool:
+async def deleted(transport: Transport, operation: str, path: dict[str, str], options: CallOptions) -> bool:
     """a DELETE that is False when the thing was already gone, unless an earlier try may have deleted it"""
 
     async def read(response: httpx.Response, attempt: int) -> bool:
         return response.status_code != 404 or attempt > 1
 
-    return await transport.read(operation, RequestParts(path={"id": id}, accept=(404,)), options, read)
+    return await transport.read(operation, RequestParts(path=path, accept=(404,)), options, read)
 
 
 class AsyncKyora:
@@ -198,6 +203,8 @@ class AsyncKyora:
         self.files = Files(self.transport)
         self.snapshots = Snapshots(self)
         self.ports = Ports(self.transport)
+        self.domains = Domains(self.transport)
+        self.pages = Pages(self.transport)
         self.tokens = Tokens(self.transport)
 
     def __repr__(self) -> str:
@@ -424,7 +431,7 @@ class Sandboxes:
 
     async def delete(self, id: str, **options: Unpack[CallOptions]) -> bool:
         """destroys a sandbox; False when it was already gone (a retry that finds it gone counts as this call's)"""
-        return await deleted(self._transport, "deleteSandbox", id, options)
+        return await deleted(self._transport, "deleteSandbox", {"id": id}, options)
 
     async def wait_until_running(
         self,
@@ -538,7 +545,7 @@ class Snapshots:
 
     async def delete(self, id: str, **options: Unpack[CallOptions]) -> bool:
         """False when it was already gone (a retry that finds it gone counts as this call's)"""
-        return await deleted(self._transport, "deleteSnapshot", id, options)
+        return await deleted(self._transport, "deleteSnapshot", {"id": id}, options)
 
     async def restore(
         self,
@@ -837,6 +844,74 @@ class Ports:
             "createPortLogin", RequestParts(path={"id": sandbox, "label": label}), options
         )
         return load(LoginResponse, answer, "createPortLogin")
+
+
+class Domains:
+    """Hostnames of yours that serve one of your public URL names (`label`) or public pages (`page`)."""
+
+    def __init__(self, transport: Transport) -> None:
+        self._transport = transport
+
+    async def create(
+        self,
+        hostname: str,
+        *,
+        label: str | None = None,
+        page: str | None = None,
+        dcv: Literal["http", "txt"] | None = None,
+        **options: Unpack[CallOptions],
+    ) -> Domain:
+        """serves `label` or `page` on `hostname`; the answer lists the DNS records to add. The same hostname
+        again answers it, pointed at the new target. `dcv`: how the certificate is validated, over HTTP once
+        the CNAME is in place (kyora's default) or by a TXT record"""
+        if (label is None) == (page is None):
+            raise TypeError("createDomain: give exactly one of label and page")
+        fields = {"hostname": hostname, "label": label, "page": page, "dcv": dcv}
+        body = {key: value for key, value in fields.items() if value is not None}
+        return load(
+            Domain, await self._transport.json("createDomain", RequestParts(body=body), options), "createDomain"
+        )
+
+    async def list(self, **options: Unpack[CallOptions]) -> list[Domain]:
+        return load(DomainList, await self._transport.json("listDomains", None, options), "listDomains").domains
+
+    async def get(self, hostname: str, **options: Unpack[CallOptions]) -> Domain:
+        """its status, and the DNS records still missing"""
+        answer = await self._transport.json("getDomain", RequestParts(path={"hostname": hostname}), options)
+        return load(Domain, answer, "getDomain")
+
+    async def delete(self, hostname: str, **options: Unpack[CallOptions]) -> bool:
+        """removes a domain and its certificate; False when it was already gone (a retry that finds it gone
+        counts as this call's)"""
+        return await deleted(self._transport, "deleteDomain", {"hostname": hostname}, options)
+
+
+class Pages:
+    """Bucket prefixes served as static sites."""
+
+    def __init__(self, transport: Transport) -> None:
+        self._transport = transport
+
+    async def publish(self, request: PublishPageRequest | Mapping[str, Any], **options: Unpack[CallOptions]) -> Page:
+        """serves a bucket prefix; publishing a name you hold repoints it to the new prefix at once, and
+        without a name kyora picks one (from `hint`, if given)"""
+        body = dump(PublishPageRequest, request)
+        return load(Page, await self._transport.json("publishPage", RequestParts(body=body), options), "publishPage")
+
+    async def list(self, **options: Unpack[CallOptions]) -> list[Page]:
+        return load(PageList, await self._transport.json("listPages", None, options), "listPages").pages
+
+    async def get(self, name: str, **options: Unpack[CallOptions]) -> Page:
+        return load(Page, await self._transport.json("getPage", RequestParts(path={"name": name}), options), "getPage")
+
+    async def delete(self, name: str, **options: Unpack[CallOptions]) -> bool:
+        """gives the name up; False when it was already gone (a retry that finds it gone counts as this call's)"""
+        return await deleted(self._transport, "deletePage", {"name": name}, options)
+
+    async def login(self, name: str, **options: Unpack[CallOptions]) -> LoginResponse:
+        """a one-time login URL for a private page"""
+        answer = await self._transport.json("createPageLogin", RequestParts(path={"name": name}), options)
+        return load(LoginResponse, answer, "createPageLogin")
 
 
 class Tokens:

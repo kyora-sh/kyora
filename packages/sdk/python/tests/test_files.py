@@ -2,7 +2,7 @@ import asyncio
 import time
 
 import pytest
-from fakes import error, hang, json, sandbox
+from fakes import domain, error, hang, json, page, sandbox
 
 from kyora import FileInput, KyoraError
 from kyora._tar import pack_files, unpack
@@ -449,6 +449,100 @@ async def test_ports_and_tokens_reach_their_operations(client):
         "DELETE /v1/tokens/tok_1",
     ]
     assert requests[3].json["constraints"] == {"labels": {"ci": "1"}, "maxSandboxes": 2}
+
+
+async def test_pages_reach_their_operations(client):
+    def handler(r, i):
+        if r.method == "POST" and r.url.path.endswith("/login"):
+            return json(200, {"loginUrl": "https://docs-site.example.test/login#once"})
+        if r.method == "POST":
+            return json(201, page("docs-site", "build/42/"))
+        if r.method == "DELETE":
+            return json(204)
+        if r.url.path == "/v1/pages":
+            return json(200, {"pages": [page("docs-site", "build/42/")]})
+        return json(200, page("docs-site", "build/42/"))
+
+    kyora, requests = client(handler)
+    published = await kyora.pages.publish(
+        {"name": "docs-site", "bucket": "site", "prefix": "build/42/", "public": True, "not_found": "missing.html"}
+    )
+    assert str(published.url) == "https://docs-site.example.test/"
+    assert [listed.name for listed in await kyora.pages.list()] == ["docs-site"]
+    assert (await kyora.pages.get("docs-site")).prefix == "build/42/"
+    assert str((await kyora.pages.login("docs-site")).login_url) == "https://docs-site.example.test/login#once"
+    assert await kyora.pages.delete("docs-site") is True
+    assert [f"{r.method} {r.url.path}" for r in requests] == [
+        "POST /v1/pages",
+        "GET /v1/pages",
+        "GET /v1/pages/docs-site",
+        "POST /v1/pages/docs-site/login",
+        "DELETE /v1/pages/docs-site",
+    ]
+    assert requests[0].json == {
+        "name": "docs-site",
+        "bucket": "site",
+        "prefix": "build/42/",
+        "public": True,
+        "notFound": "missing.html",
+    }
+
+
+async def test_a_repointed_page_answers_200_with_its_new_prefix(client):
+    kyora, _ = client(lambda r, i: json(200, page("docs-site", r.json["prefix"])))
+    assert (
+        await kyora.pages.publish({"name": "docs-site", "bucket": "site", "prefix": "build/43/"})
+    ).prefix == "build/43/"
+
+
+async def test_domains_reach_their_operations_for_a_port_name_or_a_page(client):
+    def handler(r, i):
+        if r.method == "POST":
+            target = {"page": r.json["page"]} if "page" in r.json else {"label": r.json["label"]}
+            return json(201, domain(r.json["hostname"], **target))
+        if r.method == "DELETE":
+            return json(204)
+        if r.url.path == "/v1/domains":
+            return json(200, {"domains": [domain("app.example.com", label="web")]})
+        return json(200, domain("app.example.com", label="web"))
+
+    kyora, requests = client(handler)
+    assert (await kyora.domains.create("app.example.com", label="web")).label == "web"
+    assert (await kyora.domains.create("docs.example.com", page="docs-site", dcv="txt")).page == "docs-site"
+    assert [listed.hostname for listed in await kyora.domains.list()] == ["app.example.com"]
+    assert (await kyora.domains.get("app.example.com")).status == "unverified"
+    assert await kyora.domains.delete("app.example.com") is True
+    assert [f"{r.method} {r.url.path}" for r in requests] == [
+        "POST /v1/domains",
+        "POST /v1/domains",
+        "GET /v1/domains",
+        "GET /v1/domains/app.example.com",
+        "DELETE /v1/domains/app.example.com",
+    ]
+    assert requests[0].json == {"hostname": "app.example.com", "label": "web"}
+    assert requests[1].json == {"hostname": "docs.example.com", "page": "docs-site", "dcv": "txt"}
+
+
+async def test_a_domain_needs_exactly_one_of_label_and_page(client):
+    kyora, requests = client(lambda r, i: json(201, domain("app.example.com", label="web")))
+    with pytest.raises(TypeError):
+        await kyora.domains.create("app.example.com")
+    with pytest.raises(TypeError):
+        await kyora.domains.create("app.example.com", label="web", page="docs-site")
+    assert requests == []
+
+
+async def test_a_delete_of_a_page_or_domain_that_is_already_gone_answers_false(client):
+    kyora, _ = client(lambda r, i: error(404, "not_found"))
+    assert await kyora.pages.delete("docs-site") is False
+    assert await kyora.domains.delete("app.example.com") is False
+
+
+async def test_other_errors_of_a_page_delete_are_raised(client):
+    kyora, _ = client(lambda r, i: error(409, "page_changed"))
+    with pytest.raises(KyoraError) as caught:
+        await kyora.pages.delete("docs-site")
+    assert (caught.value.code, caught.value.status) == ("page_changed", 409)
 
 
 async def test_a_streamed_call_keeps_its_deadline_through_the_body(client):

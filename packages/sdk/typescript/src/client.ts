@@ -7,6 +7,8 @@ import type {
   CreateTokenRequest,
   CreateTokenResponse,
   CreateUploadResponse,
+  Domain,
+  DomainList,
   ExposePortRequest,
   Health,
   HeldPortList,
@@ -14,9 +16,12 @@ import type {
   Me,
   NetworkUpdateRequest,
   NetworkUpdateResponse,
+  Page,
+  PageList,
   Port,
   PortList,
   PortWithSandbox,
+  PublishPageRequest,
   PushFilesResponse,
   QueueTicket,
   RegionList,
@@ -207,7 +212,7 @@ async function settleWithin(promise: Promise<unknown>, ms: number): Promise<void
 }
 
 /** a DELETE that is false when the thing was already gone, unless an earlier try of this call may have deleted it */
-async function deleted(transport: Transport, operation: "deleteSandbox" | "deleteSnapshot", path: { id: string }, options: CallOptions): Promise<boolean> {
+async function deleted(transport: Transport, operation: "deleteSandbox" | "deleteSnapshot" | "deleteDomain" | "deletePage", path: Record<string, string>, options: CallOptions): Promise<boolean> {
   return transport.read(operation, { path, accept: [404] }, options, async (response, attempt) => {
     await response.body?.cancel().catch(() => {})
     return response.status !== 404 || attempt > 1
@@ -235,6 +240,8 @@ export class Kyora {
   readonly files: Files
   readonly snapshots: Snapshots
   readonly ports: Ports
+  readonly domains: Domains
+  readonly pages: Pages
   readonly tokens: Tokens
 
   constructor(options: KyoraOptions = {}) {
@@ -256,6 +263,8 @@ export class Kyora {
     this.files = new Files(this.transport)
     this.snapshots = new Snapshots(this)
     this.ports = new Ports(this.transport)
+    this.domains = new Domains(this.transport)
+    this.pages = new Pages(this.transport)
     this.tokens = new Tokens(this.transport)
   }
 
@@ -612,6 +621,71 @@ export class Ports {
   /** a one-time login URL for a private port */
   login(sandbox: string, label: string, options: CallOptions = {}): Promise<LoginResponse> {
     return this.transport.json("createPortLogin", { path: { id: sandbox, label } }, options)
+  }
+}
+
+/** what a custom domain serves: one of your public URL names, or one of your public pages */
+export type DomainTarget = { label: string; page?: never } | { page: string; label?: never }
+
+export interface DomainOptions extends CallOptions {
+  /** how the certificate is validated: over HTTP once the CNAME is in place (kyora's default), or by a TXT record */
+  dcv?: "http" | "txt"
+}
+
+export class Domains {
+  constructor(private readonly transport: Transport) {}
+
+  /** serves `target` on a hostname of yours; the answer lists the DNS records to add. The same hostname again answers it, pointed at `target` */
+  async create(hostname: string, target: DomainTarget, options: DomainOptions = {}): Promise<Domain> {
+    const { dcv, ...call } = options
+    const { label, page } = target
+    if ((label === undefined) === (page === undefined)) throw new TypeError("createDomain: give exactly one of label and page")
+    const body = { hostname, ...(label !== undefined ? { label } : {}), ...(page !== undefined ? { page } : {}), ...(dcv !== undefined ? { dcv } : {}) }
+    return this.transport.json("createDomain", { body }, call)
+  }
+
+  async list(options: CallOptions = {}): Promise<Domain[]> {
+    return (await this.transport.json<DomainList>("listDomains", {}, options)).domains
+  }
+
+  /** its status, and the DNS records still missing */
+  get(hostname: string, options: CallOptions = {}): Promise<Domain> {
+    return this.transport.json("getDomain", { path: { hostname } }, options)
+  }
+
+  /** removes a domain and its certificate; false when it was already gone (a retry that finds it gone counts as this call's) */
+  delete(hostname: string, options: CallOptions = {}): Promise<boolean> {
+    return deleted(this.transport, "deleteDomain", { hostname }, options)
+  }
+}
+
+export class Pages {
+  constructor(private readonly transport: Transport) {}
+
+  /**
+   * Serves a bucket prefix as a static site. Publishing a name you hold repoints it to the new prefix at
+   * once; without a name, kyora picks one (from `hint`, if given).
+   */
+  publish(request: PublishPageRequest, options: CallOptions = {}): Promise<Page> {
+    return this.transport.json("publishPage", { body: request }, options)
+  }
+
+  async list(options: CallOptions = {}): Promise<Page[]> {
+    return (await this.transport.json<PageList>("listPages", {}, options)).pages
+  }
+
+  get(name: string, options: CallOptions = {}): Promise<Page> {
+    return this.transport.json("getPage", { path: { name } }, options)
+  }
+
+  /** gives the name up; false when it was already gone (a retry that finds it gone counts as this call's) */
+  delete(name: string, options: CallOptions = {}): Promise<boolean> {
+    return deleted(this.transport, "deletePage", { name }, options)
+  }
+
+  /** a one-time login URL for a private page */
+  login(name: string, options: CallOptions = {}): Promise<LoginResponse> {
+    return this.transport.json("createPageLogin", { path: { name } }, options)
   }
 }
 

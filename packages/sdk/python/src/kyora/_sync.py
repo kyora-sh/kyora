@@ -19,14 +19,17 @@ from ._models import (
     CreateSnapshotRequest,
     CreateTokenRequest,
     CreateTokenResponse,
+    Domain,
     ExecCancelResponse,
     Health,
     LoginResponse,
     Me,
     NetworkUpdateRequest,
     NetworkUpdateResponse,
+    Page,
     Port,
     PortWithSandbox,
+    PublishPageRequest,
     PushFilesResponse,
     QueueTicket,
     RegionList,
@@ -173,6 +176,8 @@ class Kyora:
         self.files = Files(self.aio, self._portal)
         self.snapshots = Snapshots(self.aio, self._portal)
         self.ports = Ports(self.aio, self._portal)
+        self.domains = Domains(self.aio, self._portal)
+        self.pages = Pages(self.aio, self._portal)
         self.tokens = Tokens(self.aio, self._portal)
 
     def __repr__(self) -> str:
@@ -516,6 +521,59 @@ class Ports(_Resource):
     def login(self, sandbox: str, label: str, **options: Unpack[CallOptions]) -> LoginResponse:
         """a one-time login URL for a private port"""
         return self._portal.run(self._aio.ports.login(sandbox, label, **options))
+
+
+class Domains(_Resource):
+    """Hostnames of yours that serve one of your public URL names (`label`) or public pages (`page`)."""
+
+    def create(
+        self,
+        hostname: str,
+        *,
+        label: str | None = None,
+        page: str | None = None,
+        dcv: Literal["http", "txt"] | None = None,
+        **options: Unpack[CallOptions],
+    ) -> Domain:
+        """serves `label` or `page` on `hostname`; the answer lists the DNS records to add. The same hostname
+        again answers it, pointed at the new target. `dcv`: how the certificate is validated, over HTTP once
+        the CNAME is in place (kyora's default) or by a TXT record"""
+        return self._portal.run(self._aio.domains.create(hostname, label=label, page=page, dcv=dcv, **options))
+
+    def list(self, **options: Unpack[CallOptions]) -> list[Domain]:
+        return self._portal.run(self._aio.domains.list(**options))
+
+    def get(self, hostname: str, **options: Unpack[CallOptions]) -> Domain:
+        """its status, and the DNS records still missing"""
+        return self._portal.run(self._aio.domains.get(hostname, **options))
+
+    def delete(self, hostname: str, **options: Unpack[CallOptions]) -> bool:
+        """removes a domain and its certificate; False when it was already gone (a retry that finds it gone
+        counts as this call's)"""
+        return self._portal.run(self._aio.domains.delete(hostname, **options))
+
+
+class Pages(_Resource):
+    """Bucket prefixes served as static sites."""
+
+    def publish(self, request: PublishPageRequest | Mapping[str, Any], **options: Unpack[CallOptions]) -> Page:
+        """serves a bucket prefix; publishing a name you hold repoints it to the new prefix at once, and
+        without a name kyora picks one (from `hint`, if given)"""
+        return self._portal.run(self._aio.pages.publish(request, **options))
+
+    def list(self, **options: Unpack[CallOptions]) -> list[Page]:
+        return self._portal.run(self._aio.pages.list(**options))
+
+    def get(self, name: str, **options: Unpack[CallOptions]) -> Page:
+        return self._portal.run(self._aio.pages.get(name, **options))
+
+    def delete(self, name: str, **options: Unpack[CallOptions]) -> bool:
+        """gives the name up; False when it was already gone (a retry that finds it gone counts as this call's)"""
+        return self._portal.run(self._aio.pages.delete(name, **options))
+
+    def login(self, name: str, **options: Unpack[CallOptions]) -> LoginResponse:
+        """a one-time login URL for a private page"""
+        return self._portal.run(self._aio.pages.login(name, **options))
 
 
 class Tokens(_Resource):
