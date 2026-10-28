@@ -201,6 +201,71 @@ describe("snapshots, ports and tokens", () => {
   })
 })
 
+describe("pages and domains", () => {
+  const page = (name: string, prefix: string) => ({ name, url: `https://${name}.example.test/`, private: false, bucket: "site", prefix, region: "eu", spa: false, notFound: "404.html", createdAt: "x", updatedAt: "y" })
+  const domain = (hostname: string, target: Record<string, string>) => ({ hostname, label: target.page ?? target.label, ...target, status: "unverified", reason: null, attached: true, dcv: "http", url: `https://${hostname}/`, records: [], createdAt: "x", checkedAt: null })
+
+  test("pages reach their operations", async () => {
+    const { kyora, requests } = client((request) => {
+      if (request.method === "POST" && request.url.pathname.endsWith("/login")) return json(200, { loginUrl: "https://docs-site.example.test/login#once" })
+      if (request.method === "POST") return json(201, page("docs-site", "build/42/"))
+      if (request.method === "DELETE") return json(204, null)
+      if (request.url.pathname === "/v1/pages") return json(200, { pages: [page("docs-site", "build/42/")] })
+      return json(200, page("docs-site", "build/42/"))
+    })
+    expect((await kyora.pages.publish({ name: "docs-site", bucket: "site", prefix: "build/42/", public: true })).url).toBe("https://docs-site.example.test/")
+    expect((await kyora.pages.list()).map((listed) => listed.name)).toEqual(["docs-site"])
+    expect((await kyora.pages.get("docs-site")).prefix).toBe("build/42/")
+    expect((await kyora.pages.login("docs-site")).loginUrl).toBe("https://docs-site.example.test/login#once")
+    expect(await kyora.pages.delete("docs-site")).toBe(true)
+    expect(requests.map((request) => `${request.method} ${request.url.pathname}`)).toEqual(["POST /v1/pages", "GET /v1/pages", "GET /v1/pages/docs-site", "POST /v1/pages/docs-site/login", "DELETE /v1/pages/docs-site"])
+    expect(requests[0]!.json).toEqual({ name: "docs-site", bucket: "site", prefix: "build/42/", public: true })
+  })
+
+  test("a repointed page answers 200 with its new prefix", async () => {
+    const { kyora } = client((request) => json(200, page("docs-site", (request.json as { prefix: string }).prefix)))
+    expect((await kyora.pages.publish({ name: "docs-site", bucket: "site", prefix: "build/43/" })).prefix).toBe("build/43/")
+  })
+
+  test("domains reach their operations, for a port name or a page", async () => {
+    const { kyora, requests } = client((request) => {
+      if (request.method === "POST") {
+        const body = request.json as { hostname: string; label?: string; page?: string }
+        return json(201, domain(body.hostname, body.page ? { page: body.page } : { label: body.label! }))
+      }
+      if (request.method === "DELETE") return json(204, null)
+      if (request.url.pathname === "/v1/domains") return json(200, { domains: [domain("app.example.com", { label: "web" })] })
+      return json(200, domain("app.example.com", { label: "web" }))
+    })
+    expect((await kyora.domains.create("app.example.com", { label: "web" })).label).toBe("web")
+    expect((await kyora.domains.create("docs.example.com", { page: "docs-site" }, { dcv: "txt" })).page).toBe("docs-site")
+    expect((await kyora.domains.list()).map((listed) => listed.hostname)).toEqual(["app.example.com"])
+    expect((await kyora.domains.get("app.example.com")).status).toBe("unverified")
+    expect(await kyora.domains.delete("app.example.com")).toBe(true)
+    expect(requests.map((request) => `${request.method} ${request.url.pathname}`)).toEqual(["POST /v1/domains", "POST /v1/domains", "GET /v1/domains", "GET /v1/domains/app.example.com", "DELETE /v1/domains/app.example.com"])
+    expect(requests[0]!.json).toEqual({ hostname: "app.example.com", label: "web" })
+    expect(requests[1]!.json).toEqual({ hostname: "docs.example.com", page: "docs-site", dcv: "txt" })
+  })
+
+  test("a domain needs exactly one of label and page", async () => {
+    const { kyora, requests } = client(() => json(201, domain("app.example.com", { label: "web" })))
+    await expect(kyora.domains.create("app.example.com", {} as never)).rejects.toThrow(TypeError)
+    await expect(kyora.domains.create("app.example.com", { label: "web", page: "docs-site" } as never)).rejects.toThrow(TypeError)
+    expect(requests).toEqual([])
+  })
+
+  test("a delete of a page or domain that is already gone answers false", async () => {
+    const { kyora } = client(() => error(404, "not_found"))
+    expect(await kyora.pages.delete("docs-site")).toBe(false)
+    expect(await kyora.domains.delete("app.example.com")).toBe(false)
+  })
+
+  test("other errors of a delete are thrown", async () => {
+    const { kyora } = client(() => error(409, "page_changed"))
+    await expect(kyora.pages.delete("docs-site")).rejects.toMatchObject({ code: "page_changed", status: 409 })
+  })
+})
+
 describe("uploads and waits under one deadline", () => {
   const MiB = 1024 * 1024
   const multipart = (partSize: number, delayMs = 0) => (request: { method: string; url: URL }) => {

@@ -7,8 +7,6 @@ import type { OperationId } from "./generated/operations.js"
  */
 export type Coverage = { method: string } | { notYet: string }
 
-const DOMAINS = "custom domains: kyora.call() until a helper lands"
-const PAGES = "static pages: kyora.call() until a helper lands"
 const COMPUTER = "computer use and live views: a later release"
 const TERMINALS = "interactive terminals need a WebSocket client: a later release"
 const IMAGES = "account images are built with the kyora CLI: a later release"
@@ -60,16 +58,16 @@ export const COVERAGE: Record<OperationId, Coverage> = {
   listPorts: { method: "ports.held" },
   deletePort: { method: "ports.release" },
 
-  createDomain: { notYet: DOMAINS },
-  listDomains: { notYet: DOMAINS },
-  getDomain: { notYet: DOMAINS },
-  deleteDomain: { notYet: DOMAINS },
+  createDomain: { method: "domains.create" },
+  listDomains: { method: "domains.list" },
+  getDomain: { method: "domains.get" },
+  deleteDomain: { method: "domains.delete" },
 
-  publishPage: { notYet: PAGES },
-  listPages: { notYet: PAGES },
-  getPage: { notYet: PAGES },
-  deletePage: { notYet: PAGES },
-  createPageLogin: { notYet: PAGES },
+  publishPage: { method: "pages.publish" },
+  listPages: { method: "pages.list" },
+  getPage: { method: "pages.get" },
+  deletePage: { method: "pages.delete" },
+  createPageLogin: { method: "pages.login" },
 
   computerAction: { notYet: COMPUTER },
   streamComputer: { notYet: COMPUTER },

@@ -1,5 +1,5 @@
 import pytest
-from fakes import BASE, ID, error, json, ndjson, sandbox
+from fakes import BASE, ID, domain, error, json, ndjson, page, sandbox
 
 from kyora import Kyora, KyoraError, Retry
 
@@ -240,3 +240,17 @@ def test_what_an_interrupted_call_answers_anyway_is_closed():
         assert closed == [True]
     finally:
         portal.close()
+
+
+def test_pages_and_domains_block_and_pass_their_arguments(sync):
+    def handler(r, i):
+        if r.url.path.startswith("/v1/domains"):
+            return json(204) if r.method == "DELETE" else json(201, domain("docs.example.com", page="docs-site"))
+        return error(404, "not_found") if r.method == "DELETE" else json(201, page("docs-site", "build/42/"))
+
+    kyora, requests = sync(handler)
+    assert kyora.pages.publish({"name": "docs-site", "bucket": "site", "prefix": "build/42/"}).name == "docs-site"
+    assert kyora.domains.create("docs.example.com", page="docs-site", dcv="txt", timeout=5).page == "docs-site"
+    assert kyora.domains.delete("docs.example.com") is True
+    assert kyora.pages.delete("docs-site") is False
+    assert requests[1].json == {"hostname": "docs.example.com", "page": "docs-site", "dcv": "txt"}

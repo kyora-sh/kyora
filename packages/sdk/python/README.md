@@ -186,11 +186,24 @@ created.token  # the secret, shown once
 
 A restore whose sandbox fails or runs out of time destroys it, unless you pass your own `idempotency_key` (or `Idempotency-Key` header): the same key answers the sandbox an earlier restore with that key made, which may be another caller's, so the SDK never destroys it. The error then carries the sandbox's id in `sandbox_id` (a cancellation propagates as it is; `on_progress` has seen the sandbox by then), and destroying it is up to you.
 
+## Pages and domains
+
+```python
+page = kyora.pages.publish({"name": "docs-site", "bucket": "site", "prefix": "build/42/", "public": True})  # page.url
+kyora.pages.publish(
+    {"name": "docs-site", "bucket": "site", "prefix": "build/43/", "public": True}
+)  # repoints it at once
+
+domain = kyora.domains.create("docs.example.com", page="docs-site")  # or label= for a public port name
+domain.records  # the DNS records to add; kyora.domains.get(domain.hostname) shows which are still missing
+```
+
+`pages.delete` and `domains.delete` answer `False` when the page or domain was already gone. A private page is reached through `pages.login(name)`, a one-time login URL.
+
 ## Everything else
 
 `kyora.call(operation_id, path=..., query=..., body=...)` sends any HTTP operation of the API with the same errors, retries and idempotency keys. JSON operations answer their parsed body; streamed, binary and HEAD ones the `httpx.Response` (on `AsyncKyora` still open: read it and `aclose()` it). Operations without a helper yet, the same as the TypeScript SDK's (`COVERAGE` lists every operation and its method or reason):
 
-- custom domains and static pages: `kyora.call()` until a helper lands
 - computer use and live views: a later release; computer actions are HTTP, so `kyora.call()` works meanwhile, but live streams (`streamComputer`) are a WebSocket, which `call()` can't open (kyora answers `426 upgrade_required`)
 - interactive terminals (`openTerminal`, a WebSocket too): a later release
 - account images, built with the kyora CLI: a later release
