@@ -82,9 +82,10 @@ describe("storage", () => {
     expect(requests.map(route)).toEqual(Array.from(["GET", "GET", "HEAD", "DELETE"], (method) => `${method} /v1/storage/buckets/site/o/dir/a%20b.txt`))
   })
 
-  test("a missing object is a not_found error", async () => {
-    const { kyora } = client(() => error(404, "not_found"))
+  test("a missing object is a not_found error on get and on head", async () => {
+    const { kyora } = client((request) => (request.method === "HEAD" ? new Response(null, { status: 404 }) : error(404, "not_found")))
     await expect(kyora.storage.objects.get("site", "gone")).rejects.toMatchObject({ code: "not_found", status: 404 })
+    await expect(kyora.storage.objects.head("site", "gone")).rejects.toMatchObject({ code: "not_found", status: 404 })
   })
 
   test("a small object goes up in one PUT with its content type", async () => {

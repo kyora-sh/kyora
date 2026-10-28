@@ -1,6 +1,6 @@
 """The kyora API for Python: `Kyora` (blocking) and `AsyncKyora`."""
 
-from ._client import AsyncKyora, ByteStream
+from ._client import AsyncKyora, ByteStream, ObjectInfo, ObjectPage
 from ._coverage import COVERAGE
 from ._error_codes import ERROR_CODES, SPEC_VERSION
 from ._errors import (
@@ -39,6 +39,8 @@ __all__ = [
     "LimitError",
     "ListPage",
     "NotFoundError",
+    "ObjectInfo",
+    "ObjectPage",
     "Output",
     "Retry",
     "SyncByteStream",

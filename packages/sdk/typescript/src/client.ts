@@ -694,10 +694,12 @@ export class Buckets {
 
   /**
    * Deletes a bucket. Without `force` one that holds objects is a `bucket_not_empty` error; with it
-   * its objects go first, a call at a time until kyora answers it deleted. `objectsDeleted` counts them all.
+   * its objects go first, a call at a time until kyora answers it deleted. `objectsDeleted` counts them all;
+   * `timeoutMs` and `deadline` bound the whole delete.
    */
   async delete(name: string, options: { force?: boolean } & CallOptions = {}): Promise<DeleteBucketResponse> {
-    const { force, ...call } = options
+    const { force, ...rest } = options
+    const { timeoutMs: _, ...call } = { ...rest, deadline: endOf(rest) }
     let objectsDeleted = 0
     for (;;) {
       const answer = await this.transport.json<DeleteBucketResponse | DeleteBucketProgress>("deleteBucket", { path: { name }, query: { force: force ? "true" : undefined } }, call)
@@ -748,11 +750,11 @@ export class Objects {
   }
 
   /** the object's size, etag, type and last change; a missing object is a not_found error */
-  async head(bucket: string, key: string, options: CallOptions = {}): Promise<ObjectInfo> {
-    const response = await this.transport.send("headObject", { path: { name: bucket, objectKey: key } }, options)
-    await response.body?.cancel().catch(() => {})
-    const headers = response.headers
-    return { size: Number(headers.get("content-length") ?? 0), etag: headers.get("etag"), contentType: headers.get("content-type"), lastModified: headers.get("last-modified") }
+  head(bucket: string, key: string, options: CallOptions = {}): Promise<ObjectInfo> {
+    return this.transport.read("headObject", { path: { name: bucket, objectKey: key }, accept: [404] }, options, async ({ status, headers }) => {
+      if (status === 404) throw new KyoraError({ code: "not_found", status, message: `headObject: ${bucket}/${key} does not exist`, operation: "headObject" })
+      return { size: Number(headers.get("content-length") ?? 0), etag: headers.get("etag"), contentType: headers.get("content-type"), lastModified: headers.get("last-modified") }
+    })
   }
 
   /**
