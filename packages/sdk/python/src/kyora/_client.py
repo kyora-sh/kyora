@@ -126,6 +126,11 @@ def is_ticket(body: Any) -> bool:
     return isinstance(body, dict) and body.get("status") == "queued" and isinstance(body.get("ticket"), str)
 
 
+def replayed_of(response: httpx.Response) -> bool | None:
+    """a keyed create's Idempotent-Replayed: None when kyora doesn't say"""
+    return {"true": True, "false": False}.get(response.headers.get("idempotent-replayed", "").strip().lower())
+
+
 async def notify(callback: Callable[[Any], Any] | None, value: Any) -> None:
     if callback is not None:
         answer = callback(value)
@@ -275,6 +280,7 @@ class Sandboxes:
         *,
         idempotency_key: str | None = None,
         on_queued: Callable[[QueueTicket], Any] | None = None,
+        on_replayed: Callable[[bool | None], Any] | None = None,
         **options: Unpack[CallOptions],
     ) -> Sandbox:
         """Creates a sandbox under an Idempotency-Key (a fresh one unless given, the same for every retry of
@@ -282,7 +288,9 @@ class Sandboxes:
         made its sandbox: the same create with the same key answers that sandbox. With `wait` (seconds) in
         the spec, a create kyora has no room for waits in line: this long-polls its ticket until the sandbox
         is placed, calling `on_queued` with each ticket, and takes it out of line at the deadline or on
-        cancellation."""
+        cancellation. `on_replayed` gets the answer's Idempotent-Replayed: True when it is a create an earlier
+        request under the same key started (with your own key, possibly someone else's), False when this
+        call's request made it, None when kyora doesn't say."""
         body = dump(CreateSandboxRequest, spec)
         if self._kyora.region is not None and "region" not in body:
             body["region"] = self._kyora.region
@@ -291,11 +299,13 @@ class Sandboxes:
         parts = RequestParts(body=body, idempotency_key=idempotency_key)
 
         queued: str | None = None
+        replayed: bool | None = None
 
         async def read(response: httpx.Response, _: int) -> tuple[int, Any]:
-            nonlocal queued
+            nonlocal queued, replayed
             # read inside the call: a body that breaks off is asked again, under the same Idempotency-Key
             answer = read_json("createSandbox", response.status_code, await response.aread())
+            replayed = replayed_of(response)
             if response.status_code == 202 and is_ticket(answer):
                 # in line from here on, even when the call ends before the answer reaches it
                 queued = answer["ticket"]
@@ -304,6 +314,7 @@ class Sandboxes:
         call: CallOptions = {**options, "timeout": math.inf, "deadline": until}
         try:
             _, answer = await self._transport.read("createSandbox", parts, call, read)
+            await self._transport.within(notify(on_replayed, replayed), until, "createSandbox")
             if queued is None:
                 return load(Sandbox, answer, "createSandbox")
             ticket = load(QueueTicket, answer, "createSandbox")
@@ -548,20 +559,31 @@ class Snapshots:
         wait: bool = True,
         idempotency_key: str | None = None,
         on_queued: Callable[[QueueTicket], Any] | None = None,
+        on_replayed: Callable[[bool | None], Any] | None = None,
         on_progress: Callable[[Sandbox], Any] | None = None,
         interval: float = 1.0,
         **options: Unpack[CallOptions],
     ) -> Sandbox:
         """A new sandbox from a snapshot, polled until it runs (unless `wait=False`). One that fails or runs
-        out of time is destroyed, so nothing half restored is left behind, unless you passed your own
-        `idempotency_key` (or Idempotency-Key header): the same key answers the sandbox an earlier restore
-        made, which may be someone else's, so it is never destroyed. The wait's KyoraError then carries its
+        out of time is destroyed, so nothing half restored is left behind. Under your own `idempotency_key`
+        (or Idempotency-Key header) the same key answers the sandbox an earlier restore made, which may be
+        someone else's: it is destroyed only when kyora says this call's request made it (`on_replayed`
+        False), never when it is replayed or kyora doesn't say. The wait's KyoraError then carries its
         `sandbox_id` (a cancellation propagates as it is; `on_progress` has seen the sandbox by then)."""
         until = end_of(options, POLL_TIMEOUT)
         body = {**dump(CreateSandboxRequest, spec), "fromSnapshot": snapshot}
         call: CallOptions = {**without(options, "timeout"), "deadline": until}  # type: ignore[typeddict-item]
         key = caller_key("createSandbox", idempotency_key, options.get("headers"))
-        sandbox = await self._kyora.sandboxes.create(body, idempotency_key=key, on_queued=on_queued, **call)
+        replayed: bool | None = None
+
+        def remember(value: bool | None) -> Any:
+            nonlocal replayed
+            replayed = value
+            return on_replayed(value) if on_replayed is not None else None
+
+        sandbox = await self._kyora.sandboxes.create(
+            body, idempotency_key=key, on_queued=on_queued, on_replayed=remember, **call
+        )
         if not wait:
             return sandbox
         try:
@@ -569,7 +591,7 @@ class Snapshots:
                 sandbox, on_progress=on_progress, interval=interval, deadline=until
             )
         except BaseException as error:
-            if key:
+            if key and replayed is not False:
                 if isinstance(error, KyoraError):
                     error.sandbox_id = sandbox.id
                 raise

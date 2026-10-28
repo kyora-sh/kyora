@@ -62,6 +62,12 @@ export interface CreateOptions extends CallOptions {
   idempotencyKey?: string
   /** each ticket while a create with `wait` waits in line for room */
   onQueued?: (ticket: QueueTicket) => void
+  /**
+   * The create's answer, from its Idempotent-Replayed header: true when it is a create an earlier
+   * request under the same key started (with your own key, possibly someone else's), false when this
+   * call's request made it, null when kyora doesn't say.
+   */
+  onReplayed?: (replayed: boolean | null) => void
 }
 
 export interface PollOptions<T> extends WaitOptions {
@@ -218,6 +224,12 @@ async function deleted(transport: Transport, operation: "deleteSandbox" | "delet
 const lostOnTheWay = (error: unknown) =>
   error instanceof KyoraError && error.code !== "timeout" && (error.status === 0 || error.status === 502 || error.status === 504 || error.code === "do_reset" || error.code.startsWith("http_"))
 
+/** a keyed create's Idempotent-Replayed: null when kyora doesn't say */
+function replayedOf(response: Response): boolean | null {
+  const value = response.headers.get("idempotent-replayed")?.trim().toLowerCase()
+  return value === "true" ? true : value === "false" ? false : null
+}
+
 const isTicket = (body: unknown): body is QueueTicket => typeof body === "object" && body !== null && (body as { status?: unknown }).status === "queued" && typeof (body as { ticket?: unknown }).ticket === "string"
 
 function environmentToken(): string | undefined {
@@ -340,15 +352,17 @@ export class Sandboxes {
     const parts: RequestParts = { body }
     if (options.idempotencyKey) parts.idempotencyKey = options.idempotencyKey
     // read inside the call: a body that breaks off is asked again, under the same Idempotency-Key
-    const { status, answer } = await this.transport.read("createSandbox", parts, { ...options, timeoutMs: Infinity, deadline: until }, async (response) => ({ status: response.status, answer: await readJson<unknown>("createSandbox", response) }))
-    if (status === 202 && isTicket(answer)) return this.waitInLine(answer, until, options)
+    const { status, answer, replayed } = await this.transport.read("createSandbox", parts, { ...options, timeoutMs: Infinity, deadline: until }, async (response) => ({ status: response.status, answer: await readJson<unknown>("createSandbox", response), replayed: replayedOf(response) }))
+    if (status === 202 && isTicket(answer)) return this.waitInLine(answer, until, options, replayed)
+    options.onReplayed?.(replayed)
     return answer as Sandbox
   }
 
-  private async waitInLine(ticket: QueueTicket, until: number, options: CreateOptions): Promise<Sandbox> {
-    options.onQueued?.(ticket)
+  private async waitInLine(ticket: QueueTicket, until: number, options: CreateOptions, replayed: boolean | null): Promise<Sandbox> {
     let failures = 0
     try {
+      options.onReplayed?.(replayed)
+      options.onQueued?.(ticket)
       for (;;) {
         const left = until - Date.now()
         if (left <= 1_000) throw timeoutError("createSandbox")
@@ -475,9 +489,10 @@ export class Snapshots {
 
   /**
    * A new sandbox from a snapshot, polled until it runs (unless `wait: false`). One that fails or
-   * runs out of time is destroyed, so nothing half restored is left behind, unless you passed your
-   * own `idempotencyKey` (or Idempotency-Key header): the same key answers the sandbox an earlier
-   * restore made, which may be someone else's, so it is never destroyed. The wait's KyoraError then
+   * runs out of time is destroyed, so nothing half restored is left behind. Under your own
+   * `idempotencyKey` (or Idempotency-Key header) the same key answers the sandbox an earlier restore
+   * made, which may be someone else's: it is destroyed only when kyora says this call's request made
+   * it (`onReplayed` false), never when it is replayed or kyora doesn't say. The wait's KyoraError then
    * carries its `sandboxId` (an abort throws the signal's reason as it is; `onProgress` has seen the
    * sandbox by then).
    */
@@ -485,12 +500,17 @@ export class Snapshots {
     const deadline = endOf(options, POLL_TIMEOUT_MS)
     const { timeoutMs: _whole, ...create } = options
     const key = callerKey("createSandbox", options.idempotencyKey, options.headers)
-    const sandbox = await this.kyora.sandboxes.create({ ...spec, fromSnapshot: snapshot }, { ...create, ...(key ? { idempotencyKey: key } : {}), deadline })
+    let replayed = null as boolean | null
+    const onReplayed = (value: boolean | null) => {
+      replayed = value
+      options.onReplayed?.(value)
+    }
+    const sandbox = await this.kyora.sandboxes.create({ ...spec, fromSnapshot: snapshot }, { ...create, ...(key ? { idempotencyKey: key } : {}), deadline, onReplayed })
     if (options.wait === false) return sandbox
     try {
       return await this.kyora.sandboxes.waitUntilRunning(sandbox, { ...options, deadline })
     } catch (error) {
-      if (key) {
+      if (key && replayed !== false) {
         if (error instanceof KyoraError) error.sandboxId = sandbox.id
         throw error
       }

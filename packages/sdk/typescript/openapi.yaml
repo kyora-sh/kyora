@@ -555,6 +555,11 @@ x-kyora-error-codes:
     retryable: false
     class: not_found
     description: "The resource does not exist."
+  image_pulling:
+    status: [503]
+    retryable: true
+    class: transient
+    description: "The image is being pulled to the machine."
   image_region:
     status: [409]
     retryable: false
@@ -900,6 +905,16 @@ x-kyora-error-codes:
     retryable: false
     class: limit
     description: "Organization limit reached."
+  org_unbilled:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The organization has usage not invoiced yet; delete it once that invoice is out."
+  org_usage_unavailable:
+    status: [409]
+    retryable: true
+    class: transient
+    description: "The organization's usage could not be read; repeat in a few minutes."
   out_of_range:
     status: [400, 409]
     retryable: false
@@ -1689,12 +1704,18 @@ paths:
       responses:
         "201":
           description: Created.
+          headers:
+            "Idempotent-Replayed":
+              "$ref": "#/components/headers/IdempotentReplayed"
           content:
             application/json:
               schema:
                 "$ref": "#/components/schemas/Sandbox"
         "202":
           description: "Queued, or a starting restore."
+          headers:
+            "Idempotent-Replayed":
+              "$ref": "#/components/headers/IdempotentReplayed"
           content:
             application/json:
               schema:
@@ -2921,7 +2942,7 @@ paths:
       summary: List images
       responses:
         "200":
-          description: Fleet and account images.
+          description: Platform and account images.
           content:
             application/json:
               schema:
@@ -3663,6 +3684,13 @@ components:
         minLength: 1
         maxLength: 128
   headers:
+    IdempotentReplayed:
+      description: "On an answer that honoured the request's Idempotency-Key: true when it is an earlier request's create under that key (its kept answer, or a create still under way), false when this request made it. Absent on any other answer."
+      schema:
+        type: string
+        enum:
+          - "true"
+          - "false"
     RetryAfter:
       description: Seconds to wait before repeating the request.
       schema:

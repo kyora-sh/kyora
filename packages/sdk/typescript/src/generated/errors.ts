@@ -212,6 +212,8 @@ export const ERROR_CODES = {
   image_missing: { status: [409], retryable: false, class: "conflict" },
   /** The resource does not exist. */
   image_not_found: { status: [404], retryable: false, class: "not_found" },
+  /** The image is being pulled to the machine. */
+  image_pulling: { status: [503], retryable: true, class: "transient" },
   /** The image is in another region. */
   image_region: { status: [409], retryable: false, class: "conflict" },
   /** An image is required. */
@@ -350,6 +352,10 @@ export const ERROR_CODES = {
   offline: { status: [409], retryable: false, class: "conflict" },
   /** Organization limit reached. */
   org_limit: { status: [403], retryable: false, class: "limit" },
+  /** The organization has usage not invoiced yet; delete it once that invoice is out. */
+  org_unbilled: { status: [409], retryable: false, class: "conflict" },
+  /** The organization's usage could not be read; repeat in a few minutes. */
+  org_usage_unavailable: { status: [409], retryable: true, class: "transient" },
   /** Out of range. */
   out_of_range: { status: [400,409], retryable: false, class: "invalid" },
   /** Over the account ceiling. */

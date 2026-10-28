@@ -378,6 +378,56 @@ async def test_a_restore_given_two_different_keys_sends_nothing(client):
     assert requests == []
 
 
+async def test_a_restore_under_the_callers_key_that_kyora_says_this_call_made_is_destroyed_when_it_fails(client):
+    def handler(r, i):
+        if r.method == "POST":
+            return json(202, sandbox("sb_r", status="starting"), {"idempotent-replayed": "false"})
+        if r.method == "DELETE":
+            return json(204)
+        return json(200, sandbox("sb_r", status="failed"))
+
+    kyora, requests = client(handler)
+    seen = []
+    with pytest.raises(KyoraError) as caught:
+        await kyora.snapshots.restore("snap_1", idempotency_key="job-42", interval=0.005, on_replayed=seen.append)
+    assert caught.value.code == "sandbox_ended"
+    assert caught.value.sandbox_id is None
+    assert seen == [False]
+    assert (requests[-1].method, requests[-1].url.path) == ("DELETE", "/v1/sandboxes/sb_r")
+
+
+@pytest.mark.parametrize("headers", [{"idempotent-replayed": "true"}, {}, {"idempotent-replayed": "maybe"}])
+async def test_a_restore_under_the_callers_key_that_kyora_answers_as_replayed_or_doesnt_say_is_left_running(
+    client, headers
+):
+    def handler(r, i):
+        if r.method == "POST":
+            return json(202, sandbox("sb_r", status="starting"), headers)
+        if r.method == "DELETE":
+            return json(204)
+        return json(200, sandbox("sb_r", status="failed"))
+
+    kyora, requests = client(handler)
+    with pytest.raises(KyoraError) as caught:
+        await kyora.snapshots.restore("snap_1", idempotency_key="job-42", interval=0.005)
+    assert (caught.value.code, caught.value.sandbox_id) == ("sandbox_ended", "sb_r")
+    assert "DELETE" not in [r.method for r in requests]
+
+
+async def test_a_restore_under_the_sdks_key_is_destroyed_when_it_fails_even_when_kyora_answers_it_as_replayed(client):
+    def handler(r, i):
+        if r.method == "POST":
+            return json(202, sandbox("sb_r", status="starting"), {"idempotent-replayed": "true"})
+        if r.method == "DELETE":
+            return json(204)
+        return json(200, sandbox("sb_r", status="failed"))
+
+    kyora, requests = client(handler)
+    with pytest.raises(KyoraError):
+        await kyora.snapshots.restore("snap_1", interval=0.005)
+    assert requests[-1].method == "DELETE"
+
+
 async def test_a_restore_that_replays_anothers_sandbox_under_the_same_key_never_destroys_it(client):
     gets = []
 

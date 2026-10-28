@@ -184,7 +184,7 @@ created = kyora.tokens.create(
 created.token  # the secret, shown once
 ```
 
-A restore whose sandbox fails or runs out of time destroys it, unless you pass your own `idempotency_key` (or `Idempotency-Key` header): the same key answers the sandbox an earlier restore with that key made, which may be another caller's, so the SDK never destroys it. The error then carries the sandbox's id in `sandbox_id` (a cancellation propagates as it is; `on_progress` has seen the sandbox by then), and destroying it is up to you.
+A restore whose sandbox fails or runs out of time destroys it. Under your own `idempotency_key` (or `Idempotency-Key` header) the same key answers the sandbox an earlier restore with that key made, which may be another caller's, so the SDK destroys it only when kyora's `Idempotent-Replayed` header says this call's request made it (`on_replayed` gets `False`), never when the answer is replayed (`True`) or kyora doesn't say (`None`). Otherwise the error carries the sandbox's id in `sandbox_id` (a cancellation propagates as it is; `on_progress` has seen the sandbox by then), and destroying it is up to you.
 
 ## Everything else
 
