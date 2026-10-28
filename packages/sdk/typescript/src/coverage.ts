@@ -12,7 +12,6 @@ const PAGES = "static pages: kyora.call() until a helper lands"
 const COMPUTER = "computer use and live views: a later release"
 const TERMINALS = "interactive terminals need a WebSocket client: a later release"
 const IMAGES = "account images are built with the kyora CLI: a later release"
-const STORAGE = "object storage speaks S3 too; kyora.call() until a helper lands"
 
 export const COVERAGE: Record<OperationId, Coverage> = {
   getHealth: { method: "health" },
@@ -92,22 +91,22 @@ export const COVERAGE: Record<OperationId, Coverage> = {
   uploadImageChunk: { notYet: IMAGES },
   commitImage: { notYet: IMAGES },
 
-  listBuckets: { notYet: STORAGE },
-  createBucket: { notYet: STORAGE },
-  getBucket: { notYet: STORAGE },
-  deleteBucket: { notYet: STORAGE },
-  getBucketCors: { notYet: STORAGE },
-  setBucketCors: { notYet: STORAGE },
-  deleteBucketCors: { notYet: STORAGE },
-  presignObject: { notYet: STORAGE },
-  listObjects: { notYet: STORAGE },
-  getObject: { notYet: STORAGE },
-  headObject: { notYet: STORAGE },
-  putObject: { notYet: STORAGE },
-  multipartObject: { notYet: STORAGE },
-  deleteObject: { notYet: STORAGE },
-  listStorageKeys: { notYet: STORAGE },
-  createStorageKey: { notYet: STORAGE },
-  deleteStorageKey: { notYet: STORAGE },
-  getStorageAudit: { notYet: STORAGE },
+  listBuckets: { method: "storage.buckets.list" },
+  createBucket: { method: "storage.buckets.create" },
+  getBucket: { method: "storage.buckets.get" },
+  deleteBucket: { method: "storage.buckets.delete" },
+  getBucketCors: { method: "storage.buckets.cors" },
+  setBucketCors: { method: "storage.buckets.setCors" },
+  deleteBucketCors: { method: "storage.buckets.clearCors" },
+  presignObject: { method: "storage.objects.presign" },
+  listObjects: { method: "storage.objects.list" },
+  getObject: { method: "storage.objects.get" },
+  headObject: { method: "storage.objects.head" },
+  putObject: { method: "storage.objects.put" },
+  multipartObject: { method: "storage.objects.put" },
+  deleteObject: { method: "storage.objects.delete" },
+  listStorageKeys: { method: "storage.keys.list" },
+  createStorageKey: { method: "storage.keys.create" },
+  deleteStorageKey: { method: "storage.keys.revoke" },
+  getStorageAudit: { method: "storage.audit" },
 }

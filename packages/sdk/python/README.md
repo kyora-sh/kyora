@@ -186,6 +186,22 @@ created.token  # the secret, shown once
 
 A restore whose sandbox fails or runs out of time destroys it, unless you pass your own `idempotency_key` (or `Idempotency-Key` header): the same key answers the sandbox an earlier restore with that key made, which may be another caller's, so the SDK never destroys it. The error then carries the sandbox's id in `sandbox_id` (a cancellation propagates as it is; `on_progress` has seen the sandbox by then), and destroying it is up to you.
 
+## Object storage
+
+```python
+kyora.storage.buckets.create("site", region="eu")
+kyora.storage.objects.put("site", "index.html", html, content_type="text/html")  # above 64 MiB it goes up in parts
+page = kyora.storage.objects.list("site", prefix="assets/")  # ObjectPage(items, next_cursor, prefixes)
+for obj in kyora.storage.objects.iterate("site"):
+    print(obj.key, obj.size)
+data = kyora.storage.objects.get("site", "index.html")  # or get_stream, or head for ObjectInfo(size, etag, ...)
+signed = kyora.storage.objects.presign("site", {"key": "upload.bin", "method": "PUT", "ttl_seconds": 600})
+kyora.storage.buckets.set_cors("site", ["https://example.com"])
+created = kyora.storage.keys.create({"bucket": "site", "prefix": "build/", "access": "read"})
+created.key  # an S3 key's secret, shown once
+kyora.storage.buckets.delete("site", force=True)  # its objects first
+```
+
 ## Everything else
 
 `kyora.call(operation_id, path=..., query=..., body=...)` sends any HTTP operation of the API with the same errors, retries and idempotency keys. JSON operations answer their parsed body; streamed, binary and HEAD ones the `httpx.Response` (on `AsyncKyora` still open: read it and `aclose()` it). Operations without a helper yet, the same as the TypeScript SDK's (`COVERAGE` lists every operation and its method or reason):
@@ -194,7 +210,6 @@ A restore whose sandbox fails or runs out of time destroys it, unless you pass y
 - computer use and live views: a later release; computer actions are HTTP, so `kyora.call()` works meanwhile, but live streams (`streamComputer`) are a WebSocket, which `call()` can't open (kyora answers `426 upgrade_required`)
 - interactive terminals (`openTerminal`, a WebSocket too): a later release
 - account images, built with the kyora CLI: a later release
-- object storage, which speaks S3 too: `kyora.call()` until a helper lands
 
 ## Versions
 

@@ -11,29 +11,41 @@ from typing import Any, Literal, TypeVar
 import httpx
 from typing_extensions import Unpack
 
-from ._client import Archive, AsyncKyora, ByteStream
+from ._client import Archive, AsyncKyora, ByteStream, ObjectInfo, ObjectPage
 from ._exec import ByteOffsets, ExecInput, ExecOptions, ExecResult, ExecStream, Output
 from ._http import DEFAULT_RETRY, CallOptions, Retry, WaitOptions
 from ._models import (
+    Bucket,
+    BucketCors,
     CreateSandboxRequest,
     CreateSnapshotRequest,
+    CreateStorageKeyRequest,
+    CreateStorageKeyResponse,
     CreateTokenRequest,
     CreateTokenResponse,
+    DeleteBucketResponse,
+    Event,
     ExecCancelResponse,
     Health,
     LoginResponse,
     Me,
     NetworkUpdateRequest,
     NetworkUpdateResponse,
+    Object,
     Port,
     PortWithSandbox,
+    PresignRequest,
+    PresignResponse,
     PushFilesResponse,
+    PutObjectResponse,
     QueueTicket,
     RegionList,
     ResolveResponse,
+    RevokeStorageKeyResponse,
     Sandbox,
     SandboxStats,
     Snapshot,
+    StorageKey,
     Token,
     UpdateSandboxRequest,
     Usage,
@@ -173,6 +185,7 @@ class Kyora:
         self.files = Files(self.aio, self._portal)
         self.snapshots = Snapshots(self.aio, self._portal)
         self.ports = Ports(self.aio, self._portal)
+        self.storage = Storage(self.aio, self._portal)
         self.tokens = Tokens(self.aio, self._portal)
 
     def __repr__(self) -> str:
@@ -516,6 +529,117 @@ class Ports(_Resource):
     def login(self, sandbox: str, label: str, **options: Unpack[CallOptions]) -> LoginResponse:
         """a one-time login URL for a private port"""
         return self._portal.run(self._aio.ports.login(sandbox, label, **options))
+
+
+class Storage(_Resource):
+    """Object storage: buckets, their objects and CORS, S3 keys, and the audit trail."""
+
+    def __init__(self, kyora: AsyncKyora, portal: Portal) -> None:
+        super().__init__(kyora, portal)
+        self.buckets = Buckets(kyora, portal)
+        self.objects = Objects(kyora, portal)
+        self.keys = StorageKeys(kyora, portal)
+
+    def audit(self, *, limit: int | None = None, **options: Unpack[CallOptions]) -> list[Event]:
+        """the account's storage events, newest first"""
+        return self._portal.run(self._aio.storage.audit(limit=limit, **options))
+
+
+class Buckets(_Resource):
+    def list(self, **options: Unpack[CallOptions]) -> list[Bucket]:
+        return self._portal.run(self._aio.storage.buckets.list(**options))
+
+    def create(self, name: str, *, region: str | None = None, **options: Unpack[CallOptions]) -> Bucket:
+        return self._portal.run(self._aio.storage.buckets.create(name, region=region, **options))
+
+    def get(self, name: str, **options: Unpack[CallOptions]) -> Bucket:
+        return self._portal.run(self._aio.storage.buckets.get(name, **options))
+
+    def delete(self, name: str, *, force: bool = False, **options: Unpack[CallOptions]) -> DeleteBucketResponse:
+        """Deletes a bucket; with `force` its objects first. See AsyncKyora.storage.buckets.delete."""
+        return self._portal.run(self._aio.storage.buckets.delete(name, force=force, **options))
+
+    def cors(self, name: str, **options: Unpack[CallOptions]) -> BucketCors:
+        return self._portal.run(self._aio.storage.buckets.cors(name, **options))
+
+    def set_cors(self, name: str, origins: Iterable[str], **options: Unpack[CallOptions]) -> BucketCors:
+        """the origins browsers may reach the bucket's objects from"""
+        return self._portal.run(self._aio.storage.buckets.set_cors(name, origins, **options))
+
+    def clear_cors(self, name: str, **options: Unpack[CallOptions]) -> BucketCors:
+        return self._portal.run(self._aio.storage.buckets.clear_cors(name, **options))
+
+
+class Objects(_Resource):
+    def list(
+        self,
+        bucket: str,
+        *,
+        prefix: str | None = None,
+        limit: int | None = None,
+        cursor: str | None = None,
+        **options: Unpack[CallOptions],
+    ) -> ObjectPage:
+        """one page of the bucket's objects, those under `prefix` only when it is set"""
+        return self._portal.run(
+            self._aio.storage.objects.list(bucket, prefix=prefix, limit=limit, cursor=cursor, **options)
+        )
+
+    def iterate(
+        self, bucket: str, *, prefix: str | None = None, limit: int | None = None, **options: Unpack[CallOptions]
+    ) -> Iterator[Object]:
+        """every object under `prefix`, page after page"""
+        return self._portal.iterate(self._aio.storage.objects.iterate(bucket, prefix=prefix, limit=limit, **options))
+
+    def get(self, bucket: str, key: str, **options: Unpack[CallOptions]) -> bytes:
+        """the object's bytes, read whole into memory; for large objects, use get_stream"""
+        return self._portal.run(self._aio.storage.objects.get(bucket, key, **options))
+
+    def get_stream(self, bucket: str, key: str, **options: Unpack[CallOptions]) -> SyncByteStream:
+        """the object as it streams in. Read it to its end or close it (`close`, or `with`)."""
+        return SyncByteStream(
+            self._portal.run(self._aio.storage.objects.get_stream(bucket, key, **options)), self._portal
+        )
+
+    def head(self, bucket: str, key: str, **options: Unpack[CallOptions]) -> ObjectInfo:
+        """the object's size, etag, type and last change; a missing object is a not_found error"""
+        return self._portal.run(self._aio.storage.objects.head(bucket, key, **options))
+
+    def put(
+        self,
+        bucket: str,
+        key: str,
+        data: Archive | str,
+        *,
+        content_type: str | None = None,
+        **options: Unpack[CallOptions],
+    ) -> PutObjectResponse:
+        """Stores `data` at `key`; past 64 MiB it goes up in parts. See AsyncKyora.storage.objects.put."""
+        return self._portal.run(self._aio.storage.objects.put(bucket, key, data, content_type=content_type, **options))
+
+    def delete(self, bucket: str, key: str, **options: Unpack[CallOptions]) -> None:
+        """deletes an object; one that is not there is no error"""
+        return self._portal.run(self._aio.storage.objects.delete(bucket, key, **options))
+
+    def presign(
+        self, bucket: str, request: PresignRequest | Mapping[str, Any], **options: Unpack[CallOptions]
+    ) -> PresignResponse:
+        """a URL that GETs or PUTs one object without a token, until it expires"""
+        return self._portal.run(self._aio.storage.objects.presign(bucket, request, **options))
+
+
+class StorageKeys(_Resource):
+    def list(self, **options: Unpack[CallOptions]) -> list[StorageKey]:
+        return self._portal.run(self._aio.storage.keys.list(**options))
+
+    def create(
+        self, request: CreateStorageKeyRequest | Mapping[str, Any], **options: Unpack[CallOptions]
+    ) -> CreateStorageKeyResponse:
+        """an S3 key for a bucket (or a prefix of it); its secret is in the answer only"""
+        return self._portal.run(self._aio.storage.keys.create(request, **options))
+
+    def revoke(self, id: str, **options: Unpack[CallOptions]) -> RevokeStorageKeyResponse:
+        return self._portal.run(self._aio.storage.keys.revoke(id, **options))
 
 
 class Tokens(_Resource):

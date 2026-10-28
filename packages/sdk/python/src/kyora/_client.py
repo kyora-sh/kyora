@@ -6,6 +6,7 @@ import math
 import os
 import time
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable, Mapping
+from dataclasses import dataclass, field
 from typing import IO, Any, Literal, TypeVar
 
 import httpx
@@ -31,31 +32,51 @@ from ._http import (
     timeout_error,
 )
 from ._models import (
+    Bucket,
+    BucketCors,
+    BucketList,
+    CreateBucketRequest,
     CreateSandboxRequest,
     CreateSnapshotRequest,
+    CreateStorageKeyRequest,
+    CreateStorageKeyResponse,
     CreateTokenRequest,
     CreateTokenResponse,
     CreateUploadResponse,
+    DeleteBucketProgress,
+    DeleteBucketResponse,
+    Event,
     ExposePortRequest,
     Health,
     HeldPortList,
     LoginResponse,
     Me,
+    MultipartStartResponse,
     NetworkUpdateRequest,
     NetworkUpdateResponse,
+    Object,
+    ObjectList,
     Port,
     PortList,
     PortWithSandbox,
+    PresignRequest,
+    PresignResponse,
     PushFilesResponse,
+    PutObjectResponse,
+    PutPartResponse,
     QueueTicket,
     RegionList,
     ResolveResponse,
+    RevokeStorageKeyResponse,
     Sandbox,
     SandboxList,
     SandboxStats,
     SetRegionResponse,
     Snapshot,
     SnapshotList,
+    StorageAudit,
+    StorageKey,
+    StorageKeyList,
     Token,
     TokenList,
     UpdateSandboxRequest,
@@ -198,6 +219,7 @@ class AsyncKyora:
         self.files = Files(self.transport)
         self.snapshots = Snapshots(self)
         self.ports = Ports(self.transport)
+        self.storage = Storage(self)
         self.tokens = Tokens(self.transport)
 
     def __repr__(self) -> str:
@@ -591,7 +613,8 @@ class PartSource:
         self._done = False
         self._chunks: AsyncIterator[bytes] | None = None
         if isinstance(archive, (bytes, bytearray, memoryview)):
-            self._bytes = memoryview(archive)
+            view = memoryview(archive)
+            self._bytes = view.cast("B") if view.c_contiguous else memoryview(view.tobytes())
         elif isinstance(archive, AsyncIterable):
             self._chunks = archive.__aiter__()
         elif hasattr(archive, "read"):
@@ -837,6 +860,269 @@ class Ports:
             "createPortLogin", RequestParts(path={"id": sandbox, "label": label}), options
         )
         return load(LoginResponse, answer, "createPortLogin")
+
+
+@dataclass
+class ObjectPage(ListPage[Object]):
+    """one page of a bucket's objects; `prefixes` as kyora answers them"""
+
+    prefixes: list[str] = field(default_factory=list)
+
+
+@dataclass
+class ObjectInfo:
+    """an object's headers, as a HEAD answers them"""
+
+    size: int
+    etag: str | None
+    content_type: str | None
+    last_modified: str | None
+
+
+class Storage:
+    """Object storage: buckets, their objects and CORS, S3 keys, and the audit trail."""
+
+    def __init__(self, kyora: AsyncKyora) -> None:
+        self._transport = kyora.transport
+        self.buckets = Buckets(kyora)
+        self.objects = Objects(kyora.transport)
+        self.keys = StorageKeys(kyora.transport)
+
+    async def audit(self, *, limit: int | None = None, **options: Unpack[CallOptions]) -> list[Event]:
+        """the account's storage events, newest first"""
+        answer = await self._transport.json("getStorageAudit", RequestParts(query={"limit": limit}), options)
+        return load(StorageAudit, answer, "getStorageAudit").events
+
+
+class Buckets:
+    def __init__(self, kyora: AsyncKyora) -> None:
+        self._kyora = kyora
+        self._transport = kyora.transport
+
+    async def list(self, **options: Unpack[CallOptions]) -> list[Bucket]:
+        return load(BucketList, await self._transport.json("listBuckets", None, options), "listBuckets").buckets
+
+    async def create(self, name: str, *, region: str | None = None, **options: Unpack[CallOptions]) -> Bucket:
+        """a bucket in `region`, else the client's region, else where kyora picks"""
+        region = region if region is not None else self._kyora.region
+        body = dump(CreateBucketRequest, {"name": name, **({"region": region} if region is not None else {})})
+        return load(
+            Bucket, await self._transport.json("createBucket", RequestParts(body=body), options), "createBucket"
+        )
+
+    async def get(self, name: str, **options: Unpack[CallOptions]) -> Bucket:
+        answer = await self._transport.json("getBucket", RequestParts(path={"name": name}), options)
+        return load(Bucket, answer, "getBucket")
+
+    async def delete(self, name: str, *, force: bool = False, **options: Unpack[CallOptions]) -> DeleteBucketResponse:
+        """Deletes a bucket. Without `force` one that holds objects is a `bucket_not_empty` error; with it
+        its objects go first, a call at a time until kyora answers it deleted. `objects_deleted` sums what each
+        answer reports, so a call retried after its answer was lost leaves that batch uncounted: take it as a
+        lower bound. `timeout` and `deadline` bound the whole delete."""
+        until = end_of(options)
+        call: CallOptions = without(options, "timeout", "deadline")  # type: ignore[assignment]
+        if until != math.inf:
+            call["deadline"] = until
+        parts = RequestParts(path={"name": name}, query={"force": True if force else None})
+        deleted = 0
+        while True:
+            answer = await self._transport.json("deleteBucket", parts, call)
+            if isinstance(answer, dict) and answer.get("done") is True:
+                done = load(DeleteBucketResponse, answer, "deleteBucket")
+                return done.model_copy(update={"objects_deleted": deleted + done.objects_deleted})
+            deleted += load(DeleteBucketProgress, answer, "deleteBucket").objects_deleted
+
+    async def cors(self, name: str, **options: Unpack[CallOptions]) -> BucketCors:
+        answer = await self._transport.json("getBucketCors", RequestParts(path={"name": name}), options)
+        return load(BucketCors, answer, "getBucketCors")
+
+    async def set_cors(self, name: str, origins: Iterable[str], **options: Unpack[CallOptions]) -> BucketCors:
+        """the origins browsers may reach the bucket's objects from"""
+        parts = RequestParts(path={"name": name}, body={"origins": list(origins)})
+        return load(BucketCors, await self._transport.json("setBucketCors", parts, options), "setBucketCors")
+
+    async def clear_cors(self, name: str, **options: Unpack[CallOptions]) -> BucketCors:
+        answer = await self._transport.json("deleteBucketCors", RequestParts(path={"name": name}), options)
+        return load(BucketCors, answer, "deleteBucketCors")
+
+
+class Objects:
+    def __init__(self, transport: Transport) -> None:
+        self._transport = transport
+
+    async def list(
+        self,
+        bucket: str,
+        *,
+        prefix: str | None = None,
+        limit: int | None = None,
+        cursor: str | None = None,
+        **options: Unpack[CallOptions],
+    ) -> ObjectPage:
+        """one page of the bucket's objects, those under `prefix` only when it is set"""
+        parts = RequestParts(path={"name": bucket}, query={"prefix": prefix, "cursor": cursor, "limit": limit})
+        answer = load(ObjectList, await self._transport.json("listObjects", parts, options), "listObjects")
+        return ObjectPage(answer.objects, answer.cursor or None, answer.prefixes)
+
+    def iterate(
+        self, bucket: str, *, prefix: str | None = None, limit: int | None = None, **options: Unpack[CallOptions]
+    ) -> AsyncIterator[Object]:
+        """every object under `prefix`, page after page"""
+        return follow(
+            "listObjects", lambda cursor: self.list(bucket, prefix=prefix, limit=limit, cursor=cursor, **options)
+        )
+
+    async def get(self, bucket: str, key: str, **options: Unpack[CallOptions]) -> bytes:
+        """the object's bytes, read whole into memory; for large objects, use get_stream"""
+
+        async def read(response: httpx.Response, _: int) -> bytes:
+            return await response.aread()
+
+        return await self._transport.read(
+            "getObject", RequestParts(path={"name": bucket, "objectKey": key}), options, read
+        )
+
+    async def get_stream(self, bucket: str, key: str, **options: Unpack[CallOptions]) -> ByteStream:
+        """the object as it streams in; the deadline bounds the whole download. Read it to its end or close
+        it (`aclose`, or `async with`)."""
+        until = end_of(options)
+        parts = RequestParts(path={"name": bucket, "objectKey": key})
+        return ByteStream(await self._transport.send("getObject", parts, options), self._transport, until, "getObject")
+
+    async def head(self, bucket: str, key: str, **options: Unpack[CallOptions]) -> ObjectInfo:
+        """the object's size, etag, type and last change; a missing object is a not_found error"""
+
+        async def read(response: httpx.Response, _: int) -> ObjectInfo:
+            if response.status_code == 404:
+                raise make_error(
+                    f"headObject: {bucket}/{key} does not exist", code="not_found", status=404, operation="headObject"
+                )
+            headers = response.headers
+            return ObjectInfo(
+                int(headers.get("content-length", 0)),
+                headers.get("etag"),
+                headers.get("content-type"),
+                headers.get("last-modified"),
+            )
+
+        parts = RequestParts(path={"name": bucket, "objectKey": key}, accept=(404,))
+        return await self._transport.read("headObject", parts, options, read)
+
+    async def put(
+        self,
+        bucket: str,
+        key: str,
+        data: Archive | str,
+        *,
+        content_type: str | None = None,
+        **options: Unpack[CallOptions],
+    ) -> PutObjectResponse:
+        """Stores `data` at `key`. Up to 64 MiB it goes up in one PUT, past that in parts (a failed one
+        aborts the upload); a stream (an iterable of bytes or a binary file) is read part by part, never
+        held whole. `timeout` and `deadline` bound the whole upload."""
+        until = end_of(options)
+        call: CallOptions = {**without(options, "timeout", "deadline"), "timeout": TRANSFER_TIMEOUT}  # type: ignore[typeddict-item]
+        if until != math.inf:
+            call["deadline"] = until
+        path = {"name": bucket, "objectKey": key}
+        source = PartSource(data.encode() if isinstance(data, str) else data)
+        upload_id: str | None = None
+
+        async def opened(response: httpx.Response, _: int) -> Any:
+            nonlocal upload_id
+            answer = read_json("multipartObject", response.status_code, await response.aread())
+            if isinstance(answer, dict) and isinstance(answer.get("uploadId"), str):
+                upload_id = answer["uploadId"]
+            return answer
+
+        try:
+            first = await self._transport.within(source.next(SINGLE_UPLOAD_BYTES + 1), until, "putObject")
+            if len(first) <= SINGLE_UPLOAD_BYTES:
+                parts = RequestParts(path=path, body=first, content_type=content_type or "application/octet-stream")
+                return load(PutObjectResponse, await self._transport.json("putObject", parts, call), "putObject")
+            start: CallOptions = {
+                **call,
+                "headers": {**(call.get("headers") or {}), **({"content-type": content_type} if content_type else {})},
+            }
+            answer = await self._transport.read(
+                "multipartObject", RequestParts(path=path, query={"uploads": ""}), start, opened
+            )
+            upload = load(MultipartStartResponse, answer, "multipartObject")
+            size = min(SINGLE_UPLOAD_BYTES, upload.max_part_bytes)
+            if size < MIN_PART_BYTES or size > MAX_PART_BYTES:
+                raise make_error(
+                    f"multipartObject: kyora allows {size}-byte parts",
+                    code="bad_response",
+                    status=0,
+                    operation="multipartObject",
+                )
+            source.unread(first)
+            done: list[dict[str, Any]] = []
+            n = 0
+            while True:
+                n += 1
+                part = await self._transport.within(source.next(size), until, "putObject")
+                if not part:
+                    break
+                if n > upload.max_parts:
+                    raise make_error(
+                        f"putObject: more than {upload.max_parts} parts of {size} bytes",
+                        code="invalid_request",
+                        status=0,
+                        class_="invalid",
+                        retryable=False,
+                        operation="putObject",
+                    )
+                query = {"uploadId": upload.upload_id, "partNumber": n}
+                sent = await self._transport.json("putObject", RequestParts(path=path, query=query, body=part), call)
+                done.append({"partNumber": n, "etag": load(PutPartResponse, sent, "putObject").etag})
+            parts = RequestParts(path=path, query={"uploadId": upload.upload_id}, body={"parts": done})
+            return load(
+                PutObjectResponse, await self._transport.json("multipartObject", parts, call), "multipartObject"
+            )
+        except BaseException as error:
+            cleanups = {self._transport.cleanup(source.close())}
+            if upload_id is not None:
+                aborting = RequestParts(path=path, query={"uploadId": upload_id})
+                cleanups.add(self._transport.cleanup(self._transport.json("deleteObject", aborting, {"retry": False})))
+            remaining = left(until)
+            if not isinstance(error, asyncio.CancelledError) and (remaining is None or remaining > 0):
+                await asyncio.wait(cleanups, timeout=remaining)
+            raise
+
+    async def delete(self, bucket: str, key: str, **options: Unpack[CallOptions]) -> None:
+        """deletes an object; one that is not there is no error"""
+        await self._transport.json("deleteObject", RequestParts(path={"name": bucket, "objectKey": key}), options)
+
+    async def presign(
+        self, bucket: str, request: PresignRequest | Mapping[str, Any], **options: Unpack[CallOptions]
+    ) -> PresignResponse:
+        """a URL that GETs or PUTs one object without a token, until it expires"""
+        parts = RequestParts(path={"name": bucket}, body=dump(PresignRequest, request))
+        return load(PresignResponse, await self._transport.json("presignObject", parts, options), "presignObject")
+
+
+class StorageKeys:
+    def __init__(self, transport: Transport) -> None:
+        self._transport = transport
+
+    async def list(self, **options: Unpack[CallOptions]) -> list[StorageKey]:
+        return load(
+            StorageKeyList, await self._transport.json("listStorageKeys", None, options), "listStorageKeys"
+        ).keys
+
+    async def create(
+        self, request: CreateStorageKeyRequest | Mapping[str, Any], **options: Unpack[CallOptions]
+    ) -> CreateStorageKeyResponse:
+        """an S3 key for a bucket (or a prefix of it); its secret is in the answer only"""
+        parts = RequestParts(body=dump(CreateStorageKeyRequest, request))
+        return load(
+            CreateStorageKeyResponse, await self._transport.json("createStorageKey", parts, options), "createStorageKey"
+        )
+
+    async def revoke(self, id: str, **options: Unpack[CallOptions]) -> RevokeStorageKeyResponse:
+        answer = await self._transport.json("deleteStorageKey", RequestParts(path={"id": id}), options)
+        return load(RevokeStorageKeyResponse, answer, "deleteStorageKey")
 
 
 class Tokens:

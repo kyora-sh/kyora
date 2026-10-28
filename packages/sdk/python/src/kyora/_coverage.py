@@ -16,7 +16,6 @@ PAGES = "static pages: kyora.call() until a helper lands"
 COMPUTER = "computer use and live views: a later release"
 TERMINALS = "interactive terminals need a WebSocket client: a later release"
 IMAGES = "account images are built with the kyora CLI: a later release"
-STORAGE = "object storage speaks S3 too; kyora.call() until a helper lands"
 
 COVERAGE: dict[str, Coverage] = {
     "getHealth": {"method": "health"},
@@ -85,22 +84,22 @@ COVERAGE: dict[str, Coverage] = {
     "deleteImage": {"not_yet": IMAGES},
     "uploadImageChunk": {"not_yet": IMAGES},
     "commitImage": {"not_yet": IMAGES},
-    "listBuckets": {"not_yet": STORAGE},
-    "createBucket": {"not_yet": STORAGE},
-    "getBucket": {"not_yet": STORAGE},
-    "deleteBucket": {"not_yet": STORAGE},
-    "getBucketCors": {"not_yet": STORAGE},
-    "setBucketCors": {"not_yet": STORAGE},
-    "deleteBucketCors": {"not_yet": STORAGE},
-    "presignObject": {"not_yet": STORAGE},
-    "listObjects": {"not_yet": STORAGE},
-    "getObject": {"not_yet": STORAGE},
-    "headObject": {"not_yet": STORAGE},
-    "putObject": {"not_yet": STORAGE},
-    "multipartObject": {"not_yet": STORAGE},
-    "deleteObject": {"not_yet": STORAGE},
-    "listStorageKeys": {"not_yet": STORAGE},
-    "createStorageKey": {"not_yet": STORAGE},
-    "deleteStorageKey": {"not_yet": STORAGE},
-    "getStorageAudit": {"not_yet": STORAGE},
+    "listBuckets": {"method": "storage.buckets.list"},
+    "createBucket": {"method": "storage.buckets.create"},
+    "getBucket": {"method": "storage.buckets.get"},
+    "deleteBucket": {"method": "storage.buckets.delete"},
+    "getBucketCors": {"method": "storage.buckets.cors"},
+    "setBucketCors": {"method": "storage.buckets.set_cors"},
+    "deleteBucketCors": {"method": "storage.buckets.clear_cors"},
+    "presignObject": {"method": "storage.objects.presign"},
+    "listObjects": {"method": "storage.objects.list"},
+    "getObject": {"method": "storage.objects.get"},
+    "headObject": {"method": "storage.objects.head"},
+    "putObject": {"method": "storage.objects.put"},
+    "multipartObject": {"method": "storage.objects.put"},
+    "deleteObject": {"method": "storage.objects.delete"},
+    "listStorageKeys": {"method": "storage.keys.list"},
+    "createStorageKey": {"method": "storage.keys.create"},
+    "deleteStorageKey": {"method": "storage.keys.revoke"},
+    "getStorageAudit": {"method": "storage.audit"},
 }
