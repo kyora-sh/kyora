@@ -133,6 +133,26 @@ Paste this into `CLAUDE.md` / `AGENTS.md`:
   `--git-depth N` (the last N commits) or `--git` (all of HEAD's history).
 ```
 
+## MCP
+
+`kyora mcp` serves the CLI as an MCP server on stdio, signed in as your `kyora login` (or `KYORA_TOKEN` in the server's environment):
+
+```bash
+claude mcp add kyora -- kyora mcp
+```
+
+Its tools run VMs (`vms_run`, `vms_create`, `vms_exec`, `vms_push`, `vms_pull`, `vms_destroy` and more), publish pages, and manage storage, public URLs, custom domains and deploys. `vms_run` and `vms_exec` wait for the command (`timeout_seconds`, default 600) and return its exit code with the last `output_limit` bytes of stdout and stderr. Relative paths are relative to the directory the server started in. Tokens never appear in tool results; stdout carries only the protocol. `kyora detach` and `kyora back` move the calling agent's own conversation, so they stay terminal commands; `session_status` reads where a session runs.
+
+## Publish a page
+
+```bash
+kyora publish ./report                   # prints the page's URL; private: only you, signed in
+kyora publish ./dist --name my-app --public --spa
+kyora pages ls | show <name> | rm <name> | login <name>
+```
+
+`kyora publish` uploads a directory (or one file, with an `index.html` that redirects to it) to your `pages` bucket and serves it at its own URL. Publishing to the same `--name` again switches the page to the new files at once and then deletes the old ones. A private page opens for you after `kyora pages login <name>`, a sign-in link good for 60 seconds. `kyora vms domain add <hostname> --page <name>` serves a public page on your own domain. At most 2000 files and 500 MB per publish.
+
 ## Examples
 
 ```bash

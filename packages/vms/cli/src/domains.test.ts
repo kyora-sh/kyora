@@ -60,6 +60,16 @@ test("domain add sends the hostname and label and prints the DNS records to add"
   expect(unverified.stdout).toContain("The TXT record verifies your ownership.")
 })
 
+test("domain add --page serves a public page; --to and --page don't go together", async () => {
+  expect((await run(["domain", "add", "docs.example.com", "--page", "build-report"])).code).toBe(0)
+  expect(calls).toEqual([{ method: "POST", path: "/v1/domains", body: { hostname: "docs.example.com", page: "build-report" } }])
+  const both = await run(["domain", "add", "docs.example.com", "--page", "a", "--to", "b"])
+  expect(both.code).not.toBe(0)
+  expect(both.stderr).toContain("--to or --page, not both")
+  expect((await run(["domain", "ls", "--page", "a"])).stderr).toContain("takes no --to, --page or --dcv")
+  expect(calls).toHaveLength(1)
+})
+
 test("domain status says which records are missing", async () => {
   status = "unverified"
   missing = [{ type: "TXT", name: "_kyora-verify.shop.example.com", value: PROOF }]

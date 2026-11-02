@@ -7,6 +7,7 @@ import type { CustomDomain, DnsRecord, VmsClient } from "./api"
 
 export const DomainUsage = `usage:
   kyora vms domain add <hostname> --to <label> [--dcv http|txt]   serve a public URL name on your hostname
+  kyora vms domain add <hostname> --page <name> [--dcv http|txt]  serve a public page (kyora publish) there
   kyora vms domain ls                                             your custom domains
   kyora vms domain status <hostname>                              current status and missing DNS records
   kyora vms domain rm <hostname>                                  remove it (its certificate goes too)`
@@ -52,10 +53,10 @@ function summary(domain: CustomDomain): string {
   return `${domain.hostname} → ${domain.label} (${state})`
 }
 
-export async function domainCommand(api: VmsClient, args: { positionals: string[]; to?: string; dcv?: string; json: boolean }, usage: (message: string) => never, print: Print = (line) => console.log(line)): Promise<number> {
+export async function domainCommand(api: VmsClient, args: { positionals: string[]; to?: string; page?: string; dcv?: string; json: boolean }, usage: (message: string) => never, print: Print = (line) => console.log(line)): Promise<number> {
   const [action, hostname, extra] = args.positionals
   if (!action || extra !== undefined) usage(DomainUsage)
-  if (action !== "add" && (args.to !== undefined || args.dcv !== undefined)) usage(`domain ${action} takes no --to or --dcv\n${DomainUsage}`)
+  if (action !== "add" && (args.to !== undefined || args.page !== undefined || args.dcv !== undefined)) usage(`domain ${action} takes no --to, --page or --dcv\n${DomainUsage}`)
   if (action === "ls" || action === "list") {
     if (hostname !== undefined) usage(DomainUsage)
     const domains = await api.domains()
@@ -66,9 +67,10 @@ export async function domainCommand(api: VmsClient, args: { positionals: string[
   }
   if (!hostname) usage(DomainUsage)
   if (action === "add") {
-    if (!args.to) usage(`domain add needs --to <label>, one of your public URL names (kyora vms expose --list)\n${DomainUsage}`)
+    if (args.to !== undefined && args.page !== undefined) usage(`domain add takes --to or --page, not both\n${DomainUsage}`)
+    if (!args.to && !args.page) usage(`domain add needs --to <label>, one of your public URL names (kyora vms expose --list), or --page <name>, one of your public pages (kyora pages ls)\n${DomainUsage}`)
     if (args.dcv !== undefined && args.dcv !== "http" && args.dcv !== "txt") usage("--dcv takes http (the default: nothing to add but the TXT and the CNAME) or txt")
-    const domain = await api.domainAdd(hostname, args.to, args.dcv as "http" | "txt" | undefined)
+    const domain = await api.domainAdd(hostname, args.page ? { page: args.page } : args.to!, args.dcv as "http" | "txt" | undefined)
     if (args.json) {
       print(JSON.stringify(domain))
       return 0
