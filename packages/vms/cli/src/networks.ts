@@ -19,13 +19,19 @@ export async function resolveNetworkId(api: VmsClient, input: string, listing?: 
   return network.id
 }
 
-/** every --private-network of a create, all checked before any is looked up: one stays the `privateNetwork` shorthand */
-export async function privateNetworkOptions(api: VmsClient, values: string[], usage: (message: string) => never): Promise<Pick<CreateSpec, "privateNetwork" | "privateNetworks">> {
-  const parsed = values.map((value) => {
+export type PrivateNetworkFlag = { name: string; ip?: string }
+
+/** every --private-network of a create, checked for shape without a request */
+export function parsePrivateNetworks(values: string[], usage: (message: string) => never): PrivateNetworkFlag[] {
+  return values.map((value) => {
     const [name, ip, extra] = value.split(":")
     if (!name || extra !== undefined || (ip !== undefined && !IPV4.test(ip))) usage("--private-network takes <id|name>[:<IPv4 address>]")
     return { name, ip }
   })
+}
+
+/** the parsed flags as a create's networks, names looked up with one listing: one stays the `privateNetwork` shorthand */
+export async function resolvePrivateNetworks(api: VmsClient, parsed: PrivateNetworkFlag[]): Promise<Pick<CreateSpec, "privateNetwork" | "privateNetworks">> {
   let listed: Promise<PrivateNetwork[]> | undefined
   const listing = () => (listed ??= api.networks())
   const networks: Array<NonNullable<CreateSpec["privateNetwork"]>> = []

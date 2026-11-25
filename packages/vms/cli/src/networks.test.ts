@@ -170,13 +170,20 @@ test("refusals of private networks and token constraints carry no generic hint",
   expect(full.stderr).not.toContain("the sandbox is busy")
 })
 
+test("a create's notes print once, before its network names are looked up", async () => {
+  const result = await run(["create", "--strict", "--private-network", "backend"])
+  expect(result.code).toBe(0)
+  expect(result.stderr.split("--strict does nothing").length - 1).toBe(1)
+  expect(calls.map((call) => `${call.method} ${call.path}`)).toEqual(["GET /v1/networks", "POST /v1/sandboxes"])
+})
+
 test("several network names are looked up with one listing", async () => {
   expect((await run(["create", "--private-network", "backend", "--private-network", "backend:10.20.0.9"])).code).toBe(0)
   expect(calls.filter((call) => call.method === "GET" && call.path === "/v1/networks")).toHaveLength(1)
 })
 
 test("invalid network command shapes and private network flags fail before a request", async () => {
-  for (const args of [["networks"], ["networks", "create", "backend"], ["networks", "ls", "backend"], ["networks", "show"], ["networks", "rm", "net_x", "extra"], ["networks", "ls", "--cidr", network.cidr], ["networks", "move", "net_x"], ["create", "--private-network", ":10.20.0.5"], ["create", "--private-network", "net_x:"], ["create", "--private-network", "net_x:10.20.0.5:extra"], ["create", "--private-network", "net_x:invalid"], ["create", "--private-network", "net_x:256.1.1.1"], ["create", "--private-network", "net_x:10.20.0.05"], ["create", "--private-network", "backend", "--private-network", "net_x:bad"], ["create", "--private-network", "backend", "--network", "nowhere"]]) {
+  for (const args of [["networks"], ["networks", "create", "backend"], ["networks", "ls", "backend"], ["networks", "show"], ["networks", "rm", "net_x", "extra"], ["networks", "ls", "--cidr", network.cidr], ["networks", "move", "net_x"], ["create", "--private-network", ":10.20.0.5"], ["create", "--private-network", "net_x:"], ["create", "--private-network", "net_x:10.20.0.5:extra"], ["create", "--private-network", "net_x:invalid"], ["create", "--private-network", "net_x:256.1.1.1"], ["create", "--private-network", "net_x:10.20.0.05"], ["create", "--private-network", "backend", "--private-network", "net_x:bad"], ["create", "--private-network", "backend", "--network", "nowhere"], ["create", "one", "two", "--private-network", "backend"], ["create", "--private-network", "backend", "--wait", "soon"], ["new", "--private-network", "backend", "--json"], ["new", "--private-network", "backend", "--cwd", "/work"], ["run", "extra", "--private-network", "backend", "--", "true"]]) {
     expect((await run(args)).code).not.toBe(0)
   }
   expect(calls).toEqual([])

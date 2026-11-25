@@ -22,7 +22,7 @@ import { storageMain, StorageUsage } from "./storage"
 import { tokensMain, TokenUsage } from "./tokens"
 import { create, exec, health, list, nodes, pullPaths, pushDir, remove } from "./session"
 import { domainCommand } from "./domains"
-import { networksCommand, privateNetworkOptions } from "./networks"
+import { networksCommand, parsePrivateNetworks, resolvePrivateNetworks } from "./networks"
 import { snapshotCommand } from "./snapshots"
 import { killSession, listSessions, shell } from "./shell"
 import { MAX_SHARDS } from "./shard"
@@ -371,10 +371,10 @@ function parseEnv(pairs: string[] = []): Record<string, string> | undefined {
   return env
 }
 
-function sandboxSpec(values: Values, { image: withImage = true, networks }: { image?: boolean; networks?: Pick<CreateSpec, "privateNetwork" | "privateNetworks"> } = {}): CreateSpec {
+function sandboxSpec(values: Values, { image: withImage = true }: { image?: boolean } = {}): CreateSpec {
   const network = values.network as Network | undefined
   if (network !== undefined && !NETWORKS.includes(network)) usage(`--network must be one of ${NETWORKS.join(", ")}`)
-  const spec: CreateSpec = { ...networks }
+  const spec: CreateSpec = {}
   if (values["no-share"]) spec.shareable = false
   if (values.name !== undefined) spec.name = validName(values.name)
   if (values.size !== undefined) {
@@ -528,11 +528,15 @@ export async function vmsMain(argv: string[]): Promise<number> {
     return 0
   }
   const api = new VmsClient(config)
-  // every other flag of the create is checked before a network name is looked up
-  if (values["private-network"] !== undefined) sandboxSpec(values)
-  const networks = values["private-network"] === undefined ? undefined : await privateNetworkOptions(api, values["private-network"], usage)
+  const wanted = values["private-network"] === undefined ? undefined : parsePrivateNetworks(values["private-network"], usage)
+  // built once, after the verb's own checks: the spec's flags first, then its network names looked up
+  let built: Promise<CreateSpec> | undefined
+  const spec = () => (built ??= (async () => {
+    const base = sandboxSpec(values)
+    return wanted ? { ...base, ...(await resolvePrivateNetworks(api, wanted)) } : base
+  })())
 
-  const ergonomic = await ergonomicCommand(api, { verb, positionals, tail, json: asJson, values, spec: () => sandboxSpec(values, { networks }), wait: () => waitSeconds(values), env: () => parseEnv(values.env), usage })
+  const ergonomic = await ergonomicCommand(api, { verb, positionals, tail, json: asJson, values, spec, wait: () => waitSeconds(values), env: () => parseEnv(values.env), usage })
   if (ergonomic !== undefined) return ergonomic
 
   switch (verb) {
@@ -586,13 +590,16 @@ export async function vmsMain(argv: string[]): Promise<number> {
       const dir = resolve(values.dir ?? ".")
       const outs = (values.out ?? []).map((out) => remotePath(out))
       const upload = uploadOptions(values)
+      const history = historyOptions(values)
+      const wait = waitSeconds(values)
+      const request = await execRequest(values, tail ?? positionals)
       return run(api, {
         dir,
         git: !values["no-git"],
-        history: historyOptions(values),
-        spec: sandboxSpec(values, { networks }),
-        wait: waitSeconds(values),
-        exec: await execRequest(values, tail ?? positionals),
+        history,
+        spec: await spec(),
+        wait,
+        exec: request,
         outs,
         to: resolve(values.to ?? dir),
         keep: Boolean(values.keep),
@@ -609,9 +616,11 @@ export async function vmsMain(argv: string[]): Promise<number> {
     }
     case "create": {
       if (positionals.length > 1 || (positionals.length > 0 && values.name !== undefined)) usage("usage: kyora vms create [name] [options]")
-      const spec = sandboxSpec(values, { networks })
-      if (positionals.length) spec.name = validName(positionals[0]!)
-      return create(api, spec, waitSeconds(values), asJson)
+      const name = positionals.length ? validName(positionals[0]!) : undefined
+      const wait = waitSeconds(values)
+      const made = await spec()
+      if (name !== undefined) made.name = name
+      return create(api, made, wait, asJson)
     }
     case "resize": {
       const [id, extra] = positionals

@@ -87,7 +87,8 @@ interface CommandContext {
   tail: string[] | null
   json: boolean
   values: { name?: string; view?: boolean; clipboard?: boolean; cwd?: string; env?: string[] }
-  spec(): CreateSpec
+  /** the create's spec, built once, network names looked up last */
+  spec(): Promise<CreateSpec>
   wait(): number
   env(): Record<string, string> | undefined
   usage(message: string): never
@@ -106,9 +107,13 @@ export async function ergonomicCommand(api: VmsClient, context: CommandContext):
       if (positionals.length > 1 || (positionals.length > 0 && values.name !== undefined) || json) usage("usage: kyora vms new [name] [options] [-- cmd…]")
       if (tail !== null && !tail.length) usage("nothing after --; give a command")
       if ((values.env || values.cwd) && tail === null) usage("--env and --cwd need a command after --")
-      const spec = context.spec()
-      if (positionals.length) spec.name = validName(positionals[0]!)
-      return newSandbox(api, spec, context.wait(), { ...(tail ? { cmd: tail } : {}), cwd: values.cwd ? remotePath(values.cwd) : undefined, env: context.env(), clipboard })
+      const name = positionals.length ? validName(positionals[0]!) : undefined
+      const wait = context.wait()
+      const env = context.env()
+      const cwd = values.cwd ? remotePath(values.cwd) : undefined
+      const spec = await context.spec()
+      if (name !== undefined) spec.name = name
+      return newSandbox(api, spec, wait, { ...(tail ? { cmd: tail } : {}), cwd, env, clipboard })
     }
     case "rename":
     case "ttl": {

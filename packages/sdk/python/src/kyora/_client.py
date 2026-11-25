@@ -876,7 +876,7 @@ class Tokens:
 
 
 class Networks:
-    """The account's private networks: a sandbox joins one at create (`privateNetwork`, or `privateNetworks` for
+    """The account's private networks: a sandbox joins one at create (`private_network`, or `private_networks` for
     several) and reaches its other members on their private addresses. Private networks are enabled per account;
     until then these calls fail with `privnet_not_enabled`."""
 
