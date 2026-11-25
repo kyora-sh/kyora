@@ -28,6 +28,7 @@ export const PUBLIC_PREFIXES = [
   "/v1/snapshots",
   "/v1/images",
   "/v1/storage",
+  "/v1/secrets",
 ]
 
 const under = (path: string, prefix: string) => path === prefix || path.startsWith(`${prefix}/`)

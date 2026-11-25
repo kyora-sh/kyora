@@ -140,6 +140,19 @@ const { token } = await kyora.tokens.create({ name: "doc-agent", scopes: ["vms:r
 
 A restore whose sandbox fails or runs out of time destroys it, unless you pass your own `idempotencyKey` (or `Idempotency-Key` header): the same key answers the sandbox an earlier restore with that key made, which may be another caller's, so the SDK never destroys it. The error then carries the sandbox's id in `sandboxId` (an abort throws the signal's reason as it is; `onProgress` has seen the sandbox by then), and destroying it is up to you.
 
+## Secrets
+
+```ts
+const secret = await kyora.secrets.create({ name: "example-api", value: process.env.EXAMPLE_API_KEY!, hosts: ["api.example.com"] })
+const binding = await kyora.secrets.createBinding(secret.id, { host: "api.example.com", injection: { type: "header", name: "authorization", template: "Bearer {{secret}}" }, scope: { labels: { app: "doc-agent" } } })
+const agent = await kyora.sandboxes.create({ labels: { app: "doc-agent" }, proxySecrets: true })
+// inside the sandbox: through the broker, the request reaches https://api.example.com/v1/items with the secret added
+const call = 'curl -sS -H "authorization: Bearer $KYORA_EGRESS_TOKEN" "$KYORA_EGRESS_URL/$BINDING/v1/items"'
+await kyora.exec.run(agent.id, { cmd: ["sh", "-c", call], env: { BINDING: binding.id } })
+```
+
+The account's secrets, never their values. With a binding, code in a sandbox created with `proxySecrets: true` sends its request to kyora's egress broker at `$KYORA_EGRESS_URL/<binding id>/<path>`, with `authorization: Bearer $KYORA_EGRESS_TOKEN` (both are in the sandbox's environment). The broker adds the secret and passes the request on to the binding's host, so the value never enters the sandbox; a request sent straight to the host gets nothing added. A delivery (`createDelivery`, for a secret created with `sandbox: true`) puts it into sandboxes as an env variable or a file. They take a full token, and only the account's owners and admins write them.
+
 ## Private networks
 
 ```ts
