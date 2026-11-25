@@ -31,6 +31,7 @@ from ._http import (
     timeout_error,
 )
 from ._models import (
+    CreateNetworkRequest,
     CreateSandboxRequest,
     CreateSecretBindingRequest,
     CreateSecretDeliveryRequest,
@@ -44,6 +45,8 @@ from ._models import (
     HeldPortList,
     LoginResponse,
     Me,
+    Network,
+    NetworkList,
     NetworkUpdateRequest,
     NetworkUpdateResponse,
     Port,
@@ -208,6 +211,7 @@ class AsyncKyora:
         self.snapshots = Snapshots(self)
         self.ports = Ports(self.transport)
         self.tokens = Tokens(self.transport)
+        self.networks = Networks(self.transport)
         self.secrets = Secrets(self.transport)
 
     def __repr__(self) -> str:
@@ -956,3 +960,31 @@ class Secrets:
 
     async def delete_delivery(self, id: str, delivery: str, **options: Unpack[CallOptions]) -> None:
         await self._transport.json("deleteSecretDelivery", RequestParts(path={"id": id, "delivery": delivery}), options)
+
+
+class Networks:
+    """The account's private networks: a sandbox joins one at create (`private_network`, or `private_networks` for
+    several) and reaches its other members on their private addresses. Private networks are enabled per account;
+    until then these calls fail with `privnet_not_enabled`."""
+
+    def __init__(self, transport: Transport) -> None:
+        self._transport = transport
+
+    async def list(self, **options: Unpack[CallOptions]) -> list[Network]:
+        answer = await self._transport.json("listNetworks", None, options)
+        return load(NetworkList, answer, "listNetworks").networks
+
+    async def create(
+        self, request: CreateNetworkRequest | Mapping[str, Any], **options: Unpack[CallOptions]
+    ) -> Network:
+        body = dump(CreateNetworkRequest, request)
+        answer = await self._transport.json("createNetwork", RequestParts(body=body), options)
+        return load(Network, answer, "createNetwork")
+
+    async def get(self, id: str, **options: Unpack[CallOptions]) -> Network:
+        answer = await self._transport.json("getNetwork", RequestParts(path={"id": id}), options)
+        return load(Network, answer, "getNetwork")
+
+    async def delete(self, id: str, **options: Unpack[CallOptions]) -> None:
+        """a network with members is refused (network_has_members): delete them first"""
+        await self._transport.json("deleteNetwork", RequestParts(path={"id": id}), options)

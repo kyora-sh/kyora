@@ -207,6 +207,18 @@ agent = kyora.sandboxes.create({"labels": {"app": "doc-agent"}, "proxy_secrets":
 
 The account's secrets, never their values. A binding has the egress broker inject the secret into a sandbox's requests to its host (`proxy_secrets`), so the value never enters the sandbox; a delivery (`create_delivery`, for a secret created with `"sandbox": True`) puts it into sandboxes as an env variable or a file. They take a full token, and only the account's owners and admins write them.
 
+## Private networks
+
+```python
+network = kyora.networks.create({"name": "backend", "cidr": "10.20.0.0/24"})
+db = kyora.sandboxes.create({"private_network": {"id": network.id, "ip": "10.20.0.5"}})
+app = kyora.sandboxes.create({"private_network": {"id": network.id}})  # reaches db at 10.20.0.5
+kyora.networks.get(network.id)  # its members
+kyora.networks.delete(network.id)  # once it has no members
+```
+
+Private networks are enabled per account; until then these calls fail with `privnet_not_enabled`, whose message says how to get them.
+
 ## Everything else
 
 `kyora.call(operation_id, path=..., query=..., body=...)` sends any HTTP operation of the API with the same errors, retries and idempotency keys. JSON operations answer their parsed body; streamed, binary and HEAD ones the `httpx.Response` (on `AsyncKyora` still open: read it and `aclose()` it). Operations without a helper yet, the same as the TypeScript SDK's (`COVERAGE` lists every operation and its method or reason):

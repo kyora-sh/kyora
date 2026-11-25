@@ -165,6 +165,28 @@ class Health1(BaseModel):
     ] = None
 
 
+class PrivateNetwork(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    id: str
+    cidr: str
+    ip: str | None
+
+
+class PrivateNetwork1(BaseModel):
+    """
+    The private network the sandbox is a member of, and its address there, when there is exactly one.
+    """
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    id: str
+    cidr: str
+    ip: str | None
+
+
 class Sandbox(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
@@ -258,6 +280,20 @@ class Sandbox(BaseModel):
     health: Health1 | None = None
     warnings: list[str] | None = None
     restarted: bool | None = None
+    private_networks: Annotated[
+        list[PrivateNetwork] | None,
+        Field(
+            alias='privateNetworks',
+            description='Every private network the sandbox is a member of, and its address in each.',
+        ),
+    ] = None
+    private_network: Annotated[
+        PrivateNetwork1 | None,
+        Field(
+            alias='privateNetwork',
+            description='The private network the sandbox is a member of, and its address there, when there is exactly one.',
+        ),
+    ] = None
 
 
 class SandboxList(BaseModel):
@@ -315,76 +351,6 @@ class CreateSandboxSecret(BaseModel):
     file: Annotated[str | None, Field(pattern='^[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$')] = (
         None
     )
-
-
-class CreateSandboxRequest(BaseModel):
-    model_config = ConfigDict(
-        extra='forbid',
-        populate_by_name=True,
-    )
-    name: Annotated[str | None, Field(pattern='^[a-z0-9-]{1,32}$')] = None
-    shareable: bool | None = True
-    vcpus: Annotated[int | None, Field(description='1 or an even number.', ge=1, le=16)] = (
-        4
-    )
-    allocated_vcpus: Annotated[float | None, Field(alias='allocatedVcpus', ge=0.05)] = (
-        None
-    )
-    cpu_limit: Annotated[float | None, Field(alias='cpuLimit', ge=0.05, le=1.0)] = 1
-    memory_mb: Annotated[int | None, Field(alias='memoryMb', ge=256, le=49152)] = 8192
-    max_memory_mb: Annotated[int | None, Field(alias='maxMemoryMb', ge=256, le=49152)] = (
-        None
-    )
-    autoscale: bool | None = False
-    disk_gb: Annotated[int | None, Field(alias='diskGb', ge=1, le=200)] = 30
-    network: Literal['none', 'registries', 'open', 'ci', 'ci-strict'] | str | None = 'none'
-    egress_allow: Annotated[list[str] | None, Field(alias='egressAllow', max_length=32)] = (
-        None
-    )
-    ttl_seconds: Annotated[
-        int | None,
-        Field(alias='ttlSeconds', description='0: no expiry, where allowed.', ge=0),
-    ] = 28800
-    idle_seconds: Annotated[int | None, Field(alias='idleSeconds', ge=0, le=28800)] = (
-        None
-    )
-    image: Annotated[
-        str | None,
-        Field(
-            description='A lowercase image name, an account image id (img_...), or a pinned version (name@N, name@sha256:...).'
-        ),
-    ] = 'default'
-    labels: Labels | None = None
-    display: Display1 | None = None
-    hibernate: Hibernate | None = None
-    download_cache: Annotated[
-        bool | None,
-        Field(
-            alias='downloadCache',
-            description="false: don't use the shared download cache.",
-        ),
-    ] = True
-    proxy_secrets: Annotated[
-        bool | None,
-        Field(
-            alias='proxySecrets',
-            description="true: the sandbox's commands reach the account's secret bindings (/v1/secrets) through the egress broker, which injects each secret into requests to its bound host; the value never enters the sandbox. On network none or registries the broker's host joins egressAllow (one of its 32 hosts). It takes one of the sandbox's labels itself (kyora.proxy-secrets, so at most 30 of your own), and its egress token is in the guest's memory, so a full snapshot of it needs allowSecretsInMemory (409 secrets_in_memory otherwise).",
-        ),
-    ] = False
-    secrets: Annotated[
-        list[CreateSandboxSecret] | None,
-        Field(
-            description="The account's secret deliveries this sandbox takes, by secret and target. Each needs an enabled, unexpired delivery whose scope includes the sandbox (else secret_not_delivered); code in the sandbox can read their values.",
-            max_length=16,
-        ),
-    ] = None
-    region: str | None = None
-    wait: Annotated[
-        int | None, Field(description='Seconds a create may wait in the queue.', ge=0)
-    ] = None
-    session: str | None = None
-    from_snapshot: Annotated[str | None, Field(alias='fromSnapshot')] = None
-    resume: bool | None = None
 
 
 class UpdateSandboxRequest(BaseModel):
@@ -1403,6 +1369,54 @@ class MultipartStartResponse(BaseModel):
     max_parts: Annotated[int, Field(alias='maxParts')]
 
 
+class CreateNetworkRequest(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+        populate_by_name=True,
+    )
+    name: Annotated[str, Field(pattern='^[a-z0-9][a-z0-9-]{0,62}$')]
+    cidr: Annotated[
+        str,
+        Field(
+            description='A canonical IPv4 /16 to /28 subnet starting at its network address, inside 10.0.0.0/8, 172.16.0.0/12 or 192.168.0.0/16. Must not overlap 10.199.0.0/16, 10.200.0.0/16, 10.251.0.0/16, 100.64.0.0/10 or 169.254.0.0/16.',
+            pattern='^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/(?:1[6-9]|2[0-8])$',
+        ),
+    ]
+
+
+class PrivateNetworkRequest(BaseModel):
+    """
+    Join a private network with any internet network mode. Requires a full token and private networks enabled for the account. Cannot be combined with fromSnapshot, session or hibernate.cold r2 (409 privnet_deferred).
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+        populate_by_name=True,
+    )
+    id: Annotated[str, Field(pattern='^net_[0-9a-f]{20}$')]
+    ip: Annotated[
+        str | None,
+        Field(
+            description='An address of the network other than its network address, gateway or broadcast address. If absent, the lowest free member address is assigned.',
+            pattern='^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])$',
+        ),
+    ] = None
+
+
+class NetworkMember(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    sandbox_id: Annotated[str, Field(alias='sandboxId', pattern='^sb_')]
+    ip: Annotated[
+        str,
+        Field(
+            pattern='^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])$'
+        ),
+    ]
+    state: Literal['pending', 'active'] | str
+
+
 SecretScopeSandbox = TypeAliasType(
     "SecretScopeSandbox", Annotated[str, Field(pattern='^sb_')]
 )
@@ -1948,6 +1962,88 @@ class PutPartResponse(BaseModel):
     etag: str
 
 
+class CreateSandboxRequest(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+        populate_by_name=True,
+    )
+    name: Annotated[str | None, Field(pattern='^[a-z0-9-]{1,32}$')] = None
+    shareable: bool | None = True
+    vcpus: Annotated[int | None, Field(description='1 or an even number.', ge=1, le=16)] = (
+        4
+    )
+    allocated_vcpus: Annotated[float | None, Field(alias='allocatedVcpus', ge=0.05)] = (
+        None
+    )
+    cpu_limit: Annotated[float | None, Field(alias='cpuLimit', ge=0.05, le=1.0)] = 1
+    memory_mb: Annotated[int | None, Field(alias='memoryMb', ge=256, le=49152)] = 8192
+    max_memory_mb: Annotated[int | None, Field(alias='maxMemoryMb', ge=256, le=49152)] = (
+        None
+    )
+    autoscale: bool | None = False
+    disk_gb: Annotated[int | None, Field(alias='diskGb', ge=1, le=200)] = 30
+    network: Literal['none', 'registries', 'open', 'ci', 'ci-strict'] | str | None = 'none'
+    private_network: Annotated[
+        PrivateNetworkRequest | None, Field(alias='privateNetwork')
+    ] = None
+    private_networks: Annotated[
+        list[PrivateNetworkRequest] | None,
+        Field(
+            alias='privateNetworks',
+            description="Join several private networks; privateNetwork is the shorthand for one, and setting both is a 400. Distinct networks whose subnets don't overlap (409 network_cidr_overlap).",
+            max_length=4,
+            min_length=1,
+        ),
+    ] = None
+    egress_allow: Annotated[list[str] | None, Field(alias='egressAllow', max_length=32)] = (
+        None
+    )
+    ttl_seconds: Annotated[
+        int | None,
+        Field(alias='ttlSeconds', description='0: no expiry, where allowed.', ge=0),
+    ] = 28800
+    idle_seconds: Annotated[int | None, Field(alias='idleSeconds', ge=0, le=28800)] = (
+        None
+    )
+    image: Annotated[
+        str | None,
+        Field(
+            description='A lowercase image name, an account image id (img_...), or a pinned version (name@N, name@sha256:...).'
+        ),
+    ] = 'default'
+    labels: Labels | None = None
+    display: Display1 | None = None
+    hibernate: Hibernate | None = None
+    download_cache: Annotated[
+        bool | None,
+        Field(
+            alias='downloadCache',
+            description="false: don't use the shared download cache.",
+        ),
+    ] = True
+    proxy_secrets: Annotated[
+        bool | None,
+        Field(
+            alias='proxySecrets',
+            description="true: the sandbox's commands reach the account's secret bindings (/v1/secrets) through the egress broker, which injects each secret into requests to its bound host; the value never enters the sandbox. On network none or registries the broker's host joins egressAllow (one of its 32 hosts). It takes one of the sandbox's labels itself (kyora.proxy-secrets, so at most 30 of your own), and its egress token is in the guest's memory, so a full snapshot of it needs allowSecretsInMemory (409 secrets_in_memory otherwise).",
+        ),
+    ] = False
+    secrets: Annotated[
+        list[CreateSandboxSecret] | None,
+        Field(
+            description="The account's secret deliveries this sandbox takes, by secret and target. Each needs an enabled, unexpired delivery whose scope includes the sandbox (else secret_not_delivered); code in the sandbox can read their values.",
+            max_length=16,
+        ),
+    ] = None
+    region: str | None = None
+    wait: Annotated[
+        int | None, Field(description='Seconds a create may wait in the queue.', ge=0)
+    ] = None
+    session: str | None = None
+    from_snapshot: Annotated[str | None, Field(alias='fromSnapshot')] = None
+    resume: bool | None = None
+
+
 ExecFrame = TypeAliasType(
     "ExecFrame",
     Annotated[
@@ -1977,6 +2073,37 @@ class CreateImageRequest(BaseModel):
         ),
     ]
     region: str | None = None
+
+
+class Network(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    id: Annotated[str, Field(pattern='^net_[0-9a-f]{20}$')]
+    name: Annotated[str, Field(pattern='^[a-z0-9][a-z0-9-]{0,62}$')]
+    cidr: str
+    gateway: Annotated[
+        str,
+        Field(
+            description="The first address after the subnet's network address, reserved for its gateway.",
+            pattern='^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])$',
+        ),
+    ]
+    created_at: Annotated[AwareDatetime, Field(alias='createdAt')]
+    member_count: Annotated[int, Field(alias='memberCount', ge=0)]
+    members: Annotated[
+        list[NetworkMember] | None,
+        Field(
+            description='Present when getting a network, absent when creating or listing networks.'
+        ),
+    ] = None
+
+
+class NetworkList(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    networks: list[Network]
 
 
 class SecretScope(BaseModel):

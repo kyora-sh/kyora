@@ -21,6 +21,7 @@ export const PUBLIC_PREFIXES = [
   "/v1/sandboxes",
   "/v1/queue",
   "/v1/ports",
+  "/v1/networks",
   "/v1/domains",
   "/v1/pages",
   "/v1/shares",
@@ -45,6 +46,7 @@ export function problems(source: string): string[] {
     if (typeof node !== "object" || node === null) return
     const description = (node as { description?: unknown }).description
     if (typeof description === "string" && /^internal\s*[;:]/i.test(description.trim())) found.push(`${path}: described as internal`)
+    if (typeof description === "string" && (/\bstaff:[a-z]/i.test(description) || /kyora staff only/i.test(description))) found.push(`${path}: described as staff-only`)
     for (const [key, value] of Object.entries(node)) walk(value, `${path}/${key}`)
   }
   walk(spec, "#")

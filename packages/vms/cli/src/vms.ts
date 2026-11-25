@@ -22,6 +22,7 @@ import { storageMain, StorageUsage } from "./storage"
 import { tokensMain, TokenUsage } from "./tokens"
 import { create, exec, health, list, nodes, pullPaths, pushDir, remove } from "./session"
 import { domainCommand } from "./domains"
+import { networksCommand, parsePrivateNetworks, resolvePrivateNetworks } from "./networks"
 import { snapshotCommand } from "./snapshots"
 import { killSession, listSessions, shell } from "./shell"
 import { MAX_SHARDS } from "./shard"
@@ -80,6 +81,10 @@ more commands (every sandbox argument accepts a name, id or unique id prefix):
                                             records to add (a CNAME to custom.kyora.run)
   kyora vms domain ls | status <hostname> | rm <hostname>
                                             your custom domains and their current status
+  kyora vms networks create <name> --cidr <cidr>
+                                            a private IPv4 subnet your sandboxes can join (--private-network)
+  kyora vms networks ls | show <id|name> | rm <id|name>
+                                            your private networks and their members (--json)
   kyora vms resize <id> --disk <size>       grow a running sandbox disk, for example --disk 60G
   kyora vms health                          is the host up, is the key accepted
   kyora vms regions [default <id>|global]   kyora cloud's regions, what is free in each, and
@@ -129,6 +134,7 @@ sandbox (run, create, new):
                     public URL labels must be exact for non-admins
                     TLS SNI filtering cannot prevent HTTP Host fronting between names sharing
                     a wildcard certificate, e.g. *.kyora.run, through any allowed name
+  --private-network ID[:IP]  join a private network by id or name, optionally at a fixed IPv4 address; repeat for several
   --cpus N          vCPUs (default 4)
   --allocated-cpus N Fractional CPU allocation (default --cpus)
   --cpu-limit N     CPU cap fraction (0.05-1, default 1)
@@ -251,6 +257,8 @@ const OPTIONS = {
   out: { type: "string", short: "o", multiple: true },
   to: { type: "string" },
   dcv: { type: "string" },
+  cidr: { type: "string" },
+  "private-network": { type: "string", multiple: true },
   keep: { type: "boolean" },
   dest: { type: "string" },
   "no-git": { type: "boolean" },
@@ -300,9 +308,9 @@ const COMMAND: Option[] = ["timeout", "env", "cwd", "stdin"]
 /** which flags each verb takes, so a typo'd or misplaced flag fails loudly instead of doing nothing */
 const VERBS: Record<string, Option[]> = {
   usage: [],
-  run: ["name", ...SANDBOX, ...COMMAND, "dir", "no-git", "git", "git-depth", "git-base", "shards", "out", "to", "keep"],
-  create: [...SANDBOX, "name"],
-  new: [...SANDBOX, "name", "env", "cwd", "clipboard"],
+  run: ["name", ...SANDBOX, "private-network", ...COMMAND, "dir", "no-git", "git", "git-depth", "git-base", "shards", "out", "to", "keep"],
+  create: [...SANDBOX, "private-network", "name"],
+  new: [...SANDBOX, "private-network", "name", "env", "cwd", "clipboard"],
   attach: ["view", "clipboard"],
   rename: [],
   ttl: [],
@@ -328,6 +336,7 @@ const VERBS: Record<string, Option[]> = {
   expose: ["name", "private", "public", "trusted", "list"],
   unexpose: [],
   domain: ["to", "dcv"],
+  networks: ["cidr"],
   shell: ["name", "view", "list", "kill", "env", "cwd", "clipboard"],
   share: ["ttl", "list", "revoke", "socket", "xauthority", "quality", "mode", "keys", "record", "segment-seconds"],
   login: ["url", "org"],
@@ -362,7 +371,7 @@ function parseEnv(pairs: string[] = []): Record<string, string> | undefined {
   return env
 }
 
-function sandboxSpec(values: Values, { image: withImage = true } = {}): CreateSpec {
+function sandboxSpec(values: Values, { image: withImage = true }: { image?: boolean } = {}): CreateSpec {
   const network = values.network as Network | undefined
   if (network !== undefined && !NETWORKS.includes(network)) usage(`--network must be one of ${NETWORKS.join(", ")}`)
   const spec: CreateSpec = {}
@@ -519,8 +528,15 @@ export async function vmsMain(argv: string[]): Promise<number> {
     return 0
   }
   const api = new VmsClient(config)
+  const wanted = values["private-network"] === undefined ? undefined : parsePrivateNetworks(values["private-network"], usage)
+  // built once, after the verb's own checks: the spec's flags first, then its network names looked up
+  let built: Promise<CreateSpec> | undefined
+  const spec = () => (built ??= (async () => {
+    const base = sandboxSpec(values)
+    return wanted ? { ...base, ...(await resolvePrivateNetworks(api, wanted)) } : base
+  })())
 
-  const ergonomic = await ergonomicCommand(api, { verb, positionals, tail, json: asJson, values, spec: () => sandboxSpec(values), wait: () => waitSeconds(values), env: () => parseEnv(values.env), usage })
+  const ergonomic = await ergonomicCommand(api, { verb, positionals, tail, json: asJson, values, spec, wait: () => waitSeconds(values), env: () => parseEnv(values.env), usage })
   if (ergonomic !== undefined) return ergonomic
 
   switch (verb) {
@@ -559,6 +575,8 @@ export async function vmsMain(argv: string[]): Promise<number> {
     }
     case "domain":
       return domainCommand(api, { positionals, to: values.to, dcv: values.dcv, json: asJson }, usage)
+    case "networks":
+      return networksCommand(api, { positionals, cidr: values.cidr, json: asJson }, usage)
     case "unexpose": {
       const [id, label, extra] = positionals
       if (!id || extra) usage("usage: kyora vms unexpose [<sandbox>] <label>")
@@ -572,13 +590,16 @@ export async function vmsMain(argv: string[]): Promise<number> {
       const dir = resolve(values.dir ?? ".")
       const outs = (values.out ?? []).map((out) => remotePath(out))
       const upload = uploadOptions(values)
+      const history = historyOptions(values)
+      const wait = waitSeconds(values)
+      const request = await execRequest(values, tail ?? positionals)
       return run(api, {
         dir,
         git: !values["no-git"],
-        history: historyOptions(values),
-        spec: sandboxSpec(values),
-        wait: waitSeconds(values),
-        exec: await execRequest(values, tail ?? positionals),
+        history,
+        spec: await spec(),
+        wait,
+        exec: request,
         outs,
         to: resolve(values.to ?? dir),
         keep: Boolean(values.keep),
@@ -595,9 +616,11 @@ export async function vmsMain(argv: string[]): Promise<number> {
     }
     case "create": {
       if (positionals.length > 1 || (positionals.length > 0 && values.name !== undefined)) usage("usage: kyora vms create [name] [options]")
-      const spec = sandboxSpec(values)
-      if (positionals.length) spec.name = validName(positionals[0]!)
-      return create(api, spec, waitSeconds(values), asJson)
+      const name = positionals.length ? validName(positionals[0]!) : undefined
+      const wait = waitSeconds(values)
+      const made = await spec()
+      if (name !== undefined) made.name = name
+      return create(api, made, wait, asJson)
     }
     case "resize": {
       const [id, extra] = positionals

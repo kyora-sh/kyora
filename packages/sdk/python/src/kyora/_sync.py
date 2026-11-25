@@ -15,6 +15,7 @@ from ._client import Archive, AsyncKyora, ByteStream
 from ._exec import ByteOffsets, ExecInput, ExecOptions, ExecResult, ExecStream, Output
 from ._http import DEFAULT_RETRY, CallOptions, Retry, WaitOptions
 from ._models import (
+    CreateNetworkRequest,
     CreateSandboxRequest,
     CreateSecretBindingRequest,
     CreateSecretDeliveryRequest,
@@ -26,6 +27,7 @@ from ._models import (
     Health,
     LoginResponse,
     Me,
+    Network,
     NetworkUpdateRequest,
     NetworkUpdateResponse,
     Port,
@@ -182,6 +184,7 @@ class Kyora:
         self.snapshots = Snapshots(self.aio, self._portal)
         self.ports = Ports(self.aio, self._portal)
         self.tokens = Tokens(self.aio, self._portal)
+        self.networks = Networks(self.aio, self._portal)
         self.secrets = Secrets(self.aio, self._portal)
 
     def __repr__(self) -> str:
@@ -601,3 +604,20 @@ class Secrets(_Resource):
 
     def delete_delivery(self, id: str, delivery: str, **options: Unpack[CallOptions]) -> None:
         return self._portal.run(self._aio.secrets.delete_delivery(id, delivery, **options))
+
+
+class Networks(_Resource):
+    """The account's private networks; enabled per account, until then privnet_not_enabled."""
+
+    def list(self, **options: Unpack[CallOptions]) -> list[Network]:
+        return self._portal.run(self._aio.networks.list(**options))
+
+    def create(self, request: CreateNetworkRequest | Mapping[str, Any], **options: Unpack[CallOptions]) -> Network:
+        return self._portal.run(self._aio.networks.create(request, **options))
+
+    def get(self, id: str, **options: Unpack[CallOptions]) -> Network:
+        return self._portal.run(self._aio.networks.get(id, **options))
+
+    def delete(self, id: str, **options: Unpack[CallOptions]) -> None:
+        """a network with members is refused (network_has_members): delete them first"""
+        return self._portal.run(self._aio.networks.delete(id, **options))

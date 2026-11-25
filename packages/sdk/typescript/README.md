@@ -150,6 +150,18 @@ const agent = await kyora.sandboxes.create({ labels: { app: "doc-agent" }, proxy
 
 The account's secrets, never their values. A binding has the egress broker inject the secret into a sandbox's requests to its host (`proxySecrets: true`), so the value never enters the sandbox; a delivery (`createDelivery`, for a secret created with `sandbox: true`) puts it into sandboxes as an env variable or a file. They take a full token, and only the account's owners and admins write them.
 
+## Private networks
+
+```ts
+const network = await kyora.networks.create({ name: "backend", cidr: "10.20.0.0/24" })
+const db = await kyora.sandboxes.create({ privateNetwork: { id: network.id, ip: "10.20.0.5" } })
+const app = await kyora.sandboxes.create({ privateNetwork: { id: network.id } }) // reaches db at 10.20.0.5
+await kyora.networks.get(network.id) // its members
+await kyora.networks.delete(network.id) // once it has no members
+```
+
+Private networks are enabled per account; until then these calls fail with `privnet_not_enabled`, whose message says how to get them.
+
 ## Everything else
 
 `kyora.call(operationId, { path, query, body })` sends any operation of the API, typed from the spec, with the same errors, retries and idempotency keys. JSON operations answer their parsed body; streamed, binary and HEAD ones the `Response`. Operations without a helper yet: custom domains, pages, computer use and live views, terminals, account images and object storage. `OPERATIONS` lists every operation; the generated types (`Sandbox`, `Snapshot`, `ExecFrame`, ...) are exported too.

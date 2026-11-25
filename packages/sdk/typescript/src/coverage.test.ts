@@ -56,5 +56,10 @@ describe("the vendored spec", () => {
     expect(problems(other)).toEqual(["/v1/unlisted: not under a public prefix"])
     const internal = source.replace('description: "The sandbox\'s id', 'description: "Internal; the sandbox\'s id')
     expect(problems(internal).some((problem) => problem.endsWith("described as internal"))).toBe(true)
+    for (const words of ["Kyora staff only, the sandbox's id", "Needs staff:example.read; the sandbox's id"]) {
+      const staff = source.replace('description: "The sandbox\'s id', `description: "${words}`)
+      expect(problems(staff).some((problem) => problem.endsWith("described as staff-only"))).toBe(true)
+    }
+    expect(problems(source)).toEqual([])
   })
 })
