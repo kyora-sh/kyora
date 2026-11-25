@@ -140,6 +140,16 @@ const { token } = await kyora.tokens.create({ name: "doc-agent", scopes: ["vms:r
 
 A restore whose sandbox fails or runs out of time destroys it, unless you pass your own `idempotencyKey` (or `Idempotency-Key` header): the same key answers the sandbox an earlier restore with that key made, which may be another caller's, so the SDK never destroys it. The error then carries the sandbox's id in `sandboxId` (an abort throws the signal's reason as it is; `onProgress` has seen the sandbox by then), and destroying it is up to you.
 
+## Secrets
+
+```ts
+const secret = await kyora.secrets.create({ name: "example-api", value: process.env.EXAMPLE_API_KEY!, hosts: ["api.example.com"] })
+await kyora.secrets.createBinding(secret.id, { host: "api.example.com", injection: { type: "header", name: "authorization", template: "Bearer {{secret}}" }, scope: { labels: { app: "doc-agent" } } })
+const agent = await kyora.sandboxes.create({ labels: { app: "doc-agent" }, proxySecrets: true })
+```
+
+The account's secrets, never their values. A binding has the egress broker inject the secret into a sandbox's requests to its host (`proxySecrets: true`), so the value never enters the sandbox; a delivery (`createDelivery`, for a secret created with `sandbox: true`) puts it into sandboxes as an env variable or a file. They take a full token, and only the account's owners and admins write them.
+
 ## Everything else
 
 `kyora.call(operationId, { path, query, body })` sends any operation of the API, typed from the spec, with the same errors, retries and idempotency keys. JSON operations answer their parsed body; streamed, binary and HEAD ones the `Response`. Operations without a helper yet: custom domains, pages, computer use and live views, terminals, account images and object storage. `OPERATIONS` lists every operation; the generated types (`Sandbox`, `Snapshot`, `ExecFrame`, ...) are exported too.

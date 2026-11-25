@@ -16,6 +16,9 @@ from ._exec import ByteOffsets, ExecInput, ExecOptions, ExecResult, ExecStream, 
 from ._http import DEFAULT_RETRY, CallOptions, Retry, WaitOptions
 from ._models import (
     CreateSandboxRequest,
+    CreateSecretBindingRequest,
+    CreateSecretDeliveryRequest,
+    CreateSecretRequest,
     CreateSnapshotRequest,
     CreateTokenRequest,
     CreateTokenResponse,
@@ -31,11 +34,16 @@ from ._models import (
     QueueTicket,
     RegionList,
     ResolveResponse,
+    RotateSecretRequest,
     Sandbox,
     SandboxStats,
+    Secret,
+    SecretBinding,
+    SecretDelivery,
     Snapshot,
     Token,
     UpdateSandboxRequest,
+    UpdateSecretGrantRequest,
     Usage,
 )
 from ._paging import ListOptions, ListPage
@@ -174,6 +182,7 @@ class Kyora:
         self.snapshots = Snapshots(self.aio, self._portal)
         self.ports = Ports(self.aio, self._portal)
         self.tokens = Tokens(self.aio, self._portal)
+        self.secrets = Secrets(self.aio, self._portal)
 
     def __repr__(self) -> str:
         return f"Kyora(base_url={self.aio.transport.base_url!r}, region={self.region!r})"
@@ -533,3 +542,62 @@ class Tokens(_Resource):
     def delete(self, id: str, *, org: str | None = None, **options: Unpack[CallOptions]) -> None:
         """revokes a token"""
         return self._portal.run(self._aio.tokens.delete(id, org=org, **options))
+
+
+class Secrets(_Resource):
+    """The account's secrets, by id (sec_...) or name; never their values."""
+
+    def list(self, **options: Unpack[CallOptions]) -> list[Secret]:
+        return self._portal.run(self._aio.secrets.list(**options))
+
+    def get(self, id: str, **options: Unpack[CallOptions]) -> Secret:
+        return self._portal.run(self._aio.secrets.get(id, **options))
+
+    def create(self, request: CreateSecretRequest | Mapping[str, Any], **options: Unpack[CallOptions]) -> Secret:
+        return self._portal.run(self._aio.secrets.create(request, **options))
+
+    def rotate(
+        self, id: str, request: RotateSecretRequest | Mapping[str, Any], **options: Unpack[CallOptions]
+    ) -> Secret:
+        """a new value, and optionally new hosts or sandbox"""
+        return self._portal.run(self._aio.secrets.rotate(id, request, **options))
+
+    def delete(self, id: str, **options: Unpack[CallOptions]) -> None:
+        """deletes a secret with its bindings and deliveries"""
+        return self._portal.run(self._aio.secrets.delete(id, **options))
+
+    def create_binding(
+        self, id: str, request: CreateSecretBindingRequest | Mapping[str, Any], **options: Unpack[CallOptions]
+    ) -> SecretBinding:
+        """the egress broker injects the secret into requests to the binding's host"""
+        return self._portal.run(self._aio.secrets.create_binding(id, request, **options))
+
+    def update_binding(
+        self,
+        id: str,
+        binding: str,
+        change: UpdateSecretGrantRequest | Mapping[str, Any],
+        **options: Unpack[CallOptions],
+    ) -> SecretBinding:
+        return self._portal.run(self._aio.secrets.update_binding(id, binding, change, **options))
+
+    def delete_binding(self, id: str, binding: str, **options: Unpack[CallOptions]) -> None:
+        return self._portal.run(self._aio.secrets.delete_binding(id, binding, **options))
+
+    def create_delivery(
+        self, id: str, request: CreateSecretDeliveryRequest | Mapping[str, Any], **options: Unpack[CallOptions]
+    ) -> SecretDelivery:
+        """sandboxes in the delivery's scope receive the value as an env variable or a file"""
+        return self._portal.run(self._aio.secrets.create_delivery(id, request, **options))
+
+    def update_delivery(
+        self,
+        id: str,
+        delivery: str,
+        change: UpdateSecretGrantRequest | Mapping[str, Any],
+        **options: Unpack[CallOptions],
+    ) -> SecretDelivery:
+        return self._portal.run(self._aio.secrets.update_delivery(id, delivery, change, **options))
+
+    def delete_delivery(self, id: str, delivery: str, **options: Unpack[CallOptions]) -> None:
+        return self._portal.run(self._aio.secrets.delete_delivery(id, delivery, **options))

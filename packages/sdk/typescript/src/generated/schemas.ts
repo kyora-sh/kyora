@@ -166,6 +166,8 @@ export interface CreateSandboxRequest {
   }
   /** false: don't use the shared download cache. */
   downloadCache?: boolean
+  /** true: the sandbox's commands reach the account's secret bindings (/v1/secrets) through the egress broker, which injects each secret into requests to its bound host; the value never enters the sandbox. On network none or registries the broker's host joins egressAllow (one of its 32 hosts). It takes one of the sandbox's labels itself (kyora.proxy-secrets, so at most 30 of your own), and its egress token is in the guest's memory, so a full snapshot of it needs allowSecretsInMemory (409 secrets_in_memory otherwise). */
+  proxySecrets?: boolean
   region?: string
   /** Seconds a create may wait in the queue. */
   wait?: number
@@ -785,6 +787,189 @@ export interface MultipartStartResponse {
   uploadId: string
   maxPartBytes: number
   maxParts: number
+}
+
+/** Which workloads a binding applies to: at least one of these. */
+export interface SecretScope {
+  sandboxes?: SecretScopeSandboxes
+  labels?: SecretScopeLabels
+  images?: SecretScopeImages
+  /** The account's kyora sessions. */
+  sessions?: true
+}
+
+/** Which sandboxes a delivery reaches: at least one of these. A delivery takes no sessions. */
+export interface SecretDeliveryScope {
+  sandboxes?: SecretScopeSandboxes
+  labels?: SecretScopeLabels
+  images?: SecretScopeImages
+}
+
+/** These sandboxes, by id. */
+export type SecretScopeSandboxes = string[]
+
+/** Sandboxes carrying all of these labels. */
+export type SecretScopeLabels = Record<string, string>
+
+/** Sandboxes booted from these account images. */
+export type SecretScopeImages = string[]
+
+/** How the egress broker puts the secret into a request, as stored. */
+export type SecretInjection = {
+  type: "header"
+  name: string
+  /** The header value, holding {{secret}} exactly once. */
+  template: string
+} | {
+  type: "basic"
+  username: string
+} | {
+  type: "query"
+  name: string
+}
+
+/** How the egress broker puts the secret into a request. */
+export type SecretInjectionRequest = {
+  type: "header"
+  /** Stored lowercase. Never host, content-length, transfer-encoding, connection, keep-alive, upgrade, te, trailer, proxy-authorization, proxy-connection, cookie, forwarded, via, x-forwarded-for, x-forwarded-host, x-forwarded-proto, x-real-ip, true-client-ip or cdn-loop, nor a proxy-* or cf-* header. */
+  name: string
+  /** The header value, holding {{secret}} exactly once, on one line. */
+  template?: string
+} | {
+  type: "basic"
+  /** HTTP Basic: this user, the secret as the password. No colon or line breaks. */
+  username: string
+} | {
+  type: "query"
+  /** A query parameter carrying the secret. */
+  name: string
+}
+
+export interface SecretBinding {
+  id: string
+  secretId: string
+  host: string
+  pathPrefix: string
+  methods: ("GET" | "HEAD" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS")[]
+  injection: SecretInjection
+  scope: SecretScope
+  enabled: boolean
+  /** Epoch milliseconds, or null for none. */
+  expiresAt: number | null
+  /** Epoch milliseconds. */
+  createdAt: number
+  /** Epoch milliseconds. */
+  updatedAt: number
+  /** When the broker last injected it, in epoch milliseconds; null before then. */
+  lastUsedAt: number | null
+}
+
+export interface SecretDelivery {
+  id: string
+  secretId: string
+  kind: "env" | "file"
+  /** The environment variable or the file name. */
+  target: string
+  /** A file's mode (256 for 0400, 288 for 0440); null for env. */
+  mode: number | null
+  scope: SecretDeliveryScope
+  enabled: boolean
+  /** Epoch milliseconds, or null for none. */
+  expiresAt: number | null
+  /** Epoch milliseconds. */
+  createdAt: number
+  /** Epoch milliseconds. */
+  updatedAt: number
+  /** When a sandbox last received it, in epoch milliseconds; null before then. */
+  lastDeliveredAt: number | null
+  /** Code in a sandbox it reaches reads the value: anyone who can create a sandbox within the scope can. */
+  visibleToCode: true
+}
+
+export interface Secret {
+  id: string
+  name: string
+  description: string
+  /** The hosts the secret may go to, as egressAllow takes them. */
+  hosts: string[]
+  /** The current version may be delivered into sandboxes. */
+  sandbox: boolean
+  version: number
+  /** Epoch milliseconds. */
+  createdAt: number
+  /** Epoch milliseconds. */
+  updatedAt: number
+  bindings: SecretBinding[]
+  deliveries: SecretDelivery[]
+}
+
+export interface SecretList {
+  secrets: Secret[]
+}
+
+export interface SecretDeleted {
+  /** The id of what was deleted. */
+  deleted: string
+}
+
+export interface CreateSecretRequest {
+  name: string
+  /** At most 65536 bytes, no NUL or line breaks. Never returned. */
+  value: string
+  /** 1 to 16 hosts as egressAllow takes them, never kyora's own domains; an empty list only for a secret with sandbox: true. */
+  hosts: string[]
+  description?: string
+  /** The secret may be delivered into sandboxes (deliveries). */
+  sandbox?: boolean
+}
+
+export interface RotateSecretRequest {
+  /** At most 65536 bytes, no NUL or line breaks. */
+  value: string
+  /** Kept when left out. As at create: 1 to 16, or an empty list only with sandbox: true. */
+  hosts?: string[]
+  /** The version this rotation replaces: 409 secret_changed when the secret moved on. */
+  version?: number
+  sandbox?: boolean
+}
+
+export interface CreateSecretBindingRequest {
+  /** One of the secret's hosts, or a host within one of its wildcards. */
+  host: string
+  /** Unreserved path characters only (no %, ? or #); no ., .. or empty segments. */
+  pathPrefix?: string
+  /** Default: all of them. */
+  methods?: ("GET" | "HEAD" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS")[]
+  injection: SecretInjectionRequest
+  scope: SecretScope
+  /** A future time in epoch milliseconds, or null for none. */
+  expiresAt?: number | null
+  enabled?: boolean
+}
+
+/** An env variable or a file: exactly one of env and file; mode is a file's. */
+export type CreateSecretDeliveryRequest = {
+  /** Never KYORA_*, LD_* or PYTHON*, PATH, HOME, USER, SHELL or NODE_OPTIONS (any case), nor a name every JavaScript object has (constructor, __proto__, prototype and the like). */
+  env: string
+  scope: SecretDeliveryScope
+  /** A future time in epoch milliseconds, or null for none. */
+  expiresAt?: number | null
+  enabled?: boolean
+} | {
+  /** A plain file name, never a name every JavaScript object has (constructor, __proto__, prototype and the like). */
+  file: string
+  /** 0400 (256) or 0440 (288). */
+  mode?: 256 | 288
+  scope: SecretDeliveryScope
+  /** A future time in epoch milliseconds, or null for none. */
+  expiresAt?: number | null
+  enabled?: boolean
+}
+
+export interface UpdateSecretGrantRequest {
+  enabled?: boolean
+  /** A future time in epoch milliseconds, or null for none. */
+  expiresAt?: number | null
 }
 
 export interface StorageKey {

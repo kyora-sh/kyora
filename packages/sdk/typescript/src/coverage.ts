@@ -27,6 +27,18 @@ export const COVERAGE: Record<OperationId, Coverage> = {
   createOrgToken: { method: "tokens.create" },
   deleteOrgToken: { method: "tokens.delete" },
 
+  listSecrets: { method: "secrets.list" },
+  createSecret: { method: "secrets.create" },
+  getSecret: { method: "secrets.get" },
+  deleteSecret: { method: "secrets.delete" },
+  rotateSecret: { method: "secrets.rotate" },
+  createSecretBinding: { method: "secrets.createBinding" },
+  updateSecretBinding: { method: "secrets.updateBinding" },
+  deleteSecretBinding: { method: "secrets.deleteBinding" },
+  createSecretDelivery: { method: "secrets.createDelivery" },
+  updateSecretDelivery: { method: "secrets.updateDelivery" },
+  deleteSecretDelivery: { method: "secrets.deleteDelivery" },
+
   createSandbox: { method: "sandboxes.create" },
   listSandboxes: { method: "sandboxes.list" },
   getSandbox: { method: "sandboxes.get" },

@@ -64,6 +64,8 @@ tags:
     description: Account images built from a base or pushed in chunks.
   - name: storage
     description: S3-like buckets and objects.
+  - name: secrets
+    description: "The account's secrets: values sealed under its key that the egress broker injects into requests to bound hosts (bindings), or that sandboxes receive as env variables or files (deliveries). Every /v1/secrets route takes a full token or a dashboard session (a scoped token gets 403 insufficient_scope); only the account's owners and admins write (403 forbidden otherwise)."
 x-kyora-error-codes:
   account_images_unsupported:
     status: [501]
@@ -290,6 +292,11 @@ x-kyora-error-codes:
     retryable: false
     class: conflict
     description: "Deleted."
+  delivery_exists:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The account already delivers a secret as this env variable or file."
   desktop_starting:
     status: [503]
     retryable: true
@@ -870,6 +877,11 @@ x-kyora-error-codes:
     retryable: false
     class: conflict
     description: "Not a broadcast share."
+  not_deliverable:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The secret doesn't go into sandboxes: rotate it with sandbox: true first."
   not_found:
     status: [404]
     retryable: false
@@ -1100,6 +1112,16 @@ x-kyora-error-codes:
     retryable: false
     class: unavailable
     description: "SCP is unavailable in this sandbox."
+  secret_changed:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The secret moved to another version meanwhile (or its hosts no longer cover the binding): read it again."
+  secret_exists:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "A secret of that name exists: rotate it instead."
   session_busy:
     status: [409]
     retryable: true
@@ -1645,6 +1667,260 @@ paths:
       responses:
         "204":
           description: Revoked.
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  /v1/secrets:
+    get:
+      operationId: listSecrets
+      tags:
+        - secrets
+      summary: List the account's secrets
+      description: "Full token or dashboard session only. Never their values. Each secret carries its bindings (where the egress broker sends it) and deliveries (how sandboxes receive it)."
+      responses:
+        "200":
+          description: Secrets.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/SecretList"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+    post:
+      operationId: createSecret
+      tags:
+        - secrets
+      summary: Create a secret
+      description: "Full token or dashboard session only; the account's owners and admins only (403 forbidden otherwise). The value is sealed under the account's key and never returned."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/CreateSecretRequest"
+      responses:
+        "201":
+          description: The secret, without its value.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Secret"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  "/v1/secrets/{id}":
+    parameters:
+      - "$ref": "#/components/parameters/SecretId"
+    get:
+      operationId: getSecret
+      tags:
+        - secrets
+      summary: Get a secret
+      description: "Full token or dashboard session only. Never its value."
+      responses:
+        "200":
+          description: The secret, without its value.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Secret"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+    delete:
+      operationId: deleteSecret
+      tags:
+        - secrets
+      summary: Delete a secret
+      description: "Full token or dashboard session only; owners and admins only. Its bindings and deliveries go with it."
+      responses:
+        "200":
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/SecretDeleted"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  "/v1/secrets/{id}/value":
+    parameters:
+      - "$ref": "#/components/parameters/SecretId"
+    put:
+      operationId: rotateSecret
+      tags:
+        - secrets
+      summary: Rotate a secret's value
+      description: "Full token or dashboard session only; owners and admins only. A new value, and optionally new hosts or sandbox: the only way either changes, so widening them needs the value. Bindings whose host the new hosts no longer cover are disabled in the same write."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/RotateSecretRequest"
+      responses:
+        "200":
+          description: The secret at its new version.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Secret"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  "/v1/secrets/{id}/bindings":
+    parameters:
+      - "$ref": "#/components/parameters/SecretId"
+    post:
+      operationId: createSecretBinding
+      tags:
+        - secrets
+      summary: Bind a secret to a host
+      description: "Full token or dashboard session only; owners and admins only. The egress broker injects the secret into requests a workload in the binding's scope sends to its host, path prefix and methods. The host must be one of the secret's hosts or within one of its wildcards."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/CreateSecretBindingRequest"
+      responses:
+        "201":
+          description: The binding.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/SecretBinding"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  "/v1/secrets/{id}/bindings/{binding}":
+    parameters:
+      - "$ref": "#/components/parameters/SecretId"
+      - name: binding
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+    patch:
+      operationId: updateSecretBinding
+      tags:
+        - secrets
+      summary: Enable, disable or re-date a binding
+      description: "Full token or dashboard session only; owners and admins only. Only enabled and expiresAt change; make a new binding for anything else."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/UpdateSecretGrantRequest"
+      responses:
+        "200":
+          description: The binding.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/SecretBinding"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+    delete:
+      operationId: deleteSecretBinding
+      tags:
+        - secrets
+      summary: Delete a binding
+      description: "Full token or dashboard session only; owners and admins only."
+      responses:
+        "200":
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/SecretDeleted"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  "/v1/secrets/{id}/deliveries":
+    parameters:
+      - "$ref": "#/components/parameters/SecretId"
+    post:
+      operationId: createSecretDelivery
+      tags:
+        - secrets
+      summary: Deliver a secret into sandboxes
+      description: "Full token or dashboard session only; owners and admins only. A sandbox in the delivery's scope that names this secret at create (`secrets`) gets its value as an environment variable or a file. Code in that sandbox reads the value. The secret must allow sandbox delivery (`sandbox: true`, else 409 not_deliverable)."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/CreateSecretDeliveryRequest"
+      responses:
+        "201":
+          description: The delivery.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/SecretDelivery"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  "/v1/secrets/{id}/deliveries/{delivery}":
+    parameters:
+      - "$ref": "#/components/parameters/SecretId"
+      - name: delivery
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+    patch:
+      operationId: updateSecretDelivery
+      tags:
+        - secrets
+      summary: Enable, disable or re-date a delivery
+      description: "Full token or dashboard session only; owners and admins only. Only enabled and expiresAt change; make a new delivery for anything else."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/UpdateSecretGrantRequest"
+      responses:
+        "200":
+          description: The delivery.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/SecretDelivery"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+    delete:
+      operationId: deleteSecretDelivery
+      tags:
+        - secrets
+      summary: Delete a delivery
+      description: "Full token or dashboard session only; owners and admins only."
+      responses:
+        "200":
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/SecretDeleted"
         "4XX":
           "$ref": "#/components/responses/Error"
         "5XX":
@@ -3623,6 +3899,14 @@ components:
       schema:
         type: string
         minLength: 1
+    SecretId:
+      name: id
+      in: path
+      required: true
+      description: "The secret's id (sec_...) or its name."
+      schema:
+        type: string
+        minLength: 1
     LabelFilter:
       name: label
       in: query
@@ -4131,6 +4415,10 @@ components:
           type: boolean
           default: true
           description: "false: don't use the shared download cache."
+        proxySecrets:
+          type: boolean
+          default: false
+          description: "true: the sandbox's commands reach the account's secret bindings (/v1/secrets) through the egress broker, which injects each secret into requests to its bound host; the value never enters the sandbox. On network none or registries the broker's host joins egressAllow (one of its 32 hosts). It takes one of the sandbox's labels itself (kyora.proxy-secrets, so at most 30 of your own), and its egress token is in the guest's memory, so a full snapshot of it needs allowSecretsInMemory (409 secrets_in_memory otherwise)."
         region:
           type: string
         wait:
@@ -5631,6 +5919,442 @@ components:
           type: integer
         maxParts:
           type: integer
+    SecretScope:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      description: "Which workloads a binding applies to: at least one of these."
+      properties:
+        sandboxes:
+          "$ref": "#/components/schemas/SecretScopeSandboxes"
+        labels:
+          "$ref": "#/components/schemas/SecretScopeLabels"
+        images:
+          "$ref": "#/components/schemas/SecretScopeImages"
+        sessions:
+          const: true
+          description: "The account's kyora sessions."
+    SecretDeliveryScope:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      description: "Which sandboxes a delivery reaches: at least one of these. A delivery takes no sessions."
+      properties:
+        sandboxes:
+          "$ref": "#/components/schemas/SecretScopeSandboxes"
+        labels:
+          "$ref": "#/components/schemas/SecretScopeLabels"
+        images:
+          "$ref": "#/components/schemas/SecretScopeImages"
+    SecretScopeSandboxes:
+      type: array
+      minItems: 1
+      maxItems: 64
+      description: "These sandboxes, by id."
+      items:
+        type: string
+        pattern: "^sb_"
+    SecretScopeLabels:
+      type: object
+      minProperties: 1
+      maxProperties: 8
+      description: "Sandboxes carrying all of these labels."
+      propertyNames:
+        pattern: "^(?!kyora\\.)[A-Za-z0-9][A-Za-z0-9_./-]{0,62}$"
+      additionalProperties:
+        type: string
+        maxLength: 256
+    SecretScopeImages:
+      type: array
+      minItems: 1
+      maxItems: 16
+      description: "Sandboxes booted from these account images."
+      items:
+        type: string
+        pattern: "^img_[0-9a-f]{24}$"
+    SecretInjection:
+      description: "How the egress broker puts the secret into a request, as stored."
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required:
+            - type
+            - name
+            - template
+          properties:
+            type:
+              const: header
+            name:
+              type: string
+              pattern: "^[a-z0-9][a-z0-9-]{0,63}$"
+            template:
+              type: string
+              maxLength: 512
+              description: "The header value, holding {{secret}} exactly once."
+        - type: object
+          additionalProperties: false
+          required:
+            - type
+            - username
+          properties:
+            type:
+              const: basic
+            username:
+              type: string
+              maxLength: 256
+        - type: object
+          additionalProperties: false
+          required:
+            - type
+            - name
+          properties:
+            type:
+              const: query
+            name:
+              type: string
+              pattern: "^[A-Za-z0-9_.-]{1,64}$"
+    SecretInjectionRequest:
+      description: "How the egress broker puts the secret into a request."
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required:
+            - type
+            - name
+          properties:
+            type:
+              const: header
+            name:
+              type: string
+              pattern: "^[A-Za-z0-9][A-Za-z0-9-]{0,63}$"
+              description: "Stored lowercase. Never host, content-length, transfer-encoding, connection, keep-alive, upgrade, te, trailer, proxy-authorization, proxy-connection, cookie, forwarded, via, x-forwarded-for, x-forwarded-host, x-forwarded-proto, x-real-ip, true-client-ip or cdn-loop, nor a proxy-* or cf-* header."
+            template:
+              type: string
+              maxLength: 512
+              default: "{{secret}}"
+              description: "The header value, holding {{secret}} exactly once, on one line."
+        - type: object
+          additionalProperties: false
+          required:
+            - type
+            - username
+          properties:
+            type:
+              const: basic
+            username:
+              type: string
+              maxLength: 256
+              description: "HTTP Basic: this user, the secret as the password. No colon or line breaks."
+        - type: object
+          additionalProperties: false
+          required:
+            - type
+            - name
+          properties:
+            type:
+              const: query
+            name:
+              type: string
+              pattern: "^[A-Za-z0-9_.-]{1,64}$"
+              description: "A query parameter carrying the secret."
+    SecretBinding:
+      type: object
+      required:
+        - id
+        - secretId
+        - host
+        - pathPrefix
+        - methods
+        - injection
+        - scope
+        - enabled
+        - expiresAt
+        - createdAt
+        - updatedAt
+        - lastUsedAt
+      properties:
+        id:
+          type: string
+        secretId:
+          type: string
+        host:
+          type: string
+        pathPrefix:
+          type: string
+        methods:
+          type: array
+          items:
+            type: string
+            enum: [GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS]
+        injection:
+          "$ref": "#/components/schemas/SecretInjection"
+        scope:
+          "$ref": "#/components/schemas/SecretScope"
+        enabled:
+          type: boolean
+        expiresAt:
+          type: [integer, "null"]
+          description: Epoch milliseconds, or null for none.
+        createdAt:
+          type: integer
+          description: Epoch milliseconds.
+        updatedAt:
+          type: integer
+          description: Epoch milliseconds.
+        lastUsedAt:
+          type: [integer, "null"]
+          description: "When the broker last injected it, in epoch milliseconds; null before then."
+    SecretDelivery:
+      type: object
+      required:
+        - id
+        - secretId
+        - kind
+        - target
+        - mode
+        - scope
+        - enabled
+        - expiresAt
+        - createdAt
+        - updatedAt
+        - lastDeliveredAt
+        - visibleToCode
+      properties:
+        id:
+          type: string
+        secretId:
+          type: string
+        kind:
+          type: string
+          enum: [env, file]
+        target:
+          type: string
+          description: "The environment variable or the file name."
+        mode:
+          type: [integer, "null"]
+          description: "A file's mode (256 for 0400, 288 for 0440); null for env."
+        scope:
+          "$ref": "#/components/schemas/SecretDeliveryScope"
+        enabled:
+          type: boolean
+        expiresAt:
+          type: [integer, "null"]
+          description: Epoch milliseconds, or null for none.
+        createdAt:
+          type: integer
+          description: Epoch milliseconds.
+        updatedAt:
+          type: integer
+          description: Epoch milliseconds.
+        lastDeliveredAt:
+          type: [integer, "null"]
+          description: "When a sandbox last received it, in epoch milliseconds; null before then."
+        visibleToCode:
+          const: true
+          description: "Code in a sandbox it reaches reads the value: anyone who can create a sandbox within the scope can."
+    Secret:
+      type: object
+      required:
+        - id
+        - name
+        - description
+        - hosts
+        - sandbox
+        - version
+        - createdAt
+        - updatedAt
+        - bindings
+        - deliveries
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        hosts:
+          type: array
+          description: "The hosts the secret may go to, as egressAllow takes them."
+          items:
+            type: string
+        sandbox:
+          type: boolean
+          description: "The current version may be delivered into sandboxes."
+        version:
+          type: integer
+          minimum: 1
+        createdAt:
+          type: integer
+          description: Epoch milliseconds.
+        updatedAt:
+          type: integer
+          description: Epoch milliseconds.
+        bindings:
+          type: array
+          items:
+            "$ref": "#/components/schemas/SecretBinding"
+        deliveries:
+          type: array
+          items:
+            "$ref": "#/components/schemas/SecretDelivery"
+    SecretList:
+      type: object
+      required:
+        - secrets
+      properties:
+        secrets:
+          type: array
+          items:
+            "$ref": "#/components/schemas/Secret"
+    SecretDeleted:
+      type: object
+      required:
+        - deleted
+      properties:
+        deleted:
+          type: string
+          description: The id of what was deleted.
+    CreateSecretRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - name
+        - value
+        - hosts
+      properties:
+        name:
+          type: string
+          pattern: "^[A-Za-z][A-Za-z0-9_-]{0,63}$"
+        value:
+          type: string
+          minLength: 1
+          writeOnly: true
+          description: "At most 65536 bytes, no NUL or line breaks. Never returned."
+        hosts:
+          type: array
+          maxItems: 16
+          description: "1 to 16 hosts as egressAllow takes them, never kyora's own domains; an empty list only for a secret with sandbox: true."
+          items:
+            type: string
+        description:
+          type: string
+          maxLength: 256
+        sandbox:
+          type: boolean
+          default: false
+          description: "The secret may be delivered into sandboxes (deliveries)."
+    RotateSecretRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - value
+      properties:
+        value:
+          type: string
+          minLength: 1
+          writeOnly: true
+          description: "At most 65536 bytes, no NUL or line breaks."
+        hosts:
+          type: array
+          maxItems: 16
+          description: "Kept when left out. As at create: 1 to 16, or an empty list only with sandbox: true."
+          items:
+            type: string
+        version:
+          type: integer
+          minimum: 1
+          description: "The version this rotation replaces: 409 secret_changed when the secret moved on."
+        sandbox:
+          type: boolean
+    CreateSecretBindingRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - host
+        - injection
+        - scope
+      properties:
+        host:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: "One of the secret's hosts, or a host within one of its wildcards."
+        pathPrefix:
+          type: string
+          maxLength: 512
+          pattern: "^/[A-Za-z0-9\\-._~/:@!$&'()*+,;=]*$"
+          default: /
+          description: "Unreserved path characters only (no %, ? or #); no ., .. or empty segments."
+        methods:
+          type: array
+          minItems: 1
+          description: "Default: all of them."
+          items:
+            type: string
+            enum: [GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS]
+        injection:
+          "$ref": "#/components/schemas/SecretInjectionRequest"
+        scope:
+          "$ref": "#/components/schemas/SecretScope"
+        expiresAt:
+          type: [integer, "null"]
+          description: "A future time in epoch milliseconds, or null for none."
+        enabled:
+          type: boolean
+          default: true
+    CreateSecretDeliveryRequest:
+      description: "An env variable or a file: exactly one of env and file; mode is a file's."
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required:
+            - env
+            - scope
+          properties:
+            env:
+              type: string
+              pattern: "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+              description: "Never KYORA_*, LD_* or PYTHON*, PATH, HOME, USER, SHELL or NODE_OPTIONS (any case), nor a name every JavaScript object has (constructor, __proto__, prototype and the like)."
+            scope:
+              "$ref": "#/components/schemas/SecretDeliveryScope"
+            expiresAt:
+              type: [integer, "null"]
+              description: "A future time in epoch milliseconds, or null for none."
+            enabled:
+              type: boolean
+              default: true
+        - type: object
+          additionalProperties: false
+          required:
+            - file
+            - scope
+          properties:
+            file:
+              type: string
+              pattern: "^[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$"
+              description: "A plain file name, never a name every JavaScript object has (constructor, __proto__, prototype and the like)."
+            mode:
+              type: integer
+              enum: [256, 288]
+              default: 256
+              description: "0400 (256) or 0440 (288)."
+            scope:
+              "$ref": "#/components/schemas/SecretDeliveryScope"
+            expiresAt:
+              type: [integer, "null"]
+              description: "A future time in epoch milliseconds, or null for none."
+            enabled:
+              type: boolean
+              default: true
+    UpdateSecretGrantRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        enabled:
+          type: boolean
+        expiresAt:
+          type: [integer, "null"]
+          description: "A future time in epoch milliseconds, or null for none."
     StorageKey:
       type: object
       required:

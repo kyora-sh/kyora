@@ -188,6 +188,25 @@ created.token  # the secret, shown once
 
 A restore whose sandbox fails or runs out of time destroys it, unless you pass your own `idempotency_key` (or `Idempotency-Key` header): the same key answers the sandbox an earlier restore with that key made, which may be another caller's, so the SDK never destroys it. The error then carries the sandbox's id in `sandbox_id` (a cancellation propagates as it is; `on_progress` has seen the sandbox by then), and destroying it is up to you.
 
+## Secrets
+
+```python
+secret = kyora.secrets.create(
+    {"name": "example-api", "value": os.environ["EXAMPLE_API_KEY"], "hosts": ["api.example.com"]}
+)
+kyora.secrets.create_binding(
+    secret.id,
+    {
+        "host": "api.example.com",
+        "injection": {"type": "header", "name": "authorization", "template": "Bearer {{secret}}"},
+        "scope": {"labels": {"app": "doc-agent"}},
+    },
+)
+agent = kyora.sandboxes.create({"labels": {"app": "doc-agent"}, "proxy_secrets": True})
+```
+
+The account's secrets, never their values. A binding has the egress broker inject the secret into a sandbox's requests to its host (`proxy_secrets`), so the value never enters the sandbox; a delivery (`create_delivery`, for a secret created with `"sandbox": True`) puts it into sandboxes as an env variable or a file. They take a full token, and only the account's owners and admins write them.
+
 ## Everything else
 
 `kyora.call(operation_id, path=..., query=..., body=...)` sends any HTTP operation of the API with the same errors, retries and idempotency keys. JSON operations answer their parsed body; streamed, binary and HEAD ones the `httpx.Response` (on `AsyncKyora` still open: read it and `aclose()` it). Operations without a helper yet, the same as the TypeScript SDK's (`COVERAGE` lists every operation and its method or reason):

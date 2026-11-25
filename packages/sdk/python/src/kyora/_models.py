@@ -352,6 +352,13 @@ class CreateSandboxRequest(BaseModel):
             description="false: don't use the shared download cache.",
         ),
     ] = True
+    proxy_secrets: Annotated[
+        bool | None,
+        Field(
+            alias='proxySecrets',
+            description="true: the sandbox's commands reach the account's secret bindings (/v1/secrets) through the egress broker, which injects each secret into requests to its bound host; the value never enters the sandbox. On network none or registries the broker's host joins egressAllow (one of its 32 hosts). It takes one of the sandbox's labels itself (kyora.proxy-secrets, so at most 30 of your own), and its egress token is in the guest's memory, so a full snapshot of it needs allowSecretsInMemory (409 secrets_in_memory otherwise).",
+        ),
+    ] = False
     region: str | None = None
     wait: Annotated[
         int | None, Field(description='Seconds a create may wait in the queue.', ge=0)
@@ -1377,6 +1384,219 @@ class MultipartStartResponse(BaseModel):
     max_parts: Annotated[int, Field(alias='maxParts')]
 
 
+SecretScopeSandbox = TypeAliasType(
+    "SecretScopeSandbox", Annotated[str, Field(pattern='^sb_')]
+)
+
+
+SecretScopeLabelsAdditionalProperty = TypeAliasType(
+    "SecretScopeLabelsAdditionalProperty", Annotated[str, Field(max_length=256)]
+)
+
+
+SecretScopeLabels = TypeAliasType(
+    "SecretScopeLabels",
+    Annotated[
+        dict[constr(pattern=r'^[A-Za-z0-9][A-Za-z0-9_./-]{0,62}$'), SecretScopeLabelsAdditionalProperty],
+        Field(
+            description='Sandboxes carrying all of these labels.',
+            max_length=8,
+            min_length=1,
+        ),
+    ],
+)
+
+
+SecretScopeImage = TypeAliasType(
+    "SecretScopeImage", Annotated[str, Field(pattern='^img_[0-9a-f]{24}$')]
+)
+
+
+class SecretInjection1(BaseModel):
+    """
+    How the egress broker puts the secret into a request, as stored.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+        populate_by_name=True,
+    )
+    type: Literal['header'] | str
+    name: Annotated[str, Field(pattern='^[a-z0-9][a-z0-9-]{0,63}$')]
+    template: Annotated[
+        str,
+        Field(
+            description='The header value, holding {{secret}} exactly once.',
+            max_length=512,
+        ),
+    ]
+
+
+class SecretInjection2(BaseModel):
+    """
+    How the egress broker puts the secret into a request, as stored.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+        populate_by_name=True,
+    )
+    type: Literal['basic'] | str
+    username: Annotated[str, Field(max_length=256)]
+
+
+class SecretInjection3(BaseModel):
+    """
+    How the egress broker puts the secret into a request, as stored.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+        populate_by_name=True,
+    )
+    type: Literal['query'] | str
+    name: Annotated[str, Field(pattern='^[A-Za-z0-9_.-]{1,64}$')]
+
+
+class SecretInjectionRequest1(BaseModel):
+    """
+    How the egress broker puts the secret into a request.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+        populate_by_name=True,
+    )
+    type: Literal['header'] | str
+    name: Annotated[
+        str,
+        Field(
+            description='Stored lowercase. Never host, content-length, transfer-encoding, connection, keep-alive, upgrade, te, trailer, proxy-authorization, proxy-connection, cookie, forwarded, via, x-forwarded-for, x-forwarded-host, x-forwarded-proto, x-real-ip, true-client-ip or cdn-loop, nor a proxy-* or cf-* header.',
+            pattern='^[A-Za-z0-9][A-Za-z0-9-]{0,63}$',
+        ),
+    ]
+    template: Annotated[
+        str | None,
+        Field(
+            description='The header value, holding {{secret}} exactly once, on one line.',
+            max_length=512,
+        ),
+    ] = '{{secret}}'
+
+
+class SecretInjectionRequest2(BaseModel):
+    """
+    How the egress broker puts the secret into a request.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+        populate_by_name=True,
+    )
+    type: Literal['basic'] | str
+    username: Annotated[
+        str,
+        Field(
+            description='HTTP Basic: this user, the secret as the password. No colon or line breaks.',
+            max_length=256,
+        ),
+    ]
+
+
+class SecretInjectionRequest3(BaseModel):
+    """
+    How the egress broker puts the secret into a request.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+        populate_by_name=True,
+    )
+    type: Literal['query'] | str
+    name: Annotated[
+        str,
+        Field(
+            description='A query parameter carrying the secret.',
+            pattern='^[A-Za-z0-9_.-]{1,64}$',
+        ),
+    ]
+
+
+class SecretDeleted(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    deleted: Annotated[str, Field(description='The id of what was deleted.')]
+
+
+class CreateSecretRequest(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+        populate_by_name=True,
+    )
+    name: Annotated[str, Field(pattern='^[A-Za-z][A-Za-z0-9_-]{0,63}$')]
+    value: Annotated[
+        str,
+        Field(
+            description='At most 65536 bytes, no NUL or line breaks. Never returned.',
+            min_length=1,
+        ),
+    ]
+    hosts: Annotated[
+        list[str],
+        Field(
+            description="1 to 16 hosts as egressAllow takes them, never kyora's own domains; an empty list only for a secret with sandbox: true.",
+            max_length=16,
+        ),
+    ]
+    description: Annotated[str | None, Field(max_length=256)] = None
+    sandbox: Annotated[
+        bool | None,
+        Field(description='The secret may be delivered into sandboxes (deliveries).'),
+    ] = False
+
+
+class RotateSecretRequest(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+        populate_by_name=True,
+    )
+    value: Annotated[
+        str,
+        Field(description='At most 65536 bytes, no NUL or line breaks.', min_length=1),
+    ]
+    hosts: Annotated[
+        list[str] | None,
+        Field(
+            description='Kept when left out. As at create: 1 to 16, or an empty list only with sandbox: true.',
+            max_length=16,
+        ),
+    ] = None
+    version: Annotated[
+        int | None,
+        Field(
+            description='The version this rotation replaces: 409 secret_changed when the secret moved on.',
+            ge=1,
+        ),
+    ] = None
+    sandbox: bool | None = None
+
+
+class UpdateSecretGrantRequest(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+        populate_by_name=True,
+    )
+    enabled: bool | None = None
+    expires_at: Annotated[
+        int | None,
+        Field(
+            alias='expiresAt',
+            description='A future time in epoch milliseconds, or null for none.',
+        ),
+    ] = None
+
+
 class StorageKey(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
@@ -1738,3 +1958,273 @@ class CreateImageRequest(BaseModel):
         ),
     ]
     region: str | None = None
+
+
+class SecretScope(BaseModel):
+    """
+    Which workloads a binding applies to: at least one of these.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+        populate_by_name=True,
+    )
+    sandboxes: Annotated[
+        list[SecretScopeSandbox] | None,
+        Field(description='These sandboxes, by id.', max_length=64, min_length=1),
+    ] = None
+    labels: SecretScopeLabels | None = None
+    images: Annotated[
+        list[SecretScopeImage] | None,
+        Field(
+            description='Sandboxes booted from these account images.',
+            max_length=16,
+            min_length=1,
+        ),
+    ] = None
+    sessions: Annotated[
+        Literal[True] | None, Field(description="The account's kyora sessions.")
+    ] = None
+
+
+class SecretDeliveryScope(BaseModel):
+    """
+    Which sandboxes a delivery reaches: at least one of these. A delivery takes no sessions.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+        populate_by_name=True,
+    )
+    sandboxes: Annotated[
+        list[SecretScopeSandbox] | None,
+        Field(description='These sandboxes, by id.', max_length=64, min_length=1),
+    ] = None
+    labels: SecretScopeLabels | None = None
+    images: Annotated[
+        list[SecretScopeImage] | None,
+        Field(
+            description='Sandboxes booted from these account images.',
+            max_length=16,
+            min_length=1,
+        ),
+    ] = None
+
+
+class SecretBinding(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    id: str
+    secret_id: Annotated[str, Field(alias='secretId')]
+    host: str
+    path_prefix: Annotated[str, Field(alias='pathPrefix')]
+    methods: list[Literal['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'] | str]
+    injection: Annotated[
+        SecretInjection1 | SecretInjection2 | SecretInjection3,
+        Field(
+            description='How the egress broker puts the secret into a request, as stored.'
+        ),
+    ]
+    scope: SecretScope
+    enabled: bool
+    expires_at: Annotated[
+        int | None,
+        Field(alias='expiresAt', description='Epoch milliseconds, or null for none.'),
+    ]
+    created_at: Annotated[
+        int, Field(alias='createdAt', description='Epoch milliseconds.')
+    ]
+    updated_at: Annotated[
+        int, Field(alias='updatedAt', description='Epoch milliseconds.')
+    ]
+    last_used_at: Annotated[
+        int | None,
+        Field(
+            alias='lastUsedAt',
+            description='When the broker last injected it, in epoch milliseconds; null before then.',
+        ),
+    ]
+
+
+class SecretDelivery(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    id: str
+    secret_id: Annotated[str, Field(alias='secretId')]
+    kind: Literal['env', 'file'] | str
+    target: Annotated[
+        str, Field(description='The environment variable or the file name.')
+    ]
+    mode: Annotated[
+        int | None,
+        Field(description="A file's mode (256 for 0400, 288 for 0440); null for env."),
+    ]
+    scope: SecretDeliveryScope
+    enabled: bool
+    expires_at: Annotated[
+        int | None,
+        Field(alias='expiresAt', description='Epoch milliseconds, or null for none.'),
+    ]
+    created_at: Annotated[
+        int, Field(alias='createdAt', description='Epoch milliseconds.')
+    ]
+    updated_at: Annotated[
+        int, Field(alias='updatedAt', description='Epoch milliseconds.')
+    ]
+    last_delivered_at: Annotated[
+        int | None,
+        Field(
+            alias='lastDeliveredAt',
+            description='When a sandbox last received it, in epoch milliseconds; null before then.',
+        ),
+    ]
+    visible_to_code: Annotated[
+        Literal[True],
+        Field(
+            alias='visibleToCode',
+            description='Code in a sandbox it reaches reads the value: anyone who can create a sandbox within the scope can.',
+        ),
+    ]
+
+
+class Secret(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    id: str
+    name: str
+    description: str
+    hosts: Annotated[
+        list[str],
+        Field(description='The hosts the secret may go to, as egressAllow takes them.'),
+    ]
+    sandbox: Annotated[
+        bool, Field(description='The current version may be delivered into sandboxes.')
+    ]
+    version: Annotated[int, Field(ge=1)]
+    created_at: Annotated[
+        int, Field(alias='createdAt', description='Epoch milliseconds.')
+    ]
+    updated_at: Annotated[
+        int, Field(alias='updatedAt', description='Epoch milliseconds.')
+    ]
+    bindings: list[SecretBinding]
+    deliveries: list[SecretDelivery]
+
+
+class SecretList(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    secrets: list[Secret]
+
+
+class CreateSecretBindingRequest(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+        populate_by_name=True,
+    )
+    host: Annotated[
+        str,
+        Field(
+            description="One of the secret's hosts, or a host within one of its wildcards.",
+            max_length=255,
+            min_length=1,
+        ),
+    ]
+    path_prefix: Annotated[
+        str | None,
+        Field(
+            alias='pathPrefix',
+            description='Unreserved path characters only (no %, ? or #); no ., .. or empty segments.',
+            max_length=512,
+            pattern="^/[A-Za-z0-9\\-._~/:@!$&'()*+,;=]*$",
+        ),
+    ] = '/'
+    methods: Annotated[
+        list[Literal['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'] | str] | None,
+        Field(description='Default: all of them.', min_length=1),
+    ] = None
+    injection: Annotated[
+        SecretInjectionRequest1 | SecretInjectionRequest2 | SecretInjectionRequest3,
+        Field(description='How the egress broker puts the secret into a request.'),
+    ]
+    scope: SecretScope
+    expires_at: Annotated[
+        int | None,
+        Field(
+            alias='expiresAt',
+            description='A future time in epoch milliseconds, or null for none.',
+        ),
+    ] = None
+    enabled: bool | None = True
+
+
+class CreateSecretDeliveryRequest1(BaseModel):
+    """
+    An env variable or a file: exactly one of env and file; mode is a file's.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+        populate_by_name=True,
+    )
+    env: Annotated[
+        str,
+        Field(
+            description='Never KYORA_*, LD_* or PYTHON*, PATH, HOME, USER, SHELL or NODE_OPTIONS (any case), nor a name every JavaScript object has (constructor, __proto__, prototype and the like).',
+            pattern='^[A-Za-z_][A-Za-z0-9_]{0,127}$',
+        ),
+    ]
+    scope: SecretDeliveryScope
+    expires_at: Annotated[
+        int | None,
+        Field(
+            alias='expiresAt',
+            description='A future time in epoch milliseconds, or null for none.',
+        ),
+    ] = None
+    enabled: bool | None = True
+
+
+class CreateSecretDeliveryRequest2(BaseModel):
+    """
+    An env variable or a file: exactly one of env and file; mode is a file's.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+        populate_by_name=True,
+    )
+    file: Annotated[
+        str,
+        Field(
+            description='A plain file name, never a name every JavaScript object has (constructor, __proto__, prototype and the like).',
+            pattern='^[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$',
+        ),
+    ]
+    mode: Annotated[
+        Literal[256, 288] | None, Field(description='0400 (256) or 0440 (288).')
+    ] = 256
+    scope: SecretDeliveryScope
+    expires_at: Annotated[
+        int | None,
+        Field(
+            alias='expiresAt',
+            description='A future time in epoch milliseconds, or null for none.',
+        ),
+    ] = None
+    enabled: bool | None = True
+
+
+CreateSecretDeliveryRequest = TypeAliasType(
+    "CreateSecretDeliveryRequest",
+    Annotated[
+        CreateSecretDeliveryRequest1 | CreateSecretDeliveryRequest2,
+        Field(
+            description="An env variable or a file: exactly one of env and file; mode is a file's."
+        ),
+    ],
+)

@@ -3,6 +3,9 @@ import { Exec } from "./exec.js"
 import { OPERATIONS, type OperationId, type Operations } from "./generated/operations.js"
 import type {
   CreateSandboxRequest,
+  CreateSecretBindingRequest,
+  CreateSecretDeliveryRequest,
+  CreateSecretRequest,
   CreateSnapshotRequest,
   CreateTokenRequest,
   CreateTokenResponse,
@@ -21,15 +24,21 @@ import type {
   QueueTicket,
   RegionList,
   ResolveResponse,
+  RotateSecretRequest,
   Sandbox,
   SandboxList,
   SandboxStats,
+  Secret,
+  SecretBinding,
+  SecretDelivery,
+  SecretList,
   SetRegionResponse,
   Snapshot,
   SnapshotList,
   Token,
   TokenList,
   UpdateSandboxRequest,
+  UpdateSecretGrantRequest,
   UploadPartResponse,
   Usage,
 } from "./generated/schemas.js"
@@ -236,6 +245,7 @@ export class Kyora {
   readonly snapshots: Snapshots
   readonly ports: Ports
   readonly tokens: Tokens
+  readonly secrets: Secrets
 
   constructor(options: KyoraOptions = {}) {
     const fetcher = options.fetch ?? globalThis.fetch
@@ -257,6 +267,7 @@ export class Kyora {
     this.snapshots = new Snapshots(this)
     this.ports = new Ports(this.transport)
     this.tokens = new Tokens(this.transport)
+    this.secrets = new Secrets(this.transport)
   }
 
   toJSON(): Record<string, unknown> {
@@ -637,5 +648,58 @@ export class Tokens {
   async delete(id: string, options: TokenScope & CallOptions = {}): Promise<void> {
     if (options.org) await this.transport.json("deleteOrgToken", { path: { org: options.org, id } }, options)
     else await this.transport.json("deleteToken", { path: { id } }, options)
+  }
+}
+
+/** The account's secrets, by id (sec_...) or name; never their values */
+export class Secrets {
+  constructor(private readonly transport: Transport) {}
+
+  async list(options: CallOptions = {}): Promise<Secret[]> {
+    return (await this.transport.json<SecretList>("listSecrets", {}, options)).secrets
+  }
+
+  get(id: string, options: CallOptions = {}): Promise<Secret> {
+    return this.transport.json("getSecret", { path: { id } }, options)
+  }
+
+  create(request: CreateSecretRequest, options: CallOptions = {}): Promise<Secret> {
+    return this.transport.json("createSecret", { body: request }, options)
+  }
+
+  /** a new value, and optionally new hosts or sandbox */
+  rotate(id: string, request: RotateSecretRequest, options: CallOptions = {}): Promise<Secret> {
+    return this.transport.json("rotateSecret", { path: { id }, body: request }, options)
+  }
+
+  /** deletes a secret with its bindings and deliveries */
+  async delete(id: string, options: CallOptions = {}): Promise<void> {
+    await this.transport.json("deleteSecret", { path: { id } }, options)
+  }
+
+  /** the egress broker injects the secret into requests to the binding's host */
+  createBinding(id: string, request: CreateSecretBindingRequest, options: CallOptions = {}): Promise<SecretBinding> {
+    return this.transport.json("createSecretBinding", { path: { id }, body: request }, options)
+  }
+
+  updateBinding(id: string, binding: string, change: UpdateSecretGrantRequest, options: CallOptions = {}): Promise<SecretBinding> {
+    return this.transport.json("updateSecretBinding", { path: { id, binding }, body: change }, options)
+  }
+
+  async deleteBinding(id: string, binding: string, options: CallOptions = {}): Promise<void> {
+    await this.transport.json("deleteSecretBinding", { path: { id, binding } }, options)
+  }
+
+  /** sandboxes in the delivery's scope receive the value as an env variable or a file */
+  createDelivery(id: string, request: CreateSecretDeliveryRequest, options: CallOptions = {}): Promise<SecretDelivery> {
+    return this.transport.json("createSecretDelivery", { path: { id }, body: request }, options)
+  }
+
+  updateDelivery(id: string, delivery: string, change: UpdateSecretGrantRequest, options: CallOptions = {}): Promise<SecretDelivery> {
+    return this.transport.json("updateSecretDelivery", { path: { id, delivery }, body: change }, options)
+  }
+
+  async deleteDelivery(id: string, delivery: string, options: CallOptions = {}): Promise<void> {
+    await this.transport.json("deleteSecretDelivery", { path: { id, delivery } }, options)
   }
 }

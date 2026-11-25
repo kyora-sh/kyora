@@ -37,6 +37,12 @@ CODEGEN_ARGS = [
 ]  # fmt: skip
 
 STRING_LITERAL = re.compile(r"Literal\[('[^'\]]*'(?:, '[^'\]]*')*)\]")
+PATTERN = re.compile(r"pattern=(r?)'((?:[^'\\]|\\.)*)'")
+LOOK_AROUND = re.compile(r"\(\?<?[=!](?:[^()\\]|\\.)*\)")
+
+
+def without_look_around(match: re.Match[str]) -> str:
+    return f"pattern={match[1]}'{LOOK_AROUND.sub('', match[2])}'"
 
 
 def models(spec: Path) -> str:
@@ -46,6 +52,8 @@ def models(spec: Path) -> str:
         text = out.read_text()
     # /v1 adds enum values without notice: an unknown one must still parse
     text = STRING_LITERAL.sub(r"Literal[\1] | str", text)
+    # pydantic's regex engine has no look-around: the client checks the rest, the API the whole pattern
+    text = PATTERN.sub(without_look_around, text)
     return HEADER + text.split("\n", 1)[1] if text.startswith("#") else HEADER + text
 
 

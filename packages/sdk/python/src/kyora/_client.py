@@ -9,7 +9,7 @@ from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, I
 from typing import IO, Any, Literal, TypeVar
 
 import httpx
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError
 from typing_extensions import Unpack
 
 from ._errors import KyoraError, make_error
@@ -32,6 +32,9 @@ from ._http import (
 )
 from ._models import (
     CreateSandboxRequest,
+    CreateSecretBindingRequest,
+    CreateSecretDeliveryRequest,
+    CreateSecretRequest,
     CreateSnapshotRequest,
     CreateTokenRequest,
     CreateTokenResponse,
@@ -50,15 +53,21 @@ from ._models import (
     QueueTicket,
     RegionList,
     ResolveResponse,
+    RotateSecretRequest,
     Sandbox,
     SandboxList,
     SandboxStats,
+    Secret,
+    SecretBinding,
+    SecretDelivery,
+    SecretList,
     SetRegionResponse,
     Snapshot,
     SnapshotList,
     Token,
     TokenList,
     UpdateSandboxRequest,
+    UpdateSecretGrantRequest,
     UploadPartResponse,
     Usage,
 )
@@ -199,6 +208,7 @@ class AsyncKyora:
         self.snapshots = Snapshots(self)
         self.ports = Ports(self.transport)
         self.tokens = Tokens(self.transport)
+        self.secrets = Secrets(self.transport)
 
     def __repr__(self) -> str:
         return f"AsyncKyora(base_url={self.transport.base_url!r}, region={self.region!r})"
@@ -869,3 +879,80 @@ class Tokens:
             await self._transport.json("deleteOrgToken", RequestParts(path={"org": org, "id": id}), options)
         else:
             await self._transport.json("deleteToken", RequestParts(path={"id": id}), options)
+
+
+class Secrets:
+    """The account's secrets, by id (sec_...) or name; never their values."""
+
+    def __init__(self, transport: Transport) -> None:
+        self._transport = transport
+
+    async def list(self, **options: Unpack[CallOptions]) -> list[Secret]:
+        return load(SecretList, await self._transport.json("listSecrets", None, options), "listSecrets").secrets
+
+    async def get(self, id: str, **options: Unpack[CallOptions]) -> Secret:
+        answer = await self._transport.json("getSecret", RequestParts(path={"id": id}), options)
+        return load(Secret, answer, "getSecret")
+
+    async def create(self, request: CreateSecretRequest | Mapping[str, Any], **options: Unpack[CallOptions]) -> Secret:
+        body = dump(CreateSecretRequest, request)
+        answer = await self._transport.json("createSecret", RequestParts(body=body), options)
+        return load(Secret, answer, "createSecret")
+
+    async def rotate(
+        self, id: str, request: RotateSecretRequest | Mapping[str, Any], **options: Unpack[CallOptions]
+    ) -> Secret:
+        """a new value, and optionally new hosts or sandbox"""
+        body = dump(RotateSecretRequest, request)
+        answer = await self._transport.json("rotateSecret", RequestParts(path={"id": id}, body=body), options)
+        return load(Secret, answer, "rotateSecret")
+
+    async def delete(self, id: str, **options: Unpack[CallOptions]) -> None:
+        """deletes a secret with its bindings and deliveries"""
+        await self._transport.json("deleteSecret", RequestParts(path={"id": id}), options)
+
+    async def create_binding(
+        self, id: str, request: CreateSecretBindingRequest | Mapping[str, Any], **options: Unpack[CallOptions]
+    ) -> SecretBinding:
+        """the egress broker injects the secret into requests to the binding's host"""
+        body = dump(CreateSecretBindingRequest, request)
+        answer = await self._transport.json("createSecretBinding", RequestParts(path={"id": id}, body=body), options)
+        return load(SecretBinding, answer, "createSecretBinding")
+
+    async def update_binding(
+        self,
+        id: str,
+        binding: str,
+        change: UpdateSecretGrantRequest | Mapping[str, Any],
+        **options: Unpack[CallOptions],
+    ) -> SecretBinding:
+        parts = RequestParts(path={"id": id, "binding": binding}, body=dump(UpdateSecretGrantRequest, change))
+        answer = await self._transport.json("updateSecretBinding", parts, options)
+        return load(SecretBinding, answer, "updateSecretBinding")
+
+    async def delete_binding(self, id: str, binding: str, **options: Unpack[CallOptions]) -> None:
+        await self._transport.json("deleteSecretBinding", RequestParts(path={"id": id, "binding": binding}), options)
+
+    async def create_delivery(
+        self, id: str, request: CreateSecretDeliveryRequest | Mapping[str, Any], **options: Unpack[CallOptions]
+    ) -> SecretDelivery:
+        """sandboxes in the delivery's scope receive the value as an env variable or a file"""
+        if not isinstance(request, BaseModel):
+            request = TypeAdapter(CreateSecretDeliveryRequest).validate_python(dict(request))
+        body = dump(type(request), request)
+        answer = await self._transport.json("createSecretDelivery", RequestParts(path={"id": id}, body=body), options)
+        return load(SecretDelivery, answer, "createSecretDelivery")
+
+    async def update_delivery(
+        self,
+        id: str,
+        delivery: str,
+        change: UpdateSecretGrantRequest | Mapping[str, Any],
+        **options: Unpack[CallOptions],
+    ) -> SecretDelivery:
+        parts = RequestParts(path={"id": id, "delivery": delivery}, body=dump(UpdateSecretGrantRequest, change))
+        answer = await self._transport.json("updateSecretDelivery", parts, options)
+        return load(SecretDelivery, answer, "updateSecretDelivery")
+
+    async def delete_delivery(self, id: str, delivery: str, **options: Unpack[CallOptions]) -> None:
+        await self._transport.json("deleteSecretDelivery", RequestParts(path={"id": id, "delivery": delivery}), options)

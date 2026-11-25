@@ -106,6 +106,8 @@ export const ERROR_CODES = {
   deadline: { status: [504], retryable: true, class: "transient" },
   /** Deleted. */
   deleted: { status: [409], retryable: false, class: "conflict" },
+  /** The account already delivers a secret as this env variable or file. */
+  delivery_exists: { status: [409], retryable: false, class: "conflict" },
   /** The sandbox's desktop is still starting; try again shortly. */
   desktop_starting: { status: [503], retryable: true, class: "transient" },
   /** The command's connection ended; the command keeps running, reattach to it. */
@@ -338,6 +340,8 @@ export const ERROR_CODES = {
   not_active: { status: [409], retryable: false, class: "conflict" },
   /** Not a broadcast share. */
   not_broadcast: { status: [409], retryable: false, class: "conflict" },
+  /** The secret doesn't go into sandboxes: rotate it with sandbox: true first. */
+  not_deliverable: { status: [409], retryable: false, class: "conflict" },
   /** The resource does not exist. */
   not_found: { status: [404], retryable: false, class: "not_found" },
   /** The sandbox is not hibernated. */
@@ -430,6 +434,10 @@ export const ERROR_CODES = {
   scp_failed: { status: [502], retryable: false, class: "unavailable" },
   /** SCP is unavailable in this sandbox. */
   scp_unavailable: { status: [501], retryable: false, class: "unavailable" },
+  /** The secret moved to another version meanwhile (or its hosts no longer cover the binding): read it again. */
+  secret_changed: { status: [409], retryable: false, class: "conflict" },
+  /** A secret of that name exists: rotate it instead. */
+  secret_exists: { status: [409], retryable: false, class: "conflict" },
   /** A wake or hibernate of the session is under way; try again after Retry-After. */
   session_busy: { status: [409], retryable: true, class: "transient" },
   /** The session ended. */
