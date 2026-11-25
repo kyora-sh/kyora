@@ -117,8 +117,10 @@ def wait_options(options: Mapping[str, Any]) -> CallOptions:
 
 def lost_on_the_way(error: KyoraError) -> bool:
     """a poll that failed on the way, not with the create's outcome: nothing answered, a gateway, or a restart"""
-    return error.code != "timeout" and (
-        error.status in (0, 502, 504) or error.code == "do_reset" or error.code.startswith("http_")
+    return (
+        error.retryable
+        and error.code != "timeout"
+        and (error.status in (0, 502, 504) or error.code == "do_reset" or error.code.startswith("http_"))
     )
 
 

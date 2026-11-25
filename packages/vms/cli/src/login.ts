@@ -1,5 +1,5 @@
 import { hostname } from "node:os"
-import { ApiError, type DevicePoll, type VmsClient } from "./api"
+import { ApiError, finalRefusal, type DevicePoll, type VmsClient } from "./api"
 import { DEFAULT_URL, originOf, type Config } from "./config"
 import { readCredentials, removeLogin, saveLogin } from "./credentials"
 import { note, printJson } from "./output"
@@ -26,7 +26,7 @@ export function openBrowser(url: string, env: Env = process.env): boolean {
 }
 
 /** the network or the server having a moment is no reason to give up on a code that is still good */
-const transient = (error: unknown) => error instanceof ApiError && (error.status === 0 || error.status >= 500)
+const transient = (error: unknown) => error instanceof ApiError && !finalRefusal(error) && (error.status === 0 || error.status >= 500)
 
 /**
  * The device flow: kyora cloud hands out a code, the person approves it in the

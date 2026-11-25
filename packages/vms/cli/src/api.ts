@@ -446,14 +446,19 @@ export class ApiError extends Error {
     readonly code?: string,
     /** what the server's Retry-After asked for, in ms */
     readonly retryAfterMs?: number,
+    /** what the server's body said about asking again; false: waiting won't help, whatever the status */
+    readonly retryable?: boolean,
   ) {
     super(message)
   }
 }
 
+/** the server said asking again won't help: no retry loop goes on after it */
+export const finalRefusal = (error: unknown): boolean => error instanceof ApiError && error.retryable === false
+
 export class ApiResponseError extends ApiError {
   constructor(error: ApiError, readonly body: unknown) {
-    super(error.message, error.status, error.code, error.retryAfterMs)
+    super(error.message, error.status, error.code, error.retryAfterMs, error.retryable)
   }
 }
 
@@ -489,6 +494,7 @@ const CODE_HINTS: Record<string, string> = {
 /** codes both servers answer with, whose hint beats the one for their status */
 const SHARED_CODE_HINTS: Record<string, string> = {
   exec_limit: "the sandbox has reached its concurrent exec limit; wait for a command to finish or cancel it",
+  sandbox_limit: "you are at your limit of concurrent sandboxes; `kyora vms ls`, then `kyora vms rm <id>`",
   share_disabled: "sharing is fixed when a sandbox is created (--no-share), and its snapshots and session sandboxes keep it",
   vmd_update_required: "update the machine software, then retry",
   snapshot_quota: "delete snapshots you no longer need: `kyora vms snapshot ls`, then `kyora vms snapshot rm <snap>`",
@@ -515,10 +521,10 @@ const isTicket = (body: unknown): body is QueueTicket =>
 
 /** worth asking again: nothing answered, or something in front of kyora cloud did, not kyora cloud itself */
 const transient = (error: unknown): boolean =>
-  error instanceof ApiError && (error.status === 0 || error.status === 502 || error.status === 504 || (error.status >= 500 && error.code === undefined) || error.code === "internal" || resetByServer(error))
+  error instanceof ApiError && !finalRefusal(error) && (error.status === 0 || error.status === 502 || error.status === 504 || (error.status >= 500 && error.code === undefined) || error.code === "internal" || resetByServer(error))
 
 /** kyora cloud restarted a part of itself while it answered and says to ask again (503 `do_reset`, with Retry-After) */
-const resetByServer = (error: unknown): boolean => error instanceof ApiError && error.status === 503 && error.code === "do_reset"
+const resetByServer = (error: unknown): boolean => error instanceof ApiError && error.status === 503 && error.code === "do_reset" && !finalRefusal(error)
 
 /** a safe call that was answered `do_reset` is asked again for this long at most, honouring Retry-After */
 const RESET_DEADLINE_MS = 15_000
@@ -572,12 +578,11 @@ async function apiError(action: string, response: Response, kind: Kind, hints = 
   let code: string | undefined
   let message: string | undefined
   let after: number | undefined
-  let final = false
+  let said: boolean | undefined
   try {
     const body = JSON.parse(text) as { error?: unknown; message?: unknown; retryAfterMs?: unknown; retryable?: unknown }
     code = typeof body.error === "string" ? body.error : undefined
-    // the server says waiting won't help (a lifetime no machine allows): its message carries the advice, not a status's
-    final = body.retryable === false
+    if (typeof body.retryable === "boolean") said = body.retryable
     message = typeof body.message === "string" ? body.message : code
     // kyora cloud says it to the millisecond on a 429 or 503; the header only in whole seconds
     if (typeof body.retryAfterMs === "number" && Number.isFinite(body.retryAfterMs) && body.retryAfterMs >= 0) after = Math.round(body.retryAfterMs)
@@ -586,12 +591,14 @@ async function apiError(action: string, response: Response, kind: Kind, hints = 
     if (text.trim() && !text.trimStart().startsWith("<")) message = text.trim().slice(0, 200)
   }
   message ??= `the server request failed (HTTP ${response.status})`
+  // the server says waiting won't help (a lifetime no machine allows): its message carries the advice, not a status's
+  const final = said === false
   const hint = hints
     ? code === "image_unavailable"
       ? kind === "platform" ? "`kyora vms images` shows availability; choose an available region or ask an admin to build the profile" : "build this profile on the host before retrying"
       : ((code === "quota_exceeded" && action.startsWith("snapshot ") ? SHARED_CODE_HINTS.snapshot_quota : undefined) ?? (kind === "platform" && code ? CODE_HINTS[code] : undefined) ?? (code ? SHARED_CODE_HINTS[code] : undefined) ?? (final ? undefined : HINTS[kind][response.status]))
     : undefined
-  return new ApiError(`${action}: ${message}${hint ? `; ${hint}` : ""}`, response.status, code, after ?? retryAfterMs(response.headers.get("retry-after")))
+  return new ApiError(`${action}: ${message}${hint ? `; ${hint}` : ""}`, response.status, code, after ?? retryAfterMs(response.headers.get("retry-after")), said)
 }
 
 /**
@@ -1044,7 +1051,7 @@ export class VmsClient {
         if (options.signal?.aborted) throw options.signal.reason
         if (!(error instanceof ApiError)) throw error
         if (error.status === 404) throw options.gone()
-        if (!(transient(error) || error.status === 429 || error.status === 503) || ++failures > POLL_RETRIES) throw error
+        if (finalRefusal(error) || !(transient(error) || error.status === 429 || error.status === 503) || ++failures > POLL_RETRIES) throw error
         wait = Math.max(delay, Math.min(error.retryAfterMs ?? 0, POLL_MAX_RETRY_AFTER_MS))
         continue
       }
@@ -1118,7 +1125,7 @@ export class VmsClient {
       // nothing half-restored is left behind, aborted or failed: the caller may never have heard its id
       const destroyed = await this.destroy(sandbox.id).then(() => true, () => false)
       if (!(error instanceof ApiError)) throw error
-      throw new ApiError(`${error.message}; ${destroyed ? `${sandbox.id} was destroyed` : `destroy ${sandbox.id} yourself (kyora vms rm ${sandbox.id}), it may still start`}`, error.status, error.code, error.retryAfterMs)
+      throw new ApiError(`${error.message}; ${destroyed ? `${sandbox.id} was destroyed` : `destroy ${sandbox.id} yourself (kyora vms rm ${sandbox.id}), it may still start`}`, error.status, error.code, error.retryAfterMs, error.retryable)
     }
   }
 

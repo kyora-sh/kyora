@@ -100,7 +100,7 @@ Every failure is a `KyoraError`, of the subclass its class names (`TransientErro
 | `retryable` | the same request can succeed later |
 | `retry_after` | the least wait kyora asked for, in seconds, when it did |
 
-`class_` and `retryable` come from the API's error catalog (`ERROR_CODES`), per status where a code's retryability depends on it. A code newer than the SDK is classed by its status. Branch on `code` or the class, never on the message. A `limit` error (a quota, a token's constraints, a full queue) is its own class so a caller can park the work instead of retrying it. An answer that doesn't match the API's schema is a `bad_response`. `ExecDetachedError` (below) is a `KyoraError` of its own.
+`class_` and `retryable` come from the API's error catalog (`ERROR_CODES`), per status where a code's retryability depends on it. A code newer than the SDK is classed by its status. An answer's own `retryable` in its body overrides the catalog: `retryable: false` on a code the catalog calls `transient` makes it a `LimitError`, and nothing retries it. Branch on `code` or the class, never on the message. A `limit` error (a quota, a token's constraints, a full queue) is its own class so a caller can park the work instead of retrying it. An answer that doesn't match the API's schema is a `bad_response`. `ExecDetachedError` (below) is a `KyoraError` of its own.
 
 ## Retries and deadlines
 

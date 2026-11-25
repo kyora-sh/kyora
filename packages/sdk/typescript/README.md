@@ -73,7 +73,7 @@ Every failure is a `KyoraError`:
 | `retryable` | the same request can succeed later |
 | `retryAfterMs` | the least wait kyora asked for, when it did |
 
-`class` and `retryable` come from the API's error catalog (`ERROR_CODES`), per status where a code's retryability depends on it. A code newer than the SDK is classed by its status. Branch on `code` or `class`, never on `message`. A `limit` error (a quota, a token's constraints, a full queue) is its own class so a caller can park the work instead of retrying it.
+`class` and `retryable` come from the API's error catalog (`ERROR_CODES`), per status where a code's retryability depends on it. A code newer than the SDK is classed by its status. An answer's own `retryable` in its body overrides the catalog: `retryable: false` on a code the catalog calls `transient` makes it a `limit`, and nothing retries it. Branch on `code` or `class`, never on `message`. A `limit` error (a quota, a token's constraints, a full queue) is its own class so a caller can park the work instead of retrying it.
 
 ## Retries and deadlines
 

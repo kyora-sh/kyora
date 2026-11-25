@@ -216,7 +216,7 @@ async function deleted(transport: Transport, operation: "deleteSandbox" | "delet
 
 /** a poll that failed on the way, not with the create's outcome: nothing answered, a gateway, or a restart (do_reset) */
 const lostOnTheWay = (error: unknown) =>
-  error instanceof KyoraError && error.code !== "timeout" && (error.status === 0 || error.status === 502 || error.status === 504 || error.code === "do_reset" || error.code.startsWith("http_"))
+  error instanceof KyoraError && error.retryable && error.code !== "timeout" && (error.status === 0 || error.status === 502 || error.status === 504 || error.code === "do_reset" || error.code.startsWith("http_"))
 
 const isTicket = (body: unknown): body is QueueTicket => typeof body === "object" && body !== null && (body as { status?: unknown }).status === "queued" && typeof (body as { ticket?: unknown }).ticket === "string"
 

@@ -1,4 +1,4 @@
-import { ApiError, type TtySession, type VmsClient } from "./api"
+import { ApiError, finalRefusal, type TtySession, type VmsClient } from "./api"
 import { sandboxArgument } from "./names"
 import { reattachable, reattachPolicy } from "./exec"
 import { pause } from "./multipart"
@@ -452,7 +452,7 @@ class Shell {
       sessions = await this.api.ttySessions(this.id, signal)
     } catch (error) {
       if (this.detaching) return null
-      if (error instanceof ApiError && FINAL.includes(error.status) && !reattachable(error)) {
+      if (error instanceof ApiError && (finalRefusal(error) || (FINAL.includes(error.status) && !reattachable(error)))) {
         this.io.status(error.message)
         return FAILED
       }
@@ -473,7 +473,7 @@ class Shell {
   private async refused(signal = this.leaving.signal): Promise<number | null> {
     const refusal = await this.api.ttyRefusal(this.id, this.query(this.size()), signal)
     if (!refusal || this.detaching) return null
-    if (FINAL.includes(refusal.status) && !reattachable(refusal)) {
+    if (finalRefusal(refusal) || (FINAL.includes(refusal.status) && !reattachable(refusal))) {
       this.io.status(`${refusal.message} (${refusal.status})`)
       return FAILED
     }

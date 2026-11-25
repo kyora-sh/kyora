@@ -263,6 +263,30 @@ async def test_an_outcome_error_of_the_ticket_is_the_creates_answer(client):
     assert len([r for r in requests if r.method == "GET"]) == 1
 
 
+async def test_a_poll_the_server_calls_final_is_not_asked_again_whatever_its_status(client):
+    def handler(r, i):
+        if r.method == "POST":
+            return json(202, ticket("q_5"))
+        if r.method == "DELETE":
+            return json(204)
+        return error(502, "do_reset", {"retryable": False})
+
+    kyora, requests = client(handler)
+    with pytest.raises(KyoraError) as caught:
+        await kyora.sandboxes.create({"wait": 30})
+    assert (caught.value.code, caught.value.retryable) == ("do_reset", False)
+    assert len([r for r in requests if r.method == "GET"]) == 1
+
+
+@pytest.mark.parametrize("spec", [{}, {"wait": 30}])
+async def test_a_create_refused_as_final_is_one_request_with_or_without_a_wait(client, spec):
+    kyora, requests = client(lambda r, i: error(503, "no_capacity", {"retryable": False}))
+    with pytest.raises(KyoraError) as caught:
+        await kyora.sandboxes.create(spec)
+    assert (caught.value.class_, caught.value.retryable) == ("limit", False)
+    assert len(requests) == 1
+
+
 async def test_a_poll_lost_on_the_way_is_asked_again(client):
     def handler(r, i):
         if r.method == "POST":

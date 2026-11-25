@@ -193,4 +193,23 @@ describe("queue polls", () => {
     })
     expect((await kyora.sandboxes.create({ wait: 30 })).id).toBe("sb_q")
   })
+
+  test("a poll the server calls final (retryable: false) is not asked again, whatever its status", async () => {
+    const ticket = { ticket: "q_5", status: "queued", position: 1, ahead: 0, depth: 1, enqueuedAt: "x", waitUntil: "y", poll: "/v1/queue/q_5" }
+    const { kyora, requests } = client((request) => {
+      if (request.method === "POST") return json(202, ticket)
+      if (request.method === "DELETE") return json(204, null)
+      return error(502, "do_reset", { retryable: false })
+    })
+    await expect(kyora.sandboxes.create({ wait: 30 })).rejects.toMatchObject({ code: "do_reset", retryable: false })
+    expect(requests.filter((request) => request.method === "GET").length).toBe(1)
+  })
+
+  test("a create refused as final is one request, with or without a wait", async () => {
+    for (const spec of [{}, { wait: 30 }]) {
+      const { kyora, requests } = client(() => error(503, "no_capacity", { retryable: false }))
+      await expect(kyora.sandboxes.create(spec)).rejects.toMatchObject({ code: "no_capacity", class: "limit", retryable: false })
+      expect(requests.length).toBe(1)
+    }
+  })
 })
