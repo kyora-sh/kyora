@@ -79,6 +79,7 @@ from ._paging import ListOptions, ListPage, follow, label_query, matching
 from ._tar import FileInputs, TarEntry, pack_files, unpack
 
 M = TypeVar("M", bound=BaseModel)
+DELIVERY_REQUEST: TypeAdapter[CreateSecretDeliveryRequest] = TypeAdapter(CreateSecretDeliveryRequest)
 
 CREATE_TIMEOUT = 120.0
 QUEUE_POLL = 25
@@ -942,7 +943,7 @@ class Secrets:
     ) -> SecretDelivery:
         """sandboxes in the delivery's scope receive the value as an env variable or a file"""
         if not isinstance(request, BaseModel):
-            request = TypeAdapter(CreateSecretDeliveryRequest).validate_python(dict(request))
+            request = DELIVERY_REQUEST.validate_python(dict(request))
         body = dump(type(request), request)
         answer = await self._transport.json("createSecretDelivery", RequestParts(path={"id": id}, body=body), options)
         return load(SecretDelivery, answer, "createSecretDelivery")

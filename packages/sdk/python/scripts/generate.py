@@ -43,8 +43,11 @@ PATTERN = re.compile(r"pattern=(r?)'((?:[^'\\]|\\.)*)'")
 LOOK_AROUND = re.compile(r"\(\?<?[=!](?:[^()\\]|\\.)*\)")
 
 
-"""inline models datamodel-codegen names before the schema of the same name, which it then numbers"""
+# inline models datamodel-codegen names before the schema of the same name, which it then numbers
 RENAMED = {"Secret": "CreateSandboxSecret", "Secret1": "Secret"}
+# a request oneOf's variants told apart by `type`: widened, any variant would take any type
+NARROW = ("SecretInjectionRequest1", "SecretInjectionRequest2", "SecretInjectionRequest3")
+WIDENED_TYPE = re.compile(r"^(    type: Literal\['[^'\]]*'\]) \| str$", re.M)
 
 
 def without_look_around(match: re.Match[str]) -> str:
@@ -56,6 +59,11 @@ def renamed(text: str) -> str:
     for name in RENAMED:
         if not re.search(rf"^class {name}\(", text, re.M):
             raise SystemExit(f"RENAMED names {name}, which the models no longer define: update RENAMED")
+    numbered = [re.match(r"(.*?)(\d+)$", name) for name in RENAMED]
+    taken = {f"{m[1]}{int(m[2]) + 1}" for m in numbered if m} | (set(RENAMED.values()) - set(RENAMED))
+    for name in sorted(taken):
+        if re.search(rf"^class {name}\(", text, re.M):
+            raise SystemExit(f"the models already define {name}, which RENAMED would clash with: update RENAMED")
     lines = text.splitlines(True)
     tokens = tokenize.generate_tokens(io.StringIO(text).readline)
     found = [t for t in tokens if t.type == tokenize.NAME and t.string in RENAMED]
@@ -66,6 +74,21 @@ def renamed(text: str) -> str:
     return "".join(lines)
 
 
+def narrowed(text: str) -> str:
+    """`text` with the `type` literal of each NARROW model no longer widened"""
+    for name in NARROW:
+        start = re.search(rf"^class {name}\(", text, re.M)
+        if not start:
+            raise SystemExit(f"NARROW names {name}, which the models no longer define: update NARROW")
+        end = re.compile(r"^\S", re.M).search(text, start.end())
+        stop = end.start() if end else len(text)
+        body, count = WIDENED_TYPE.subn(r"\1", text[start.end() : stop])
+        if count != 1:
+            raise SystemExit(f"{name} has no widened `type` literal: update NARROW")
+        text = text[: start.end()] + body + text[stop:]
+    return text
+
+
 def models(spec: Path) -> str:
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "models.py"
@@ -73,6 +96,7 @@ def models(spec: Path) -> str:
         text = out.read_text()
     # /v1 adds enum values without notice: an unknown one must still parse
     text = STRING_LITERAL.sub(r"Literal[\1] | str", text)
+    text = narrowed(text)
     # pydantic's regex engine has no look-around: the client checks the rest, the API the whole pattern
     text = PATTERN.sub(without_look_around, text)
     text = renamed(text)

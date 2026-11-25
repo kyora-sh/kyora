@@ -1500,7 +1500,7 @@ class SecretInjectionRequest1(BaseModel):
         extra='forbid',
         populate_by_name=True,
     )
-    type: Literal['header'] | str
+    type: Literal['header']
     name: Annotated[
         str,
         Field(
@@ -1526,7 +1526,7 @@ class SecretInjectionRequest2(BaseModel):
         extra='forbid',
         populate_by_name=True,
     )
-    type: Literal['basic'] | str
+    type: Literal['basic']
     username: Annotated[
         str,
         Field(
@@ -1545,7 +1545,7 @@ class SecretInjectionRequest3(BaseModel):
         extra='forbid',
         populate_by_name=True,
     )
-    type: Literal['query'] | str
+    type: Literal['query']
     name: Annotated[
         str,
         Field(
