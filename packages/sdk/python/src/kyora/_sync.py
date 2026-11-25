@@ -572,7 +572,9 @@ class Secrets(_Resource):
     def create_binding(
         self, id: str, request: CreateSecretBindingRequest | Mapping[str, Any], **options: Unpack[CallOptions]
     ) -> SecretBinding:
-        """the egress broker injects the secret into requests to the binding's host"""
+        """code in a sandbox created with proxy_secrets sends its request to the egress broker at
+        $KYORA_EGRESS_URL/<binding id>/<path>, which adds the secret and passes it on to the binding's host;
+        a request straight to the host gets nothing added"""
         return self._portal.run(self._aio.secrets.create_binding(id, request, **options))
 
     def update_binding(

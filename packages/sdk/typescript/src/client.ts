@@ -682,7 +682,7 @@ export class Secrets {
     await this.transport.json("deleteSecret", { path: { id } }, options)
   }
 
-  /** the egress broker injects the secret into requests to the binding's host */
+  /** code in a sandbox created with proxySecrets sends its request to the egress broker at $KYORA_EGRESS_URL/<binding id>/<path>, which adds the secret and passes it on to the binding's host; a request straight to the host gets nothing added */
   createBinding(id: string, request: CreateSecretBindingRequest, options: CallOptions = {}): Promise<SecretBinding> {
     return this.transport.json("createSecretBinding", { path: { id }, body: request }, options)
   }
