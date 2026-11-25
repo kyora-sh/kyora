@@ -1,4 +1,4 @@
-import { ApiError, type Part } from "./api"
+import { ApiError, finalRefusal, type Part } from "./api"
 
 /**
  * Reads exactly `buffer.length` bytes (fewer only at the end of the stream) into
@@ -70,9 +70,9 @@ export interface SentParts {
   bytes: number
 }
 
-/** worth another try: the network, a 5xx (Cloudflare's own error pages included), 408, 429 */
+/** worth another try: the network, a 5xx (Cloudflare's own error pages included), 408, 429; never what the server called final */
 export function retryable(error: unknown): boolean {
-  return error instanceof ApiError && (error.status === 0 || error.status >= 500 || error.status === 408 || error.status === 429)
+  return error instanceof ApiError && !finalRefusal(error) && (error.status === 0 || error.status >= 500 || error.status === 408 || error.status === 429)
 }
 
 export function pause(ms: number, signal: AbortSignal): Promise<void> {

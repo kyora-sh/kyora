@@ -1,4 +1,4 @@
-import { ApiError, type ExecRequest, type StreamOffsets, type VmsClient } from "./api"
+import { ApiError, finalRefusal, type ExecRequest, type StreamOffsets, type VmsClient } from "./api"
 import { pause } from "./multipart"
 import { FAILED, note, write } from "./output"
 import { formatBytes, formatMs } from "./units"
@@ -165,9 +165,10 @@ export function reattachPolicy(): ReattachPolicy {
   }
 }
 
-/** worth another reattach: the network, a 5xx, a sandbox busy or starting (409), 408, 429 */
+/** worth another reattach: the network, a 5xx, a sandbox busy or starting (409), 408, 429; never what the server called final */
 export function reattachable(error: unknown): boolean {
-  if (error instanceof ApiError) return ["vmd_unavailable", "node_offline", "node_disconnected"].includes(error.code ?? "") || error.status === 0 || (error.status >= 500 && error.status !== 501) || error.status === 408 || error.status === 409 || error.status === 429
+  if (finalRefusal(error)) return false
+  if (error instanceof ApiError) return["vmd_unavailable", "node_offline", "node_disconnected"].includes(error.code ?? "") || error.status === 0 || (error.status >= 500 && error.status !== 501) || error.status === 408 || error.status === 409 || error.status === 429
   // fetch can fail before the API wraps it (including during a test or another transport).
   return error instanceof TypeError || (error instanceof Error && /^(ECONN|ENET|EHOST|EPIPE|ETIMEDOUT|Connection|Socket)/.test(String((error as NodeJS.ErrnoException).code ?? "")))
 }

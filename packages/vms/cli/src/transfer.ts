@@ -1,5 +1,5 @@
 import { posix } from "node:path"
-import { ApiError, type MultipartUpload, type UploadResult, type VmsClient } from "./api"
+import { ApiError, finalRefusal, type MultipartUpload, type UploadResult, type VmsClient } from "./api"
 import { extractTar, type ExtractResult } from "./extract"
 import { PartPool, partsInFlight, pause, sendParts, type PartProgress, type SentParts } from "./multipart"
 import { note, notePrefix } from "./output"
@@ -116,7 +116,7 @@ export class BrokenStream extends Error {}
  */
 export function transient(error: unknown): boolean {
   if (error instanceof BrokenStream) return true
-  return error instanceof ApiError && (error.status === 0 || error.status === 502 || error.status === 503 || error.status === 504)
+  return error instanceof ApiError && !finalRefusal(error) && (error.status === 0 || error.status === 502 || error.status === 503 || error.status === 504)
 }
 
 /** passes a body on, turning its read errors into BrokenStream so a retry can tell them from a bad archive */

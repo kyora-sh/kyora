@@ -19,3 +19,17 @@ for (const [code, hint] of [
     }
   })
 }
+
+test("a refusal the server calls final (retryable: false) keeps its own advice, without the capacity hint", async () => {
+  const message = "a lifetime of 36000 s is unavailable here (longest: 8h); choose a shorter --ttl"
+  const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => Response.json({ error: "no_capacity", message, retryable: false }, { status: 503 }) })
+  try {
+    const api = new VmsClient({ url: server.url.toString(), key: "kyora_test", keySource: "test", urlSource: "test", credentials: "/dev/null" })
+    const refused = await api.list().catch((error: Error) => error)
+    expect(refused).toMatchObject({ status: 503, code: "no_capacity" })
+    expect((refused as Error).message).toEndWith(message)
+    expect((refused as Error).message).not.toContain("retry later")
+  } finally {
+    server.stop(true)
+  }
+})

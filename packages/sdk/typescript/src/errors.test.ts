@@ -41,6 +41,15 @@ describe("errorFromResponse", () => {
     expect(failure.message).toContain("no_capacity happened")
   })
 
+  test("a transient code the answer calls final (retryable: false) is a limit, not transient", async () => {
+    const final = await errorFromResponse("createSandbox", error(503, "no_capacity", { retryable: false }))
+    expect([final.code, final.status, final.class, final.retryable]).toEqual(["no_capacity", 503, "limit", false])
+    expect(isKyoraError(final, "transient")).toBe(false)
+    const again = await errorFromResponse("createSandbox", error(503, "no_capacity", { retryable: true }))
+    expect(again.class).toBe("transient")
+    expect((await errorFromResponse("createSandbox", error(409, "name_taken", { retryable: false }))).class).toBe("conflict")
+  })
+
   test("falls back to Retry-After, then to the catalog", async () => {
     const failure = await errorFromResponse("getSandbox", error(503, "rate_limited", {}, { "retry-after": "3" }))
     expect(failure.retryAfterMs).toBe(3000)
