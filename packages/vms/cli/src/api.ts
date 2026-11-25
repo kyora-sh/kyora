@@ -85,6 +85,22 @@ export type Kind = "platform" | "vmd"
 /** the `version` kyora cloud's /v1/health reports; a kyora-vmd reports its own release */
 export const PLATFORM_VERSION = "kyora-cloud"
 
+export interface PrivateNetworkMember {
+  sandboxId: string
+  ip: string
+  state: "pending" | "active"
+}
+
+export interface PrivateNetwork {
+  id: string
+  name: string
+  cidr: string
+  gateway: string
+  createdAt: string
+  memberCount: number
+  members?: PrivateNetworkMember[]
+}
+
 export interface Sandbox {
   /** false: created unshareable, so it is never shared */
   shareable?: boolean
@@ -130,6 +146,10 @@ export interface CreateSpec {
   diskGb?: number
   egressAllow?: string[]
   network?: Network
+  /** kyora cloud: join one private network, optionally at a fixed address */
+  privateNetwork?: { id: string; ip?: string }
+  /** kyora cloud: join several private networks (privateNetwork is the shorthand for one) */
+  privateNetworks?: Array<{ id: string; ip?: string }>
   /**
    * kyora cloud: the region to run in, and only there; `global` (or left
    * out, with no default of yours) is the region nearest you, overflowing to the next when it is full
@@ -904,6 +924,26 @@ export class VmsClient {
     if (await this.kind() === "vmd" && !(await this.health()).features?.includes("network.policy")) throw new ApiError("update network: network policy changes are unavailable on this server; update the machine software", 501, "egress_unsupported")
     id = await resolveDestructiveTarget(this, id)
     return this.call("update network", "PATCH", `/v1/sandboxes/${encodeURIComponent(id)}/network`, { json: policy })
+  }
+
+  /** kyora cloud: one of the account's private networks, with its members */
+  async privateNetwork(id: string): Promise<PrivateNetwork> {
+    const response = await this.send(`show network ${id}`, "GET", `/v1/networks/${encodeURIComponent(id)}`, { timeout: TIMEOUTS.short })
+    return (await response.json()) as PrivateNetwork
+  }
+
+  async createNetwork(name: string, cidr: string): Promise<PrivateNetwork> {
+    const response = await this.send(`create network ${name}`, "POST", "/v1/networks", { json: { name, cidr }, timeout: TIMEOUTS.short })
+    return (await response.json()) as PrivateNetwork
+  }
+
+  async networks(): Promise<PrivateNetwork[]> {
+    const response = await this.send("list private networks", "GET", "/v1/networks", { timeout: TIMEOUTS.short })
+    return ((await response.json()) as { networks?: PrivateNetwork[] }).networks ?? []
+  }
+
+  async removeNetwork(id: string): Promise<void> {
+    await this.send(`remove network ${id}`, "DELETE", `/v1/networks/${encodeURIComponent(id)}`, { timeout: TIMEOUTS.short, accept: [204] })
   }
 
   /** long-polls the ticket until its answer, or until `until.at`: a line that never answers is left, not waited on for ever */

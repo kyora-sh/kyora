@@ -800,16 +800,61 @@ x-kyora-error-codes:
     retryable: false
     class: conflict
     description: "The name is taken."
+  network_cidr_overlap:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "A sandbox can't join private networks whose subnets overlap."
+  network_full:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "Every member address of the private network is taken."
+  network_has_members:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The private network still has members; delete them first."
+  network_ip_taken:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The requested address is taken in the private network."
+  network_limit:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The account holds the most private networks it may; delete one first."
+  network_members:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The machine holds members of private networks, or is creating one, so it can't change region."
   network_not_allowed:
     status: [403]
     retryable: false
     class: auth
     description: "The network mode is not allowed."
+  network_not_found:
+    status: [404]
+    retryable: false
+    class: not_found
+    description: "The private network does not exist in this account."
   network_recreate:
     status: [409]
     retryable: false
     class: conflict
     description: "The network cannot be changed in place."
+  network_recreate:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The network cannot be changed in place."
+  network_region_mismatch:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "A private network's members stay in one region, and this create asks for another, or joins networks in different regions."
   network_unavailable:
     status: [503]
     retryable: false
@@ -960,6 +1005,46 @@ x-kyora-error-codes:
     retryable: false
     class: conflict
     description: "Presigned PUTs are unavailable for this bucket."
+  privnet_cidr_conflict:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The private network's subnet overlaps a range its machine uses; make a network with another subnet."
+  privnet_deferred:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "Migration, snapshot restores, sessions and cold storage are not available for private network members yet."
+  privnet_floor_unreadable:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The machine holds the private network down until an operator repairs it."
+  privnet_not_enabled:
+    status: [403]
+    retryable: false
+    class: auth
+    description: "Private networks are not enabled for this account."
+  privnet_not_synced:
+    status: [409]
+    retryable: true
+    class: transient
+    description: "The machine had not applied the private network yet; try again."
+  privnet_ports_exhausted:
+    status: [409]
+    retryable: true
+    class: transient
+    description: "The machine has no private network port free; try again later."
+  privnet_self_peer:
+    status: [409]
+    retryable: false
+    class: conflict
+    description: "The machine was sent its own key as a peer and refused the private network's update; contact kyora support if this persists."
+  privnet_unsupported:
+    status: [409]
+    retryable: true
+    class: transient
+    description: "No machine that holds private networks is available right now; try again later."
   public_url_access_required:
     status: [403]
     retryable: false
@@ -2110,6 +2195,88 @@ paths:
       responses:
         "204":
           description: Released.
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  /v1/networks:
+    post:
+      operationId: createNetwork
+      tags:
+        - network
+      summary: Create a private network
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/CreateNetworkRequest"
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Network"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+    get:
+      operationId: listNetworks
+      tags:
+        - network
+      summary: List private networks
+      responses:
+        "200":
+          description: Networks with member counts, without member lists.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/NetworkList"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+  "/v1/networks/{id}":
+    get:
+      operationId: getNetwork
+      tags:
+        - network
+      summary: Get a private network
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: The network, including its members.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Network"
+        "4XX":
+          "$ref": "#/components/responses/Error"
+        "5XX":
+          "$ref": "#/components/responses/Error"
+    delete:
+      operationId: deleteNetwork
+      tags:
+        - network
+      summary: Delete a private network with no members
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "204":
+          description: Deleted.
         "4XX":
           "$ref": "#/components/responses/Error"
         "5XX":
@@ -3983,6 +4150,40 @@ components:
             type: string
         restarted:
           type: boolean
+        privateNetworks:
+          type: array
+          description: "Every private network the sandbox is a member of, and its address in each."
+          items:
+            type: object
+            required:
+              - id
+              - cidr
+              - ip
+            properties:
+              id:
+                type: string
+              cidr:
+                type: string
+              ip:
+                type:
+                  - string
+                  - "null"
+        privateNetwork:
+          type: object
+          description: "The private network the sandbox is a member of, and its address there, when there is exactly one."
+          required:
+            - id
+            - cidr
+            - ip
+          properties:
+            id:
+              type: string
+            cidr:
+              type: string
+            ip:
+              type:
+                - string
+                - "null"
     SandboxList:
       type: object
       required:
@@ -4083,6 +4284,15 @@ components:
             - ci
             - "ci-strict"
           default: none
+        privateNetwork:
+          "$ref": "#/components/schemas/PrivateNetworkRequest"
+        privateNetworks:
+          type: array
+          description: "Join several private networks; privateNetwork is the shorthand for one, and setting both is a 400. Distinct networks whose subnets don't overlap (409 network_cidr_overlap)."
+          items:
+            "$ref": "#/components/schemas/PrivateNetworkRequest"
+          minItems: 1
+          maxItems: 4
         egressAllow:
           type: array
           items:
@@ -5631,6 +5841,122 @@ components:
           type: integer
         maxParts:
           type: integer
+    Network:
+      type: object
+      required:
+        - id
+        - name
+        - cidr
+        - gateway
+        - createdAt
+        - memberCount
+      properties:
+        id:
+          type: string
+          pattern: "^net_[0-9a-f]{20}$"
+        name:
+          type: string
+          pattern: "^[a-z0-9][a-z0-9-]{0,62}$"
+        cidr:
+          type: string
+        gateway:
+          type: string
+          pattern: '^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])$'
+          description: "The first address after the subnet's network address, reserved for its gateway."
+        createdAt:
+          type: string
+          format: "date-time"
+        memberCount:
+          type: integer
+          minimum: 0
+        members:
+          type: array
+          description: "Present when getting a network, absent when creating or listing networks."
+          items:
+            "$ref": "#/components/schemas/NetworkMember"
+        hosts:
+          type: array
+          description: "Kyora staff only (staff:fleet.read), when getting a network: the machines holding it. A machine leaves the list only once it acknowledged the network's deletion there, that is after its router was torn down (or the machine was revoked), so its absence means the router is gone."
+          items:
+            "$ref": "#/components/schemas/NetworkHost"
+    NetworkHost:
+      type: object
+      required:
+        - node
+        - ackedRev
+        - members
+        - state
+      properties:
+        node:
+          type: string
+          description: "The machine's id."
+        ackedRev:
+          type: integer
+          minimum: 0
+          description: "The last revision of the network the machine acknowledged."
+        members:
+          type: integer
+          minimum: 0
+          description: "The network's members on the machine."
+        state:
+          type: string
+          enum: [synced, syncing, removing]
+          description: "synced: it acknowledged the current revision; syncing: it hasn't yet; removing: it has no members left and its teardown isn't acknowledged yet."
+    NetworkList:
+      type: object
+      required:
+        - networks
+      properties:
+        networks:
+          type: array
+          items:
+            "$ref": "#/components/schemas/Network"
+    CreateNetworkRequest:
+      type: object
+      required:
+        - name
+        - cidr
+      properties:
+        name:
+          type: string
+          pattern: "^[a-z0-9][a-z0-9-]{0,62}$"
+        cidr:
+          type: string
+          pattern: '^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/(?:1[6-9]|2[0-8])$'
+          description: "A canonical IPv4 /16 to /28 subnet starting at its network address, inside 10.0.0.0/8, 172.16.0.0/12 or 192.168.0.0/16. Must not overlap 10.199.0.0/16, 10.200.0.0/16, 10.251.0.0/16, 100.64.0.0/10 or 169.254.0.0/16."
+      additionalProperties: false
+    PrivateNetworkRequest:
+      type: object
+      description: "Join a private network with any internet network mode. Requires a full token and private networks enabled for the account. Cannot be combined with fromSnapshot, session or hibernate.cold r2 (409 privnet_deferred)."
+      required:
+        - id
+      properties:
+        id:
+          type: string
+          pattern: "^net_[0-9a-f]{20}$"
+        ip:
+          type: string
+          pattern: '^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])$'
+          description: "An address of the network other than its network address, gateway or broadcast address. If absent, the lowest free member address is assigned."
+      additionalProperties: false
+    NetworkMember:
+      type: object
+      required:
+        - sandboxId
+        - ip
+        - state
+      properties:
+        sandboxId:
+          type: string
+          pattern: ^sb_
+        ip:
+          type: string
+          pattern: '^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])$'
+        state:
+          type: string
+          enum:
+            - pending
+            - active
     StorageKey:
       type: object
       required:

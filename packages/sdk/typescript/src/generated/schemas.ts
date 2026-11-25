@@ -114,6 +114,18 @@ export interface Sandbox {
   }
   warnings?: string[]
   restarted?: boolean
+  /** Every private network the sandbox is a member of, and its address in each. */
+  privateNetworks?: {
+    id: string
+    cidr: string
+    ip: string | null
+  }[]
+  /** The private network the sandbox is a member of, and its address there, when there is exactly one. */
+  privateNetwork?: {
+    id: string
+    cidr: string
+    ip: string | null
+  }
 }
 
 export interface SandboxList {
@@ -150,6 +162,9 @@ export interface CreateSandboxRequest {
   autoscale?: boolean
   diskGb?: number
   network?: "none" | "registries" | "open" | "ci" | "ci-strict"
+  privateNetwork?: PrivateNetworkRequest
+  /** Join several private networks; privateNetwork is the shorthand for one, and setting both is a 400. Distinct networks whose subnets don't overlap (409 network_cidr_overlap). */
+  privateNetworks?: PrivateNetworkRequest[]
   egressAllow?: string[]
   /** 0: no expiry, where allowed. */
   ttlSeconds?: number
@@ -785,6 +800,54 @@ export interface MultipartStartResponse {
   uploadId: string
   maxPartBytes: number
   maxParts: number
+}
+
+export interface Network {
+  id: string
+  name: string
+  cidr: string
+  /** The first address after the subnet's network address, reserved for its gateway. */
+  gateway: string
+  createdAt: string
+  memberCount: number
+  /** Present when getting a network, absent when creating or listing networks. */
+  members?: NetworkMember[]
+  /** Kyora staff only (staff:fleet.read), when getting a network: the machines holding it. A machine leaves the list only once it acknowledged the network's deletion there, that is after its router was torn down (or the machine was revoked), so its absence means the router is gone. */
+  hosts?: NetworkHost[]
+}
+
+export interface NetworkHost {
+  /** The machine's id. */
+  node: string
+  /** The last revision of the network the machine acknowledged. */
+  ackedRev: number
+  /** The network's members on the machine. */
+  members: number
+  /** synced: it acknowledged the current revision; syncing: it hasn't yet; removing: it has no members left and its teardown isn't acknowledged yet. */
+  state: "synced" | "syncing" | "removing"
+}
+
+export interface NetworkList {
+  networks: Network[]
+}
+
+export interface CreateNetworkRequest {
+  name: string
+  /** A canonical IPv4 /16 to /28 subnet starting at its network address, inside 10.0.0.0/8, 172.16.0.0/12 or 192.168.0.0/16. Must not overlap 10.199.0.0/16, 10.200.0.0/16, 10.251.0.0/16, 100.64.0.0/10 or 169.254.0.0/16. */
+  cidr: string
+}
+
+/** Join a private network with any internet network mode. Requires a full token and private networks enabled for the account. Cannot be combined with fromSnapshot, session or hibernate.cold r2 (409 privnet_deferred). */
+export interface PrivateNetworkRequest {
+  id: string
+  /** An address of the network other than its network address, gateway or broadcast address. If absent, the lowest free member address is assigned. */
+  ip?: string
+}
+
+export interface NetworkMember {
+  sandboxId: string
+  ip: string
+  state: "pending" | "active"
 }
 
 export interface StorageKey {

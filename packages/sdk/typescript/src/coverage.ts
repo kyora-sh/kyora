@@ -37,6 +37,11 @@ export const COVERAGE: Record<OperationId, Coverage> = {
   cancelQueueTicket: { method: "sandboxes.cancelTicket" },
   setSandboxNetwork: { method: "sandboxes.setNetwork" },
 
+  listNetworks: { method: "networks.list" },
+  createNetwork: { method: "networks.create" },
+  getNetwork: { method: "networks.get" },
+  deleteNetwork: { method: "networks.delete" },
+
   execCommand: { method: "exec.run" },
   attachExec: { method: "exec.attach" },
   cancelExec: { method: "exec.cancel" },

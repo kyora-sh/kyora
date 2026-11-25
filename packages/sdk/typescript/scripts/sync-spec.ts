@@ -21,6 +21,7 @@ export const PUBLIC_PREFIXES = [
   "/v1/sandboxes",
   "/v1/queue",
   "/v1/ports",
+  "/v1/networks",
   "/v1/domains",
   "/v1/pages",
   "/v1/shares",
