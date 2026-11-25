@@ -1,6 +1,6 @@
 {
   "name": "@kyora-sh/sdk",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "type": "module",
   "description": "The kyora API for TypeScript: sandboxes, exec, files, snapshots, ports and tokens, with typed errors and retries",
   "keywords": [
