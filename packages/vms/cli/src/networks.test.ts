@@ -40,6 +40,7 @@ beforeEach(async () => {
     }
     if (path === "/v1/sandboxes" && request.method === "POST") {
       if (refuseSandbox) return Response.json({ error: "network_full", message: "every address is taken" }, { status: 409 })
+      if ((body as { name?: string } | null)?.name === "constrained") return Response.json({ error: "token_constraint", message: "this token may not join private networks" }, { status: 403 })
       return Response.json({ id: "sb_created", name: "member", status: "running", network: "none", vcpus: 4, memoryMb: 8192, diskGb: 30, createdAt: network.createdAt, expiresAt: null }, { status: 201 })
     }
     return Response.json({ error: "network_not_found", message: "private network not found" }, { status: 404 })
@@ -150,8 +151,32 @@ test("run and new pass the private network option to sandbox creation", async ()
   }
 })
 
+test("refusals of private networks and token constraints carry no generic hint", async () => {
+  notEnabled = true
+  const refused = await run(["networks", "ls"])
+  expect(refused.stderr).toContain(NOT_ENABLED)
+  expect(refused.stderr).not.toContain("this account may not do that")
+  notEnabled = false
+  hasMembers = true
+  const busy = await run(["networks", "rm", "net_x"])
+  expect(busy.stderr).toContain("remove the network's sandboxes first")
+  expect(busy.stderr).not.toContain("the sandbox is busy")
+  const constrained = await run(["create", "constrained", "--private-network", "net_x"])
+  expect(constrained.stderr).toContain("this token may not join private networks")
+  expect(constrained.stderr).not.toContain("this account may not do that")
+  refuseSandbox = true
+  const full = await run(["create", "--private-network", "net_x"])
+  expect(full.stderr).toContain("every address is taken")
+  expect(full.stderr).not.toContain("the sandbox is busy")
+})
+
+test("several network names are looked up with one listing", async () => {
+  expect((await run(["create", "--private-network", "backend", "--private-network", "backend:10.20.0.9"])).code).toBe(0)
+  expect(calls.filter((call) => call.method === "GET" && call.path === "/v1/networks")).toHaveLength(1)
+})
+
 test("invalid network command shapes and private network flags fail before a request", async () => {
-  for (const args of [["networks"], ["networks", "create", "backend"], ["networks", "ls", "backend"], ["networks", "show"], ["networks", "rm", "net_x", "extra"], ["networks", "ls", "--cidr", network.cidr], ["networks", "move", "net_x"], ["create", "--private-network", ":10.20.0.5"], ["create", "--private-network", "net_x:"], ["create", "--private-network", "net_x:10.20.0.5:extra"], ["create", "--private-network", "net_x:invalid"]]) {
+  for (const args of [["networks"], ["networks", "create", "backend"], ["networks", "ls", "backend"], ["networks", "show"], ["networks", "rm", "net_x", "extra"], ["networks", "ls", "--cidr", network.cidr], ["networks", "move", "net_x"], ["create", "--private-network", ":10.20.0.5"], ["create", "--private-network", "net_x:"], ["create", "--private-network", "net_x:10.20.0.5:extra"], ["create", "--private-network", "net_x:invalid"], ["create", "--private-network", "net_x:256.1.1.1"], ["create", "--private-network", "net_x:10.20.0.05"], ["create", "--private-network", "backend", "--private-network", "net_x:bad"], ["create", "--private-network", "backend", "--network", "nowhere"]]) {
     expect((await run(args)).code).not.toBe(0)
   }
   expect(calls).toEqual([])

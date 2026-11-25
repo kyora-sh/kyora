@@ -320,8 +320,6 @@ export const ERROR_CODES = {
   network_ip_taken: { status: [409], retryable: false, class: "conflict" },
   /** The account holds the most private networks it may; delete one first. */
   network_limit: { status: [409], retryable: false, class: "conflict" },
-  /** The machine holds members of private networks, or is creating one, so it can't change region. */
-  network_members: { status: [409], retryable: false, class: "conflict" },
   /** The network mode is not allowed. */
   network_not_allowed: { status: [403], retryable: false, class: "auth" },
   /** The private network does not exist in this account. */
@@ -394,16 +392,12 @@ export const ERROR_CODES = {
   privnet_cidr_conflict: { status: [409], retryable: false, class: "conflict" },
   /** Migration, snapshot restores, sessions and cold storage are not available for private network members yet. */
   privnet_deferred: { status: [409], retryable: false, class: "conflict" },
-  /** The machine holds the private network down until an operator repairs it. */
-  privnet_floor_unreadable: { status: [409], retryable: false, class: "conflict" },
   /** Private networks are not enabled for this account. */
   privnet_not_enabled: { status: [403], retryable: false, class: "auth" },
   /** The machine had not applied the private network yet; try again. */
   privnet_not_synced: { status: [409], retryable: true, class: "transient" },
   /** The machine has no private network port free; try again later. */
   privnet_ports_exhausted: { status: [409], retryable: true, class: "transient" },
-  /** The machine was sent its own key as a peer and refused the private network's update; contact kyora support if this persists. */
-  privnet_self_peer: { status: [409], retryable: false, class: "conflict" },
   /** No machine that holds private networks is available right now; try again later. */
   privnet_unsupported: { status: [409], retryable: true, class: "transient" },
   /** Public hosting requires vms access. */

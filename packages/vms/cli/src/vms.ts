@@ -528,6 +528,8 @@ export async function vmsMain(argv: string[]): Promise<number> {
     return 0
   }
   const api = new VmsClient(config)
+  // every other flag of the create is checked before a network name is looked up
+  if (values["private-network"] !== undefined) sandboxSpec(values)
   const networks = values["private-network"] === undefined ? undefined : await privateNetworkOptions(api, values["private-network"], usage)
 
   const ergonomic = await ergonomicCommand(api, { verb, positionals, tail, json: asJson, values, spec: () => sandboxSpec(values, { networks }), wait: () => waitSeconds(values), env: () => parseEnv(values.env), usage })

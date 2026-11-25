@@ -551,5 +551,5 @@ class Networks(_Resource):
         return self._portal.run(self._aio.networks.get(id, **options))
 
     def delete(self, id: str, **options: Unpack[CallOptions]) -> None:
-        """a network with members is refused (network_has_members): delete or move them first"""
+        """a network with members is refused (network_has_members): delete them first"""
         return self._portal.run(self._aio.networks.delete(id, **options))

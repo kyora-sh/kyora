@@ -1,29 +1,35 @@
 import { ApiError, type CreateSpec, type PrivateNetwork, type VmsClient } from "./api"
 
 export const NetworkUsage = `usage:
-  kyora vms networks create <name> --cidr <cidr>   create a private IPv4 subnet
+  kyora vms networks create <name> --cidr <cidr> [--json]   create a private IPv4 subnet
   kyora vms networks ls [--json]                  your private networks
   kyora vms networks show <id|name> [--json]      network details and members
-  kyora vms networks rm <id|name>                 remove an empty network`
+  kyora vms networks rm <id|name> [--json]        remove an empty network`
 
 type Print = (line: string) => void
 
-export async function resolveNetworkId(api: VmsClient, input: string): Promise<string> {
+const OCTET = "(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])"
+const IPV4 = new RegExp(`^(?:${OCTET}\\.){3}${OCTET}$`)
+
+/** a network's id from its id or its name; `listing` is the account's networks, read once however many names there are */
+export async function resolveNetworkId(api: VmsClient, input: string, listing?: () => Promise<PrivateNetwork[]>): Promise<string> {
   if (input.startsWith("net_")) return input
-  const network = (await api.networks()).find((network) => network.name === input)
+  const network = (await (listing ?? (() => api.networks()))()).find((network) => network.name === input)
   if (!network) throw new ApiError(`network ${JSON.stringify(input)} not found`, 404, "network_not_found")
   return network.id
 }
 
-async function privateNetworkOption(api: VmsClient, value: string, usage: (message: string) => never): Promise<NonNullable<CreateSpec["privateNetwork"]>> {
-  const [name, ip, extra] = value.split(":")
-  if (!name || extra !== undefined || (ip !== undefined && !/^(?:\d{1,3}\.){3}\d{1,3}$/.test(ip))) usage("--private-network takes <id|name>[:<IPv4 address>]")
-  return { id: await resolveNetworkId(api, name), ...(ip !== undefined ? { ip } : {}) }
-}
-
-/** every --private-network of a create: one stays the `privateNetwork` shorthand */
+/** every --private-network of a create, all checked before any is looked up: one stays the `privateNetwork` shorthand */
 export async function privateNetworkOptions(api: VmsClient, values: string[], usage: (message: string) => never): Promise<Pick<CreateSpec, "privateNetwork" | "privateNetworks">> {
-  const networks = await Promise.all(values.map((value) => privateNetworkOption(api, value, usage)))
+  const parsed = values.map((value) => {
+    const [name, ip, extra] = value.split(":")
+    if (!name || extra !== undefined || (ip !== undefined && !IPV4.test(ip))) usage("--private-network takes <id|name>[:<IPv4 address>]")
+    return { name, ip }
+  })
+  let listed: Promise<PrivateNetwork[]> | undefined
+  const listing = () => (listed ??= api.networks())
+  const networks: Array<NonNullable<CreateSpec["privateNetwork"]>> = []
+  for (const { name, ip } of parsed) networks.push({ id: await resolveNetworkId(api, name, listing), ...(ip !== undefined ? { ip } : {}) })
   return networks.length === 1 ? { privateNetwork: networks[0]! } : { privateNetworks: networks }
 }
 

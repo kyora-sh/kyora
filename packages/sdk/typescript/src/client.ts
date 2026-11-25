@@ -665,7 +665,7 @@ export class Networks {
     return this.transport.json("getNetwork", { path: { id } }, options)
   }
 
-  /** a network with members is refused (`network_has_members`): delete or move them first */
+  /** a network with members is refused (`network_has_members`): delete them first */
   async delete(id: string, options: CallOptions = {}): Promise<void> {
     await this.transport.json("deleteNetwork", { path: { id } }, options)
   }

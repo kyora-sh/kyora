@@ -113,6 +113,10 @@ export interface Sandbox {
   id: string
   status: string
   network: Network
+  /** kyora cloud: every private network the sandbox is a member of, and its address in each */
+  privateNetworks?: Array<{ id: string; cidr: string; ip: string | null }>
+  /** kyora cloud: the one private network it is a member of, when there is exactly one */
+  privateNetwork?: { id: string; cidr: string; ip: string | null }
   vcpus: number
   allocatedVcpus?: number
   memoryMb: number
@@ -603,7 +607,9 @@ async function apiError(action: string, response: Response, kind: Kind, hints = 
     if (text.trim() && !text.trimStart().startsWith("<")) message = text.trim().slice(0, 200)
   }
   message ??= `the server request failed (HTTP ${response.status})`
-  const hint = hints
+  // a private network's or a token constraint's refusal says itself what to do; a status's generic hint would mislead
+  const own = code !== undefined && (/^(?:privnet|network)_/.test(code) || code === "token_constraint")
+  const hint = hints && !own
     ? code === "image_unavailable"
       ? kind === "platform" ? "`kyora vms images` shows availability; choose an available region or ask an admin to build the profile" : "build this profile on the host before retrying"
       : ((code === "quota_exceeded" && action.startsWith("snapshot ") ? SHARED_CODE_HINTS.snapshot_quota : undefined) ?? (kind === "platform" && code ? CODE_HINTS[code] : undefined) ?? (code ? SHARED_CODE_HINTS[code] : undefined) ?? HINTS[kind][response.status])
@@ -926,24 +932,24 @@ export class VmsClient {
     return this.call("update network", "PATCH", `/v1/sandboxes/${encodeURIComponent(id)}/network`, { json: policy })
   }
 
-  /** kyora cloud: one of the account's private networks, with its members */
+  /** kyora cloud: one of the account's private networks, with its members. The API's own messages say what to do: no hint. */
   async privateNetwork(id: string): Promise<PrivateNetwork> {
-    const response = await this.send(`show network ${id}`, "GET", `/v1/networks/${encodeURIComponent(id)}`, { timeout: TIMEOUTS.short })
+    const response = await this.send(`show network ${id}`, "GET", `/v1/networks/${encodeURIComponent(id)}`, { timeout: TIMEOUTS.short, noHint: true })
     return (await response.json()) as PrivateNetwork
   }
 
   async createNetwork(name: string, cidr: string): Promise<PrivateNetwork> {
-    const response = await this.send(`create network ${name}`, "POST", "/v1/networks", { json: { name, cidr }, timeout: TIMEOUTS.short })
+    const response = await this.send(`create network ${name}`, "POST", "/v1/networks", { json: { name, cidr }, timeout: TIMEOUTS.short, noHint: true })
     return (await response.json()) as PrivateNetwork
   }
 
   async networks(): Promise<PrivateNetwork[]> {
-    const response = await this.send("list private networks", "GET", "/v1/networks", { timeout: TIMEOUTS.short })
+    const response = await this.send("list private networks", "GET", "/v1/networks", { timeout: TIMEOUTS.short, noHint: true })
     return ((await response.json()) as { networks?: PrivateNetwork[] }).networks ?? []
   }
 
   async removeNetwork(id: string): Promise<void> {
-    await this.send(`remove network ${id}`, "DELETE", `/v1/networks/${encodeURIComponent(id)}`, { timeout: TIMEOUTS.short, accept: [204] })
+    await this.send(`remove network ${id}`, "DELETE", `/v1/networks/${encodeURIComponent(id)}`, { timeout: TIMEOUTS.short, accept: [204], noHint: true })
   }
 
   /** long-polls the ticket until its answer, or until `until.at`: a line that never answers is left, not waited on for ever */

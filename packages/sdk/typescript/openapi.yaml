@@ -825,11 +825,6 @@ x-kyora-error-codes:
     retryable: false
     class: conflict
     description: "The account holds the most private networks it may; delete one first."
-  network_members:
-    status: [409]
-    retryable: false
-    class: conflict
-    description: "The machine holds members of private networks, or is creating one, so it can't change region."
   network_not_allowed:
     status: [403]
     retryable: false
@@ -840,11 +835,6 @@ x-kyora-error-codes:
     retryable: false
     class: not_found
     description: "The private network does not exist in this account."
-  network_recreate:
-    status: [409]
-    retryable: false
-    class: conflict
-    description: "The network cannot be changed in place."
   network_recreate:
     status: [409]
     retryable: false
@@ -1015,11 +1005,6 @@ x-kyora-error-codes:
     retryable: false
     class: conflict
     description: "Migration, snapshot restores, sessions and cold storage are not available for private network members yet."
-  privnet_floor_unreadable:
-    status: [409]
-    retryable: false
-    class: conflict
-    description: "The machine holds the private network down until an operator repairs it."
   privnet_not_enabled:
     status: [403]
     retryable: false
@@ -1035,11 +1020,6 @@ x-kyora-error-codes:
     retryable: true
     class: transient
     description: "The machine has no private network port free; try again later."
-  privnet_self_peer:
-    status: [409]
-    retryable: false
-    class: conflict
-    description: "The machine was sent its own key as a peer and refused the private network's update; contact kyora support if this persists."
   privnet_unsupported:
     status: [409]
     retryable: true
@@ -5874,34 +5854,6 @@ components:
           description: "Present when getting a network, absent when creating or listing networks."
           items:
             "$ref": "#/components/schemas/NetworkMember"
-        hosts:
-          type: array
-          description: "Kyora staff only (staff:fleet.read), when getting a network: the machines holding it. A machine leaves the list only once it acknowledged the network's deletion there, that is after its router was torn down (or the machine was revoked), so its absence means the router is gone."
-          items:
-            "$ref": "#/components/schemas/NetworkHost"
-    NetworkHost:
-      type: object
-      required:
-        - node
-        - ackedRev
-        - members
-        - state
-      properties:
-        node:
-          type: string
-          description: "The machine's id."
-        ackedRev:
-          type: integer
-          minimum: 0
-          description: "The last revision of the network the machine acknowledged."
-        members:
-          type: integer
-          minimum: 0
-          description: "The network's members on the machine."
-        state:
-          type: string
-          enum: [synced, syncing, removing]
-          description: "synced: it acknowledged the current revision; syncing: it hasn't yet; removing: it has no members left and its teardown isn't acknowledged yet."
     NetworkList:
       type: object
       required:

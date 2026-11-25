@@ -1357,30 +1357,6 @@ class MultipartStartResponse(BaseModel):
     max_parts: Annotated[int, Field(alias='maxParts')]
 
 
-class NetworkHost(BaseModel):
-    model_config = ConfigDict(
-        populate_by_name=True,
-    )
-    node: Annotated[str, Field(description="The machine's id.")]
-    acked_rev: Annotated[
-        int,
-        Field(
-            alias='ackedRev',
-            description='The last revision of the network the machine acknowledged.',
-            ge=0,
-        ),
-    ]
-    members: Annotated[
-        int, Field(description="The network's members on the machine.", ge=0)
-    ]
-    state: Annotated[
-        Literal['synced', 'syncing', 'removing'] | str,
-        Field(
-            description="synced: it acknowledged the current revision; syncing: it hasn't yet; removing: it has no members left and its teardown isn't acknowledged yet."
-        ),
-    ]
-
-
 class CreateNetworkRequest(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -1880,12 +1856,6 @@ class Network(BaseModel):
         list[NetworkMember] | None,
         Field(
             description='Present when getting a network, absent when creating or listing networks.'
-        ),
-    ] = None
-    hosts: Annotated[
-        list[NetworkHost] | None,
-        Field(
-            description="Kyora staff only (staff:fleet.read), when getting a network: the machines holding it. A machine leaves the list only once it acknowledged the network's deletion there, that is after its router was torn down (or the machine was revoked), so its absence means the router is gone."
         ),
     ] = None
 

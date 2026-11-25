@@ -812,19 +812,6 @@ export interface Network {
   memberCount: number
   /** Present when getting a network, absent when creating or listing networks. */
   members?: NetworkMember[]
-  /** Kyora staff only (staff:fleet.read), when getting a network: the machines holding it. A machine leaves the list only once it acknowledged the network's deletion there, that is after its router was torn down (or the machine was revoked), so its absence means the router is gone. */
-  hosts?: NetworkHost[]
-}
-
-export interface NetworkHost {
-  /** The machine's id. */
-  node: string
-  /** The last revision of the network the machine acknowledged. */
-  ackedRev: number
-  /** The network's members on the machine. */
-  members: number
-  /** synced: it acknowledged the current revision; syncing: it hasn't yet; removing: it has no members left and its teardown isn't acknowledged yet. */
-  state: "synced" | "syncing" | "removing"
 }
 
 export interface NetworkList {

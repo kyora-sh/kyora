@@ -887,8 +887,11 @@ class Networks:
         answer = await self._transport.json("listNetworks", None, options)
         return load(NetworkList, answer, "listNetworks").networks
 
-    async def create(self, request: CreateNetworkRequest | Mapping[str, Any], **options: Unpack[CallOptions]) -> Network:
-        answer = await self._transport.json("createNetwork", RequestParts(body=dump(CreateNetworkRequest, request)), options)
+    async def create(
+        self, request: CreateNetworkRequest | Mapping[str, Any], **options: Unpack[CallOptions]
+    ) -> Network:
+        body = dump(CreateNetworkRequest, request)
+        answer = await self._transport.json("createNetwork", RequestParts(body=body), options)
         return load(Network, answer, "createNetwork")
 
     async def get(self, id: str, **options: Unpack[CallOptions]) -> Network:
@@ -896,5 +899,5 @@ class Networks:
         return load(Network, answer, "getNetwork")
 
     async def delete(self, id: str, **options: Unpack[CallOptions]) -> None:
-        """a network with members is refused (network_has_members): delete or move them first"""
+        """a network with members is refused (network_has_members): delete them first"""
         await self._transport.json("deleteNetwork", RequestParts(path={"id": id}), options)
