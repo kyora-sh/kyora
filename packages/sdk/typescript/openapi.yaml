@@ -1122,6 +1122,11 @@ x-kyora-error-codes:
     retryable: false
     class: conflict
     description: "A secret of that name exists: rotate it instead."
+  secret_not_delivered:
+    status: [403]
+    retryable: false
+    class: auth
+    description: "A secret the create names has no enabled, unexpired delivery whose scope includes the new sandbox."
   session_busy:
     status: [409]
     retryable: true
@@ -4419,6 +4424,25 @@ components:
           type: boolean
           default: false
           description: "true: the sandbox's commands reach the account's secret bindings (/v1/secrets) through the egress broker, which injects each secret into requests to its bound host; the value never enters the sandbox. On network none or registries the broker's host joins egressAllow (one of its 32 hosts). It takes one of the sandbox's labels itself (kyora.proxy-secrets, so at most 30 of your own), and its egress token is in the guest's memory, so a full snapshot of it needs allowSecretsInMemory (409 secrets_in_memory otherwise)."
+        secrets:
+          type: array
+          maxItems: 16
+          description: "The account's secret deliveries this sandbox takes, by secret and target. Each needs an enabled, unexpired delivery whose scope includes the sandbox (else secret_not_delivered); code in the sandbox can read their values."
+          items:
+            type: object
+            required:
+              - secret
+            properties:
+              secret:
+                type: string
+                description: "The secret's name or id."
+              env:
+                type: string
+                pattern: "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+              file:
+                type: string
+                pattern: "^[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$"
+            additionalProperties: false
         region:
           type: string
         wait:

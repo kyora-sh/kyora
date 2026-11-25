@@ -168,6 +168,13 @@ export interface CreateSandboxRequest {
   downloadCache?: boolean
   /** true: the sandbox's commands reach the account's secret bindings (/v1/secrets) through the egress broker, which injects each secret into requests to its bound host; the value never enters the sandbox. On network none or registries the broker's host joins egressAllow (one of its 32 hosts). It takes one of the sandbox's labels itself (kyora.proxy-secrets, so at most 30 of your own), and its egress token is in the guest's memory, so a full snapshot of it needs allowSecretsInMemory (409 secrets_in_memory otherwise). */
   proxySecrets?: boolean
+  /** The account's secret deliveries this sandbox takes, by secret and target. Each needs an enabled, unexpired delivery whose scope includes the sandbox (else secret_not_delivered); code in the sandbox can read their values. */
+  secrets?: {
+    /** The secret's name or id. */
+    secret: string
+    env?: string
+    file?: string
+  }[]
   region?: string
   /** Seconds a create may wait in the queue. */
   wait?: number

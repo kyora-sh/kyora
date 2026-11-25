@@ -225,6 +225,7 @@ ERROR_CODES: dict[str, ErrorCode] = {
     'scp_unavailable': {'status': (501,), 'retryable': False, 'error_class': 'unavailable', 'description': 'SCP is unavailable in this sandbox.'},
     'secret_changed': {'status': (409,), 'retryable': False, 'error_class': 'conflict', 'description': 'The secret moved to another version meanwhile (or its hosts no longer cover the binding): read it again.'},
     'secret_exists': {'status': (409,), 'retryable': False, 'error_class': 'conflict', 'description': 'A secret of that name exists: rotate it instead.'},
+    'secret_not_delivered': {'status': (403,), 'retryable': False, 'error_class': 'auth', 'description': 'A secret the create names has no enabled, unexpired delivery whose scope includes the new sandbox.'},
     'session_busy': {'status': (409,), 'retryable': True, 'error_class': 'transient', 'description': 'A wake or hibernate of the session is under way; try again after Retry-After.'},
     'session_ended': {'status': (409,), 'retryable': False, 'error_class': 'conflict', 'description': 'The session ended.'},
     'session_limit': {'status': (429,), 'retryable': False, 'error_class': 'limit', 'description': 'Session limit reached.'},

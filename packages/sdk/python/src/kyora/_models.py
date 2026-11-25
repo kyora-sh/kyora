@@ -305,6 +305,18 @@ class Display1(BaseModel):
     height: Annotated[int, Field(ge=480, le=1600)]
 
 
+class CreateSandboxSecret(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+        populate_by_name=True,
+    )
+    secret: Annotated[str, Field(description="The secret's name or id.")]
+    env: Annotated[str | None, Field(pattern='^[A-Za-z_][A-Za-z0-9_]{0,127}$')] = None
+    file: Annotated[str | None, Field(pattern='^[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$')] = (
+        None
+    )
+
+
 class CreateSandboxRequest(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -359,6 +371,13 @@ class CreateSandboxRequest(BaseModel):
             description="true: the sandbox's commands reach the account's secret bindings (/v1/secrets) through the egress broker, which injects each secret into requests to its bound host; the value never enters the sandbox. On network none or registries the broker's host joins egressAllow (one of its 32 hosts). It takes one of the sandbox's labels itself (kyora.proxy-secrets, so at most 30 of your own), and its egress token is in the guest's memory, so a full snapshot of it needs allowSecretsInMemory (409 secrets_in_memory otherwise).",
         ),
     ] = False
+    secrets: Annotated[
+        list[CreateSandboxSecret] | None,
+        Field(
+            description="The account's secret deliveries this sandbox takes, by secret and target. Each needs an enabled, unexpired delivery whose scope includes the sandbox (else secret_not_delivered); code in the sandbox can read their values.",
+            max_length=16,
+        ),
+    ] = None
     region: str | None = None
     wait: Annotated[
         int | None, Field(description='Seconds a create may wait in the queue.', ge=0)

@@ -1,7 +1,7 @@
 import pytest
-from fakes import error, json
+from fakes import error, json, sandbox
 
-from kyora import ConflictError
+from kyora import AuthError, ConflictError
 
 pytestmark = pytest.mark.anyio
 
@@ -95,6 +95,21 @@ async def test_every_secrets_method_reaches_its_operation_with_its_body(client):
     assert bodies[5] == {"enabled": False}
     assert bodies[7] == {"file": "api-key", "scope": SCOPE}
     assert bodies[8] == {"expiresAt": None}
+
+
+async def test_a_create_that_names_deliveries_sends_them_and_proxy_secrets(client):
+    kyora, requests = client(lambda r, i: json(201, sandbox("sb_1")))
+    secrets = [{"secret": "example", "env": "API_KEY"}, {"secret": "sec_2", "file": "api-key"}]
+    await kyora.sandboxes.create({"secrets": secrets, "proxy_secrets": True})
+    assert requests[0].json["secrets"] == secrets
+    assert requests[0].json["proxySecrets"] is True
+
+
+async def test_a_create_whose_secret_has_no_delivery_for_it_is_an_auth_error(client):
+    kyora, _ = client(lambda r, i: error(403, "secret_not_delivered"))
+    with pytest.raises(AuthError) as raised:
+        await kyora.sandboxes.create({"secrets": [{"secret": "example", "env": "API_KEY"}]})
+    assert raised.value.code == "secret_not_delivered"
 
 
 async def test_a_rotation_that_lost_the_race_is_a_conflict(client):

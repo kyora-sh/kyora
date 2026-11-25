@@ -5,10 +5,12 @@
 
 import argparse
 import difflib
+import io
 import re
 import subprocess
 import sys
 import tempfile
+import tokenize
 from pathlib import Path
 
 import yaml
@@ -41,8 +43,27 @@ PATTERN = re.compile(r"pattern=(r?)'((?:[^'\\]|\\.)*)'")
 LOOK_AROUND = re.compile(r"\(\?<?[=!](?:[^()\\]|\\.)*\)")
 
 
+"""inline models datamodel-codegen names before the schema of the same name, which it then numbers"""
+RENAMED = {"Secret": "CreateSandboxSecret", "Secret1": "Secret"}
+
+
 def without_look_around(match: re.Match[str]) -> str:
     return f"pattern={match[1]}'{LOOK_AROUND.sub('', match[2])}'"
+
+
+def renamed(text: str) -> str:
+    """`text` with the names of RENAMED swapped, as identifiers only, never inside strings"""
+    for name in RENAMED:
+        if not re.search(rf"^class {name}\(", text, re.M):
+            raise SystemExit(f"RENAMED names {name}, which the models no longer define: update RENAMED")
+    lines = text.splitlines(True)
+    tokens = tokenize.generate_tokens(io.StringIO(text).readline)
+    found = [t for t in tokens if t.type == tokenize.NAME and t.string in RENAMED]
+    for token in reversed(found):
+        row, col = token.start
+        line = lines[row - 1]
+        lines[row - 1] = line[:col] + RENAMED[token.string] + line[col + len(token.string) :]
+    return "".join(lines)
 
 
 def models(spec: Path) -> str:
@@ -54,6 +75,7 @@ def models(spec: Path) -> str:
     text = STRING_LITERAL.sub(r"Literal[\1] | str", text)
     # pydantic's regex engine has no look-around: the client checks the rest, the API the whole pattern
     text = PATTERN.sub(without_look_around, text)
+    text = renamed(text)
     return HEADER + text.split("\n", 1)[1] if text.startswith("#") else HEADER + text
 
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { client, error, json } from "./testing/fake.js"
+import { client, error, json, sandbox } from "./testing/fake.js"
 
 const scope = { labels: { team: "docs" } }
 const binding = { id: "sb1", secretId: "sec_1", host: "api.example.com", pathPrefix: "/", methods: ["GET"], injection: { type: "header", name: "authorization", template: "Bearer {{secret}}" }, scope, enabled: true, expiresAt: null, createdAt: 1, updatedAt: 1, lastUsedAt: null }
@@ -43,6 +43,19 @@ describe("secrets", () => {
     expect(requests[3]!.json).toEqual({ value: "example-value-2", version: 1 })
     expect(requests[5]!.json).toEqual({ enabled: false })
     expect(requests[8]!.json).toEqual({ expiresAt: null })
+  })
+
+  test("a create that names deliveries sends them, and proxySecrets", async () => {
+    const { kyora, requests } = client(() => json(201, sandbox("sb_1")))
+    const secrets = [{ secret: "example", env: "API_KEY" }, { secret: "sec_2", file: "api-key" }]
+    await kyora.sandboxes.create({ secrets, proxySecrets: true })
+    expect(requests[0]!.json).toMatchObject({ secrets, proxySecrets: true })
+  })
+
+  test("a create whose secret has no delivery for it is an auth error", async () => {
+    const { kyora } = client(() => error(403, "secret_not_delivered"))
+    const failure = await kyora.sandboxes.create({ secrets: [{ secret: "example", env: "API_KEY" }] }).catch((caught: unknown) => caught)
+    expect(failure).toMatchObject({ code: "secret_not_delivered", status: 403 })
   })
 
   test("a rotation that lost the race is a conflict", async () => {

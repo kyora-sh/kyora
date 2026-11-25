@@ -438,6 +438,8 @@ export const ERROR_CODES = {
   secret_changed: { status: [409], retryable: false, class: "conflict" },
   /** A secret of that name exists: rotate it instead. */
   secret_exists: { status: [409], retryable: false, class: "conflict" },
+  /** A secret the create names has no enabled, unexpired delivery whose scope includes the new sandbox. */
+  secret_not_delivered: { status: [403], retryable: false, class: "auth" },
   /** A wake or hibernate of the session is under way; try again after Retry-After. */
   session_busy: { status: [409], retryable: true, class: "transient" },
   /** The session ended. */
