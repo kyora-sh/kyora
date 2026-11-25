@@ -161,10 +161,13 @@ def from_response(operation: str, status: int, text: str, retry_after_header: st
     else:
         after = retry_after_seconds(retry_after_header, now)
     retryable = fields.get("retryable") if isinstance(fields.get("retryable"), bool) else None
+    # a refusal of a transient code that the answer itself says waiting won't fix (a lifetime no machine allows) is a limit
+    final = retryable is False and classify(code, status)[0] == "transient"
     return make_error(
         f"{operation}: {message}",
         code=code,
         status=status,
+        class_="limit" if final else None,
         retryable=retryable,
         retry_after=after,
         operation=operation,

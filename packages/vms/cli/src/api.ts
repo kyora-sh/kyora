@@ -572,9 +572,12 @@ async function apiError(action: string, response: Response, kind: Kind, hints = 
   let code: string | undefined
   let message: string | undefined
   let after: number | undefined
+  let final = false
   try {
-    const body = JSON.parse(text) as { error?: unknown; message?: unknown; retryAfterMs?: unknown }
+    const body = JSON.parse(text) as { error?: unknown; message?: unknown; retryAfterMs?: unknown; retryable?: unknown }
     code = typeof body.error === "string" ? body.error : undefined
+    // the server says waiting won't help (a lifetime no machine allows): its message carries the advice, not a status's
+    final = body.retryable === false
     message = typeof body.message === "string" ? body.message : code
     // kyora cloud says it to the millisecond on a 429 or 503; the header only in whole seconds
     if (typeof body.retryAfterMs === "number" && Number.isFinite(body.retryAfterMs) && body.retryAfterMs >= 0) after = Math.round(body.retryAfterMs)
@@ -586,7 +589,7 @@ async function apiError(action: string, response: Response, kind: Kind, hints = 
   const hint = hints
     ? code === "image_unavailable"
       ? kind === "platform" ? "`kyora vms images` shows availability; choose an available region or ask an admin to build the profile" : "build this profile on the host before retrying"
-      : ((code === "quota_exceeded" && action.startsWith("snapshot ") ? SHARED_CODE_HINTS.snapshot_quota : undefined) ?? (kind === "platform" && code ? CODE_HINTS[code] : undefined) ?? (code ? SHARED_CODE_HINTS[code] : undefined) ?? HINTS[kind][response.status])
+      : ((code === "quota_exceeded" && action.startsWith("snapshot ") ? SHARED_CODE_HINTS.snapshot_quota : undefined) ?? (kind === "platform" && code ? CODE_HINTS[code] : undefined) ?? (code ? SHARED_CODE_HINTS[code] : undefined) ?? (final ? undefined : HINTS[kind][response.status]))
     : undefined
   return new ApiError(`${action}: ${message}${hint ? `; ${hint}` : ""}`, response.status, code, after ?? retryAfterMs(response.headers.get("retry-after")))
 }

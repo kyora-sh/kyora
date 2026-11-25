@@ -114,6 +114,8 @@ export async function errorFromResponse(operation: string, response: Response): 
   const after = typeof fields.retryAfterMs === "number" && Number.isFinite(fields.retryAfterMs) && fields.retryAfterMs >= 0 ? Math.round(fields.retryAfterMs) : parseRetryAfter(response.headers.get("retry-after"))
   const init: KyoraErrorInit = { code, status: response.status, message: `${operation}: ${message}`, operation, body }
   if (typeof fields.retryable === "boolean") init.retryable = fields.retryable
+  // a refusal of a transient code that the answer itself says waiting won't fix (a lifetime no machine allows) is a limit
+  if (fields.retryable === false && classify(code, response.status).class === "transient") init.class = "limit"
   if (after !== undefined) init.retryAfterMs = after
   return new KyoraError(init)
 }

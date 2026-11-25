@@ -48,6 +48,15 @@ def test_reads_code_message_retryable_and_retry_after_from_the_body():
     assert "no_capacity happened" in str(failure)
 
 
+def test_a_transient_code_the_answer_calls_final_is_a_limit_not_transient():
+    final = answer(error(503, "no_capacity", {"retryable": False}))
+    assert isinstance(final, LimitError)
+    assert (final.code, final.status, final.class_, final.retryable) == ("no_capacity", 503, "limit", False)
+    again = answer(error(503, "no_capacity", {"retryable": True}))
+    assert isinstance(again, TransientError)
+    assert answer(error(409, "name_taken", {"retryable": False})).class_ == "conflict"
+
+
 def test_falls_back_to_retry_after_then_to_the_catalog():
     assert answer(error(503, "rate_limited", {}, {"retry-after": "3"})).retry_after == 3
     assert answer(error(503, "waking", {"retryable": False})).retryable is False
