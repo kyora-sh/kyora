@@ -254,6 +254,10 @@ kyora vms shell <id> [-- cmd…]            a terminal in the sandbox that outli
 kyora vms health                          is the host up, is the key accepted
 kyora vms nodes                           kyora cloud's machines (admins only)
 kyora vms regions [default <id>|global]   kyora cloud's regions, what is free in each, where your creates go
+kyora vms networks create <name> --cidr <cidr>
+                                          kyora cloud: a private IPv4 subnet; create, run and new join it with --private-network ID[:IP]
+kyora vms networks ls | show <id|name> | rm <id|name>
+                                          your private networks and their members (private networks are enabled per account)
 kyora vms login [--url URL]               sign in to kyora cloud through the browser
 kyora vms login --org ORG                 a token that acts as an org you're in
 kyora vms org ls | org use <org>|personal

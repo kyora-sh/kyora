@@ -2,6 +2,7 @@ import { KyoraError } from "./errors.js"
 import { Exec } from "./exec.js"
 import { OPERATIONS, type OperationId, type Operations } from "./generated/operations.js"
 import type {
+  CreateNetworkRequest,
   CreateSandboxRequest,
   CreateSnapshotRequest,
   CreateTokenRequest,
@@ -12,6 +13,8 @@ import type {
   HeldPortList,
   LoginResponse,
   Me,
+  Network,
+  NetworkList,
   NetworkUpdateRequest,
   NetworkUpdateResponse,
   Port,
@@ -236,6 +239,7 @@ export class Kyora {
   readonly snapshots: Snapshots
   readonly ports: Ports
   readonly tokens: Tokens
+  readonly networks: Networks
 
   constructor(options: KyoraOptions = {}) {
     const fetcher = options.fetch ?? globalThis.fetch
@@ -257,6 +261,7 @@ export class Kyora {
     this.snapshots = new Snapshots(this)
     this.ports = new Ports(this.transport)
     this.tokens = new Tokens(this.transport)
+    this.networks = new Networks(this.transport)
   }
 
   toJSON(): Record<string, unknown> {
@@ -637,5 +642,31 @@ export class Tokens {
   async delete(id: string, options: TokenScope & CallOptions = {}): Promise<void> {
     if (options.org) await this.transport.json("deleteOrgToken", { path: { org: options.org, id } }, options)
     else await this.transport.json("deleteToken", { path: { id } }, options)
+  }
+}
+
+/**
+ * The account's private networks: a sandbox joins one at create (`privateNetwork`, or `privateNetworks` for several)
+ * and reaches its other members on their private addresses. Private networks are enabled per account; until then
+ * these calls fail with `privnet_not_enabled`.
+ */
+export class Networks {
+  constructor(private readonly transport: Transport) {}
+
+  async list(options: CallOptions = {}): Promise<Network[]> {
+    return (await this.transport.json<NetworkList>("listNetworks", {}, options)).networks
+  }
+
+  create(request: CreateNetworkRequest, options: CallOptions = {}): Promise<Network> {
+    return this.transport.json("createNetwork", { body: request }, options)
+  }
+
+  get(id: string, options: CallOptions = {}): Promise<Network> {
+    return this.transport.json("getNetwork", { path: { id } }, options)
+  }
+
+  /** a network with members is refused (`network_has_members`): delete them first */
+  async delete(id: string, options: CallOptions = {}): Promise<void> {
+    await this.transport.json("deleteNetwork", { path: { id } }, options)
   }
 }

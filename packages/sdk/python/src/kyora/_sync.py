@@ -15,6 +15,7 @@ from ._client import Archive, AsyncKyora, ByteStream
 from ._exec import ByteOffsets, ExecInput, ExecOptions, ExecResult, ExecStream, Output
 from ._http import DEFAULT_RETRY, CallOptions, Retry, WaitOptions
 from ._models import (
+    CreateNetworkRequest,
     CreateSandboxRequest,
     CreateSnapshotRequest,
     CreateTokenRequest,
@@ -23,6 +24,7 @@ from ._models import (
     Health,
     LoginResponse,
     Me,
+    Network,
     NetworkUpdateRequest,
     NetworkUpdateResponse,
     Port,
@@ -174,6 +176,7 @@ class Kyora:
         self.snapshots = Snapshots(self.aio, self._portal)
         self.ports = Ports(self.aio, self._portal)
         self.tokens = Tokens(self.aio, self._portal)
+        self.networks = Networks(self.aio, self._portal)
 
     def __repr__(self) -> str:
         return f"Kyora(base_url={self.aio.transport.base_url!r}, region={self.region!r})"
@@ -533,3 +536,20 @@ class Tokens(_Resource):
     def delete(self, id: str, *, org: str | None = None, **options: Unpack[CallOptions]) -> None:
         """revokes a token"""
         return self._portal.run(self._aio.tokens.delete(id, org=org, **options))
+
+
+class Networks(_Resource):
+    """The account's private networks; enabled per account, until then privnet_not_enabled."""
+
+    def list(self, **options: Unpack[CallOptions]) -> list[Network]:
+        return self._portal.run(self._aio.networks.list(**options))
+
+    def create(self, request: CreateNetworkRequest | Mapping[str, Any], **options: Unpack[CallOptions]) -> Network:
+        return self._portal.run(self._aio.networks.create(request, **options))
+
+    def get(self, id: str, **options: Unpack[CallOptions]) -> Network:
+        return self._portal.run(self._aio.networks.get(id, **options))
+
+    def delete(self, id: str, **options: Unpack[CallOptions]) -> None:
+        """a network with members is refused (network_has_members): delete them first"""
+        return self._portal.run(self._aio.networks.delete(id, **options))

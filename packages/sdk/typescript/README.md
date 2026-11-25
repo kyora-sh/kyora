@@ -140,6 +140,18 @@ const { token } = await kyora.tokens.create({ name: "doc-agent", scopes: ["vms:r
 
 A restore whose sandbox fails or runs out of time destroys it, unless you pass your own `idempotencyKey` (or `Idempotency-Key` header): the same key answers the sandbox an earlier restore with that key made, which may be another caller's, so the SDK never destroys it. The error then carries the sandbox's id in `sandboxId` (an abort throws the signal's reason as it is; `onProgress` has seen the sandbox by then), and destroying it is up to you.
 
+## Private networks
+
+```ts
+const network = await kyora.networks.create({ name: "backend", cidr: "10.20.0.0/24" })
+const db = await kyora.sandboxes.create({ privateNetwork: { id: network.id, ip: "10.20.0.5" } })
+const app = await kyora.sandboxes.create({ privateNetwork: { id: network.id } }) // reaches db at 10.20.0.5
+await kyora.networks.get(network.id) // its members
+await kyora.networks.delete(network.id) // once it has no members
+```
+
+Private networks are enabled per account; until then these calls fail with `privnet_not_enabled`, whose message says how to get them.
+
 ## Everything else
 
 `kyora.call(operationId, { path, query, body })` sends any operation of the API, typed from the spec, with the same errors, retries and idempotency keys. JSON operations answer their parsed body; streamed, binary and HEAD ones the `Response`. Operations without a helper yet: custom domains, pages, computer use and live views, terminals, account images and object storage. `OPERATIONS` lists every operation; the generated types (`Sandbox`, `Snapshot`, `ExecFrame`, ...) are exported too.

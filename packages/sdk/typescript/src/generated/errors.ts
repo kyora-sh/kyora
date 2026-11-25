@@ -310,10 +310,24 @@ export const ERROR_CODES = {
   name_reserved: { status: [409], retryable: false, class: "conflict" },
   /** The name is taken. */
   name_taken: { status: [409], retryable: false, class: "conflict" },
+  /** A sandbox can't join private networks whose subnets overlap. */
+  network_cidr_overlap: { status: [409], retryable: false, class: "conflict" },
+  /** Every member address of the private network is taken. */
+  network_full: { status: [409], retryable: false, class: "conflict" },
+  /** The private network still has members; delete them first. */
+  network_has_members: { status: [409], retryable: false, class: "conflict" },
+  /** The requested address is taken in the private network. */
+  network_ip_taken: { status: [409], retryable: false, class: "conflict" },
+  /** The account holds the most private networks it may; delete one first. */
+  network_limit: { status: [409], retryable: false, class: "conflict" },
   /** The network mode is not allowed. */
   network_not_allowed: { status: [403], retryable: false, class: "auth" },
+  /** The private network does not exist in this account. */
+  network_not_found: { status: [404], retryable: false, class: "not_found" },
   /** The network cannot be changed in place. */
   network_recreate: { status: [409], retryable: false, class: "conflict" },
+  /** A private network's members stay in one region, and this create asks for another, or joins networks in different regions. */
+  network_region_mismatch: { status: [409], retryable: false, class: "conflict" },
   /** The sandbox's network could not be set up on its machine. */
   network_unavailable: { status: [503], retryable: false, class: "unavailable" },
   /** The account has no vms access. */
@@ -374,6 +388,18 @@ export const ERROR_CODES = {
   precondition_failed: { status: [412], retryable: false, class: "invalid" },
   /** Presigned PUTs are unavailable for this bucket. */
   presign_put_unavailable: { status: [409], retryable: false, class: "conflict" },
+  /** The private network's subnet overlaps a range its machine uses; make a network with another subnet. */
+  privnet_cidr_conflict: { status: [409], retryable: false, class: "conflict" },
+  /** Migration, snapshot restores, sessions and cold storage are not available for private network members yet. */
+  privnet_deferred: { status: [409], retryable: false, class: "conflict" },
+  /** Private networks are not enabled for this account. */
+  privnet_not_enabled: { status: [403], retryable: false, class: "auth" },
+  /** The machine had not applied the private network yet; try again. */
+  privnet_not_synced: { status: [409], retryable: true, class: "transient" },
+  /** The machine has no private network port free; try again later. */
+  privnet_ports_exhausted: { status: [409], retryable: true, class: "transient" },
+  /** No machine that holds private networks is available right now; try again later. */
+  privnet_unsupported: { status: [409], retryable: true, class: "transient" },
   /** Public hosting requires vms access. */
   public_url_access_required: { status: [403], retryable: false, class: "auth" },
   /** The public URL is disabled. */

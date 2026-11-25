@@ -1,4 +1,4 @@
-export { Kyora, Sandboxes, Snapshots, Files, Ports, Tokens } from "./client.js"
+export { Kyora, Sandboxes, Snapshots, Files, Ports, Tokens, Networks } from "./client.js"
 export type { KyoraOptions, CreateOptions, PollOptions, UploadOptions, TokenScope, CallInput, CallResult } from "./client.js"
 export { Exec, ExecDetachedError } from "./exec.js"
 export type { ExecRequest, ExecOptions, ExecResult, ByteOffsets, Stream } from "./exec.js"
