@@ -111,6 +111,8 @@ result.stdout // bytes; result.stderr too
 result.truncated // { stdout, stderr }: output the result is missing
 ```
 
+`onOutput(stream, chunk)` gets each piece of output as it arrives: `stream` is `"stdout"` or `"stderr"`, and `chunk` is a `Uint8Array` that may end mid line, or mid UTF-8 character. A promise it returns is awaited before the next chunk is read. Output past `maxOutputBytes` (16 MiB per stream) is left out of the result but still reaches `onOutput`, and a reattach carries on after the last byte it saw, so no chunk comes twice. If `onOutput` throws, `run` rejects with that error at once, and the command keeps running under its `key`.
+
 Every command runs resumable under an exec key (`key`, a fresh one unless you pass it). When the stream breaks, the command keeps running and `run` reattaches from the bytes it already has, for up to `reattachWindowMs` (2 min). At its deadline `run` stops waiting and throws an `ExecDetachedError` with the command's `execId`, `key` and `offsets`; the command keeps running. Get the rest with `exec.attach(sandbox, execId, { from: offsets })`, or run the same request with the same `key` again, from another process too: kyora rejoins the running command instead of starting it twice. A stream that breaks before kyora named the command is found again by its key; one that started without an id is never sent again, so a command never runs twice. Aborting `signal` cancels the command (`cancelOnAbort: false` keeps it). An exception from `onOutput` ends the call as it is. `result.stdout` keeps the first 16 MiB of each stream (`maxOutputBytes`); `onOutput` sees all of it.
 
 ## Files
