@@ -1,12 +1,12 @@
 import { resolveTarget, shortIds } from "./names"
 import { ApiError, type CreateSpec, type ExecRequest, type Health, type NodeInfo, type Sandbox, type VmsClient } from "./api"
 import type { Config } from "./config"
-import { execDeadline, runExec, timeoutGraceMs } from "./exec"
+import { execDeadline, reattachPolicy, runExec, timeoutGraceMs } from "./exec"
 import { describeHistory, historyHint, installHistory, prepareHistory, withHistory, type History, type HistoryOptions } from "./history"
 import { Interrupt } from "./interrupt"
 import { FAILED, note, printJson, queueNotes, regionNote, summarizeList } from "./output"
 import { listFiles } from "./pack"
-import { destroyQuietly, historyEvent, reportPull } from "./run"
+import { destroyQuietly, historyEvent, reportPull, sandboxEnded } from "./run"
 import { pull, push, pushShape, type PushOptions } from "./transfer"
 import { formatBytes, formatMs, relativeTime } from "./units"
 
@@ -147,10 +147,16 @@ export async function pullPaths(api: VmsClient, id: string, paths: string[], to:
   const interrupt = new Interrupt()
   const results: unknown[] = []
   let code = 0
+  let gone: string | null = null
   try {
     for (const path of paths) {
+      if (gone !== null) {
+        note(`${path}: not tried, ${id} has ended`)
+        results.push({ path, error: "sandbox_gone" })
+        continue
+      }
       try {
-        const result = await pull(api, id, path, to, interrupt.signal)
+        const result = await pull(api, id, path, to, interrupt.signal, reattachPolicy())
         if (reportPull(result)) code = FAILED
         const ranged = result.ranged ? { ranged: true } : {}
         results.push({ path, to, entries: result.entries, bytes: result.received, written: result.written, refused: result.refused, failed: result.failed, ...ranged })
@@ -158,9 +164,11 @@ export async function pullPaths(api: VmsClient, id: string, paths: string[], to:
       } catch (error) {
         if (interrupt.interrupted) return interrupt.code!
         const missing = error instanceof ApiError && error.status === 404
-        const reason = missing ? "not found in the sandbox" : error instanceof Error ? error.message : String(error)
+        if (missing) gone = await sandboxEnded(api, id, interrupt.signal)
+        if (interrupt.interrupted) return interrupt.code!
+        const reason = gone !== null ? `not downloaded, ${gone}` : missing ? "not found in the sandbox" : error instanceof Error ? error.message : String(error)
         note(`${path}: ${reason}`)
-        results.push({ path, error: missing ? "not_found" : reason })
+        results.push({ path, error: gone !== null ? "sandbox_gone" : missing ? "not_found" : reason })
         code = FAILED
       }
     }

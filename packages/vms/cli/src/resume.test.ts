@@ -209,7 +209,10 @@ describe("giving up", () => {
     expect(reconnects(result.stderr)).toBe(1)
     expect(vmd.attaches.length).toBeGreaterThanOrEqual(3)
     expect(Date.now() - started).toBeLessThan(10_000)
-    expect(vmd.destroyed).toHaveLength(1)
+    expect(vmd.destroyed).toHaveLength(0)
+    expect(result.stderr).toMatch(/kept sb_\w+ (\([\w-]+\) )?until \S+Z, or sooner after (\w+|its idle timeout) without activity: lost the command's stream, and it may still be running, `kyora vms exec [\w-]+ -- …`, `kyora vms rm [\w-]+` when done/)
+    expect(vmd.requests.filter((request) => request.startsWith("PATCH /v1/sandboxes/"))).toHaveLength(1)
+    expect([...vmd.sandboxes.values()][0]!.ttlSeconds).toBeGreaterThanOrEqual(3600)
   })
 
   test("reattaches that only say attached and then detached are no progress: the window still runs out", async () => {
@@ -475,7 +478,8 @@ describe("a stream that never ends", () => {
       expect(result.stderr).toMatch(/the exec stream went silent \(nothing heard for 800ms\) and can't be reattached, the server never named the command; it may still be running in sb_\w+/)
       expect(result.ms).toBeLessThan(10_000)
       expect(reconnects(result.stderr)).toBe(0)
-      expect(server.destroyed).toHaveLength(1)
+      expect(server.destroyed).toHaveLength(0)
+      expect(result.stderr).toMatch(/kept sb_\w+ (\([\w-]+\) )?until \S+Z, or sooner after (\w+|its idle timeout) without activity: lost the command's stream, and it may still be running/)
     })
   }
 
@@ -636,7 +640,8 @@ describe("--timeout is kyora's own deadline too", () => {
     expect(again.code).toBe(124)
     expect(again.stderr).toContain("--out /work/target/app: not fetched within 500ms of giving up on the command")
     expect(again.ms).toBeLessThan(10_000)
-    expect(server.destroyed).toHaveLength(2)
+    expect(again.stderr).toMatch(/kept sb_\w+ (\([\w-]+\) )?until \S+Z, or sooner after (\w+|its idle timeout) without activity: the outputs were not downloaded, `kyora vms pull [\w-]+ \/work\/target\/app`, `kyora vms rm [\w-]+` when done/)
+    expect(server.destroyed).toHaveLength(1)
   })
 })
 

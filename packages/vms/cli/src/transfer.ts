@@ -1,5 +1,6 @@
 import { posix } from "node:path"
 import { ApiError, type MultipartUpload, type UploadResult, type VmsClient } from "./api"
+import { STILL_RECONNECTING_MS, type ReattachPolicy } from "./exec"
 import { extractTar, type ExtractResult } from "./extract"
 import { PartPool, partsInFlight, pause, sendParts, type PartProgress, type SentParts } from "./multipart"
 import { note, notePrefix } from "./output"
@@ -7,7 +8,7 @@ import { listFiles, uploadBody, type Listing, type PackEntry, type UploadBody } 
 import { rangedSize, rangedStream } from "./ranged"
 import { autoShards, planShards } from "./shard"
 import { TarTruncated } from "./tar"
-import { formatBytes } from "./units"
+import { formatBytes, formatMs } from "./units"
 import { decompressIfZstd, zstdAvailable } from "./zstd"
 
 export const WORK = "/work"
@@ -364,19 +365,43 @@ async function downloadBody(api: VmsClient, response: Response, signal?: AbortSi
 
 /**
  * Downloads a path and unpacks it into `to`. A download only reads, and the extractor
- * replaces what is there (it never writes through it), so one that the network or a restart
- * on the way cut off (no answer, a reset mid-body, a 502/503/504) is fetched and unpacked
- * again from the start, up to TRANSFER_ATTEMPTS times.
+ * replaces what is there (it never writes through it, and removes a file cut off mid-way),
+ * so one that the network or a restart on the way cut off (no answer, a name that does not
+ * resolve, a reset mid-body, a 502/503/504) is fetched and unpacked again from the start:
+ * up to TRANSFER_ATTEMPTS times, or with `policy`, backing off as a reattach does until its
+ * window runs out, each try cut off at the window's end.
  */
-export async function pull(api: VmsClient, id: string, path: string, to: string, signal?: AbortSignal): Promise<PullResult> {
+export async function pull(api: VmsClient, id: string, path: string, to: string, signal?: AbortSignal, policy?: ReattachPolicy): Promise<PullResult> {
   const started = Date.now()
+  let failing: { since: number; deadline: number; delay: number; noted: number; last: unknown } | null = null
+  const stillFailing = (error: unknown) => {
+    const message = `${errorText(error)}; still failing after ${formatMs(policy!.windowMs)} of retries`
+    return error instanceof ApiError ? new ApiError(message, error.status, error.code) : new BrokenStream(message)
+  }
   for (let attempt = 1; ; attempt++) {
+    const window = failing ? AbortSignal.timeout(Math.max(0, failing.deadline - Date.now())) : null
     try {
-      return { ...(await pullOnce(api, id, path, to, signal)), durationMs: Date.now() - started }
+      return { ...(await pullOnce(api, id, path, to, window ? (signal ? AbortSignal.any([signal, window]) : window) : signal)), durationMs: Date.now() - started }
     } catch (error) {
-      if (signal?.aborted || attempt >= TRANSFER_ATTEMPTS || !transient(error)) throw error
-      note(`download of ${path} broke off (${errorText(error)}); fetching it again`)
-      await pause(retryDelay(attempt), signal ?? new AbortController().signal)
+      if (signal?.aborted) throw error
+      if (window?.aborted) throw stillFailing(failing!.last)
+      if (!transient(error)) throw error
+      if (!policy) {
+        if (attempt >= TRANSFER_ATTEMPTS) throw error
+        note(`download of ${path} broke off (${errorText(error)}); fetching it again`)
+        await pause(retryDelay(attempt), signal ?? new AbortController().signal)
+        continue
+      }
+      const now = Date.now()
+      failing ??= { since: now, deadline: now + policy.windowMs, delay: policy.baseDelayMs, noted: -Infinity, last: error }
+      failing.last = error
+      if (now >= failing.deadline) throw stillFailing(error)
+      if (now - failing.noted >= (policy.stillMs ?? STILL_RECONNECTING_MS)) {
+        note(`download of ${path} broke off (${errorText(error)}${failing.noted > 0 ? `, ${formatMs(now - failing.since)} so far` : ""}); fetching it again`)
+        failing.noted = now
+      }
+      await pause(Math.min(failing.delay * (0.5 + Math.random() / 2), failing.deadline - now), signal ?? new AbortController().signal)
+      failing.delay = Math.min(policy.maxDelayMs, failing.delay * 2)
     }
   }
 }

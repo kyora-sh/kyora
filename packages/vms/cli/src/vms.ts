@@ -180,7 +180,9 @@ run:
                     (1-${MAX_SHARDS}; cloud default: one per 256 MiB, up to 8; direct server default: 1)
   -o, --out PATH    download PATH (relative to /work) afterwards, whatever the exit code
   --to DIR          where --out lands (default --dir), laid out as under /work
-  --keep            keep the sandbox and print its id instead of destroying it
+  --keep            keep the sandbox and print its id instead of destroying it. Without it,
+                    an --out that failed to download (not a missing path) or a lost stream
+                    keeps it 1h (KYORA_VMS_KEEP_ON_FAILURE_TTL, seconds) for kyora vms pull
 
 shell (a persistent terminal):
   --name NAME       the session (default main); another name is another session

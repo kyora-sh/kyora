@@ -470,6 +470,8 @@ export class ApiError extends Error {
     readonly code?: string,
     /** what the server's Retry-After asked for, in ms */
     readonly retryAfterMs?: number,
+    /** a 404's `ended`: why a sandbox that existed has ended, as the server says it */
+    readonly ended?: string,
   ) {
     super(message)
   }
@@ -477,7 +479,7 @@ export class ApiError extends Error {
 
 export class ApiResponseError extends ApiError {
   constructor(error: ApiError, readonly body: unknown) {
-    super(error.message, error.status, error.code, error.retryAfterMs)
+    super(error.message, error.status, error.code, error.retryAfterMs, error.ended)
   }
 }
 
@@ -596,10 +598,14 @@ async function apiError(action: string, response: Response, kind: Kind, hints = 
   let code: string | undefined
   let message: string | undefined
   let after: number | undefined
+  let ended: string | undefined
   try {
-    const body = JSON.parse(text) as { error?: unknown; message?: unknown; retryAfterMs?: unknown }
+    const body = JSON.parse(text) as { error?: unknown; message?: unknown; retryAfterMs?: unknown; ended?: unknown; ref?: unknown }
     code = typeof body.error === "string" ? body.error : undefined
+    if (response.status === 404 && typeof body.ended === "string" && body.ended) ended = body.ended
     message = typeof body.message === "string" ? body.message : code
+    // kyora cloud's reference for an internal error: the line in its logs that says what happened
+    if (message && typeof body.ref === "string" && /^[\w-]{1,64}$/.test(body.ref)) message = `${message} (ref ${body.ref})`
     // kyora cloud says it to the millisecond on a 429 or 503; the header only in whole seconds
     if (typeof body.retryAfterMs === "number" && Number.isFinite(body.retryAfterMs) && body.retryAfterMs >= 0) after = Math.round(body.retryAfterMs)
   } catch {
@@ -614,7 +620,7 @@ async function apiError(action: string, response: Response, kind: Kind, hints = 
       ? kind === "platform" ? "`kyora vms images` shows availability; choose an available region or ask an admin to build the profile" : "build this profile on the host before retrying"
       : ((code === "quota_exceeded" && action.startsWith("snapshot ") ? SHARED_CODE_HINTS.snapshot_quota : undefined) ?? (kind === "platform" && code ? CODE_HINTS[code] : undefined) ?? (code ? SHARED_CODE_HINTS[code] : undefined) ?? HINTS[kind][response.status])
     : undefined
-  return new ApiError(`${action}: ${message}${hint ? `; ${hint}` : ""}`, response.status, code, after ?? retryAfterMs(response.headers.get("retry-after")))
+  return new ApiError(`${action}: ${message}${hint ? `; ${hint}` : ""}`, response.status, code, after ?? retryAfterMs(response.headers.get("retry-after")), ended)
 }
 
 /**
@@ -1015,9 +1021,9 @@ export class VmsClient {
     return await response.json() as { id: string; name?: string }
   }
 
-  async update(id: string, change: { name?: string; ttlSeconds?: number }): Promise<Sandbox> {
+  async update(id: string, change: { name?: string; ttlSeconds?: number }, signal?: AbortSignal): Promise<Sandbox> {
     try {
-      return await this.call<Sandbox>(`update ${id}`, "PATCH", sandboxPath(id), { json: change })
+      return await this.call<Sandbox>(`update ${id}`, "PATCH", sandboxPath(id), { json: change, signal })
     } catch (error) {
       if (error instanceof ApiError && error.status === 400) {
         const component = error.code === "unknown_method" ? "kyora-node" : (/only cpuLimit, memoryMb and autoscale can change/.test(error.message) ? "kyora-vmd" : null)
@@ -1323,8 +1329,8 @@ export class VmsClient {
    * A JSON call on kyora cloud for the session commands: the same
    * bearer, redirect and error handling as every other call. `raw` returns the response itself.
    */
-  async call<T>(action: string, method: string, path: string, options: { json?: unknown; body?: Uint8Array<ArrayBuffer>; contentType?: string; timeout?: number; accept?: number[] } = {}): Promise<T> {
-    const response = await this.send(action, method, path, { json: options.json, body: options.body, contentType: options.contentType, timeout: options.timeout ?? TIMEOUTS.create, accept: options.accept })
+  async call<T>(action: string, method: string, path: string, options: { json?: unknown; body?: Uint8Array<ArrayBuffer>; contentType?: string; timeout?: number; accept?: number[]; signal?: AbortSignal } = {}): Promise<T> {
+    const response = await this.send(action, method, path, { json: options.json, body: options.body, contentType: options.contentType, timeout: options.timeout ?? TIMEOUTS.create, accept: options.accept, signal: options.signal })
     if (response.status === 204) return undefined as T
     return (await response.json()) as T
   }
