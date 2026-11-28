@@ -1,5 +1,12 @@
 # kyora
 
+## 0.4.1
+
+### Patch Changes
+
+- 852e55b: A failed command names the command it was and prints the server's reference when one is available. `kyora vms run` waits and asks again when the platform refuses to start a command for now, and keeps the sandbox if the command never starts. A rate-limited request shows the server's own message, without the unrelated hint about concurrent sandboxes.
+- 4d068f2: `kyora vms exec` and `kyora vms run` reattach to a command across a break of up to 10 minutes and say when they reattached. `vms run` retries downloads through a lost connection and keeps a sandbox whose outputs did not come down, printing the `kyora vms pull` command that fetches them; a sandbox that ended says so and why, and an internal error prints a reference.
+
 ## 0.4.0
 
 ### Minor Changes
