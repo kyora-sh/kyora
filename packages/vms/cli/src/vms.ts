@@ -182,7 +182,9 @@ run:
   --to DIR          where --out lands (default --dir), laid out as under /work
   --keep            keep the sandbox and print its id instead of destroying it. Without it,
                     an --out that failed to download (not a missing path) or a lost stream
-                    keeps it 1h (KYORA_VMS_KEEP_ON_FAILURE_TTL, seconds) for kyora vms pull
+                    keeps it 1h (KYORA_VMS_KEEP_ON_FAILURE_TTL, seconds) for kyora vms pull,
+                    and a command its exec limit refused on every try (it never ran) keeps it
+                    as long, or until its idle timeout, for kyora vms exec or kyora vms rm
 
 shell (a persistent terminal):
   --name NAME       the session (default main); another name is another session

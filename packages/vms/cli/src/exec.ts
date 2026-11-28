@@ -60,6 +60,25 @@ type Stream = keyof StreamOffsets
 /** the exec ids the agent hands out: 128 random bits */
 const EXEC_ID = /^[0-9a-f]{32}$/
 
+/** the server's reference for an error, printed only when it is a plain token that names something */
+const REF = /^(?!(?:none|null|undefined|0+)$)[\w-]{1,64}$/i
+
+/** a resumable command's id, and the exec stream's own: either names the command in a failure */
+const COMMAND_ID_HEADER = "x-kyora-exec-id"
+const RPC_ID_HEADER = "x-kyora-exec"
+
+/** kyora cloud's id for the exec's history row: `r_` and 12 random bytes in base64url */
+const HISTORY_ID = /^r_[A-Za-z0-9_-]{16}$/
+/** said by kyora cloud in the response header only: a stream line is the machine's, which could name any row */
+const HISTORY_ID_HEADER = "x-kyora-exec-history"
+
+/** a started event with the header's history id in place of whatever the line itself carried */
+function withHistory(event: Record<string, unknown>, historyId: string | null): Record<string, unknown> {
+  const rest = { ...event }
+  delete rest.historyId
+  return historyId === null ? rest : { ...rest, historyId }
+}
+
 /**
  * On an exec or attach response: the server sends a line at least this often (ms), so silence
  * means the stream is broken from the first byte on. kyora-vmd and kyora cloud say it.
@@ -243,8 +262,14 @@ export type OutputSink = (stream: "stdout" | "stderr", data: Uint8Array | string
 class Relay {
   readonly bytes: StreamOffsets = { stdout: 0, stderr: 0 }
   execId: string | null = null
+  /** what names the command in a failure: its exec id from `started`, or the response's header */
+  label: string | null = null
+  /** kyora cloud's id for the exec's history row, which names the command in a failure before `label` does */
+  historyId: string | null = null
   /** the last `error` event, reported with the outcome */
   error: string | null = null
+  /** the server's reference for that error */
+  ref: string | null = null
 
   constructor(
     private readonly json: boolean,
@@ -271,6 +296,9 @@ class Relay {
     const started = Date.now()
     // a reattach's stream (an exec id is known) comes from a server that sends keepalives
     const watch: Watch = { armed: response.headers.has(KEEPALIVE_HEADER) || this.execId !== null, heard: started, machine: started, marked: false, machineMarks: false, seq: 0, nodeSeq: 0 }
+    this.label ??= [COMMAND_ID_HEADER, RPC_ID_HEADER].map((name) => response.headers.get(name)).find((value) => value !== null && EXEC_ID.test(value)) ?? null
+    const historyHeader = response.headers.get(HISTORY_ID_HEADER)
+    if (historyHeader !== null && HISTORY_ID.test(historyHeader)) this.historyId ??= historyHeader
 
     const handle = async (line: string) => {
       if (!line.trim()) return
@@ -291,7 +319,9 @@ class Relay {
           onProgress = undefined
         }
       }
-      if (this.json) await write(process.stdout, `${line}\n`)
+      // --json's started line carries the header's history id beside the command's own, never one the frame itself names
+      const out = event?.type === "started" && (this.historyId !== null || Object.hasOwn(event, "historyId")) ? JSON.stringify(withHistory(event, this.historyId)) : line
+      if (this.json) await write(process.stdout, `${out}\n`)
       if (!event) return
       if (event.type === "stdout" || event.type === "stderr") {
         const data = payload(event)
@@ -300,7 +330,10 @@ class Relay {
         this.bytes[event.type] += byteLength(data)
         written += byteLength(data)
       } else if (event.type === "started") {
-        if (event.resumable === true && typeof event.id === "string" && EXEC_ID.test(event.id)) this.execId = event.id
+        if (typeof event.id === "string" && EXEC_ID.test(event.id)) {
+          this.label = event.id
+          if (event.resumable === true) this.execId = event.id
+        }
       } else if (event.type === "gap") {
         this.gap(event)
       } else if (event.type === "detached") {
@@ -310,6 +343,7 @@ class Relay {
       } else if (event.type === "error") {
         failed = typeof event.message === "string" ? event.message : "unknown"
         this.error = `remote error: ${failed}`
+        this.ref = typeof event.ref === "string" && REF.test(event.ref) ? event.ref : null
       }
     }
 
@@ -429,6 +463,14 @@ async function cancelRemote(api: VmsClient, id: string, execId: string): Promise
   }
 }
 
+/** a failure as a report quotes it: kyora cloud's history id for the exec, else the command's exec id, and the server's reference, when known */
+function named(relay: Relay, error: string | null, unnamed = false): string | null {
+  if (error === null) return null
+  const ref = relay.ref && error === relay.error && !error.includes(`(ref ${relay.ref})`) ? ` (ref ${relay.ref})` : ""
+  const id = relay.historyId ?? relay.label
+  return `${id && !unnamed ? `exec ${id}: ` : ""}${error}${ref}`
+}
+
 /**
  * The deadline passed: the stream is dropped already. A command with an id is cancelled by it
  * (a plain one dies with its stream); the caller destroys the sandbox or leaves it.
@@ -464,6 +506,7 @@ export async function runExec(
 ): Promise<ExecOutcome> {
   const policy = options.policy ?? reattachPolicy()
   const relay = new Relay(options.json, policy.idleMs, options.output)
+  const ended = (outcome: ExecOutcome, unnamed = false): ExecOutcome => ({ ...outcome, error: named(relay, outcome.error, unnamed) })
   const expires = options.deadline ? expiry(options.deadline.at) : null
   // every request, read and wait below ends at Ctrl-C or at the deadline; which one it was decides what follows
   const signal = expires ? (options.signal ? AbortSignal.any([options.signal, expires.signal]) : expires.signal) : options.signal
@@ -501,14 +544,14 @@ export async function runExec(
       if (ending.kind === "exit") {
         api.execExited(id)
         relay.checkTotals(ending.exit)
-        return { code: exitCodeOf(ending.exit), exit: ending.exit, error: relay.error }
+        return ended({ code: exitCodeOf(ending.exit), exit: ending.exit, error: relay.error })
       }
-      if (ending.kind === "error") return { code: FAILED, exit: null, error: relay.error }
+      if (ending.kind === "error") return ended({ code: FAILED, exit: null, error: relay.error })
       const execId = relay.execId
       if (!execId) {
         // without an id there is nothing to reattach to: a plain exec, or one whose first line never came
-        if (!ending.silent) return { code: FAILED, exit: null, error: "the exec stream ended without an exit status (connection lost?)", lost: true }
-        return { code: FAILED, exit: null, error: `the exec stream went silent (${ending.reason}) and can't be reattached, the server never named the command; it may still be running in ${id}`, lost: true }
+        if (!ending.silent) return ended({ code: FAILED, exit: null, error: "the exec stream ended without an exit status (connection lost?)", lost: true })
+        return ended({ code: FAILED, exit: null, error: `the exec stream went silent (${ending.reason}) and can't be reattached, the server never named the command; it may still be running in ${id}`, lost: true }, true)
       }
       if (!episode || ending.progressed) episode = { deadline: Date.now() + policy.windowMs, delay: policy.baseDelayMs }
       const state = reconnecting ?? startReconnecting()
@@ -518,7 +561,7 @@ export async function runExec(
       while (!attached) {
         if (Date.now() >= episode.deadline) {
           const error = `lost the command's stream (${last}) and could not reattach within ${formatMs(policy.windowMs)}; it may still be running in ${id}`
-          return { code: FAILED, exit: null, error, lost: true }
+          return ended({ code: FAILED, exit: null, error, lost: true })
         }
         await pause(Math.min(episode.delay * (0.5 + Math.random() / 2), episode.deadline - Date.now()), signal ?? new AbortController().signal)
         if (Date.now() >= episode.deadline) continue
@@ -531,7 +574,7 @@ export async function runExec(
         } catch (error) {
           next.close()
           if (signal?.aborted) throw signal.reason ?? error
-          if (!attempt.signal.aborted && !reattachable(error)) return { code: FAILED, exit: null, error: `lost the command's stream (${last}), and it can't be reattached: ${message(error)}`, lost: true }
+          if (!attempt.signal.aborted && !reattachable(error)) return ended({ code: FAILED, exit: null, error: `lost the command's stream (${last}), and it can't be reattached: ${message(error)}`, lost: true })
           last = message(error)
           state.why = last
         } finally {
@@ -549,7 +592,7 @@ export async function runExec(
       if (relay.execId) await cancelRemote(api, id, relay.execId)
       throw error
     }
-    if (expires?.signal.aborted) return giveUp(api, id, relay.execId, options.deadline!)
+    if (expires?.signal.aborted) return ended(await giveUp(api, id, relay.execId, options.deadline!))
     throw error
   } finally {
     expires?.clear()

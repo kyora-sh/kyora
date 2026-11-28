@@ -63,7 +63,7 @@ test("a host that never resolves still gives up at the window, saying why, and t
   } as unknown as VmsClient
   const at = Date.now()
   const outcome = await runExec(api, "sb_test", { cmd: ["true"] }, { json: false, policy })
-  expect(outcome).toMatchObject({ code: 125, lost: true, error: expect.stringMatching(/^lost the command's stream \(.*getaddrinfo ENOTFOUND nowhere\.invalid\)\) and could not reattach within 200ms; it may still be running in sb_test$/) })
+  expect(outcome).toMatchObject({ code: 125, lost: true, error: expect.stringMatching(/^exec a{32}: lost the command's stream \(.*getaddrinfo ENOTFOUND nowhere\.invalid\)\) and could not reattach within 200ms; it may still be running in sb_test$/) })
   expect(Date.now() - at).toBeLessThan(1_000)
 })
 
@@ -121,6 +121,77 @@ test("every resumable exec carries a key of its own, and a reattach follows a `s
   // a caller's own key goes as it is
   await runExec(api, "sb_test", { cmd: ["true"], key: "setup-1" }, { json: false, policy })
   expect(keys[2]).toBe("setup-1")
+})
+
+test("an exec failure names the command and the server's reference, so a report can be traced", async () => {
+  const ndjson = (headers: Record<string, string>, ...events: Array<Record<string, unknown>>) => new Response(events.map((event) => `${JSON.stringify(event)}\n`).join(""), { headers })
+  const failing = (response: () => Response) => ({ exec: async () => response(), attach: async () => { throw new ApiError("gone", 404, "exec_not_found") }, execExited: () => {} }) as unknown as VmsClient
+  const remote = await runExec(failing(() => ndjson({}, { type: "started", id: "a".repeat(32), resumable: true }, { type: "error", message: "the machine went away", ref: "8f0a1b2c-AMS" })), "sb_test", { cmd: ["true"] }, { json: false, policy })
+  expect(remote).toMatchObject({ code: 125, error: `exec ${"a".repeat(32)}: remote error: the machine went away (ref 8f0a1b2c-AMS)` })
+  const unreferenced = await runExec(failing(() => ndjson({}, { type: "started", id: "a".repeat(32), resumable: true }, { type: "error", message: "boom", ref: "<script>" })), "sb_test", { cmd: ["true"] }, { json: false, policy })
+  expect(unreferenced.error).toBe(`exec ${"a".repeat(32)}: remote error: boom`)
+  for (const ref of ["none", "null", "0"]) {
+    const placeholder = await runExec(failing(() => ndjson({}, { type: "started", id: "a".repeat(32) }, { type: "error", message: "boom", ref })), "sb_test", { cmd: ["true"] }, { json: false, policy })
+    expect(placeholder.error).toBe(`exec ${"a".repeat(32)}: remote error: boom`)
+  }
+  const token = await runExec(failing(() => ndjson({ "x-kyora-exec-id": "build-1", "x-kyora-exec": "rpc-7" }, { type: "stdout", data: "x" })), "sb_test", { cmd: ["true"] }, { json: false, policy, output: () => {} })
+  expect(token.error).toBe("the exec stream ended without an exit status (connection lost?)")
+  const named = await runExec(failing(() => ndjson({ "x-kyora-exec-id": "b".repeat(32) }, { type: "stdout", data: "x" })), "sb_test", { cmd: ["true"] }, { json: false, policy, output: () => {} })
+  expect(named).toMatchObject({ code: 125, lost: true, error: `exec ${"b".repeat(32)}: the exec stream ended without an exit status (connection lost?)` })
+  const anonymous = await runExec(failing(() => ndjson({}, { type: "stdout", data: "x" })), "sb_test", { cmd: ["true"] }, { json: false, policy, output: () => {} })
+  expect(anonymous.error).toBe("the exec stream ended without an exit status (connection lost?)")
+  const unreachable = await runExec(failing(() => ndjson({}, { type: "started", id: "a".repeat(32), resumable: true }, { type: "detached", reason: "rollout" })), "sb_test", { cmd: ["true"] }, { json: false, policy })
+  expect(unreachable.error).toBe(`exec ${"a".repeat(32)}: lost the command's stream (rollout), and it can't be reattached: gone`)
+})
+
+const HISTORY = "r_AbCdEfGh-_123456"
+const OTHER_HISTORY = "r_ZyXwVuTs98765-_q"
+const historyNdjson = (headers: Record<string, string>, started: Record<string, unknown>) =>
+  new Response([{ type: "started", id: "a".repeat(32), resumable: true, ...started }, { type: "error", message: "boom" }].map((event) => `${JSON.stringify(event)}\n`).join(""), { headers })
+const answering = (response: () => Response) => ({ exec: async () => response(), attach: async () => { throw new ApiError("gone", 404, "exec_not_found") }, execExited: () => {} }) as unknown as VmsClient
+
+test("a failure names kyora cloud's history id from the response header only; a started line's own historyId is ignored", async () => {
+  const cases: Array<[Record<string, string>, Record<string, unknown>, string]> = [
+    [{ "x-kyora-exec-history": HISTORY }, {}, HISTORY],
+    [{}, { historyId: HISTORY }, "a".repeat(32)],
+    [{ "x-kyora-exec-history": OTHER_HISTORY }, { historyId: HISTORY }, OTHER_HISTORY],
+    [{}, {}, "a".repeat(32)],
+  ]
+  for (const [headers, started, id] of cases) {
+    const outcome = await runExec(answering(() => historyNdjson(headers, started)), "sb_test", { cmd: ["true"] }, { json: false, policy })
+    expect(outcome.error).toBe(`exec ${id}: remote error: boom`)
+  }
+})
+
+test("a history id that is not kyora cloud's form, or looks like a guest's exec id, is ignored", async () => {
+  for (const bad of ["b".repeat(32), "<script>", "r_short", "r_AbCdEfGh-_1234567", "x_AbCdEfGh-_123456", "", "none"]) {
+    const fromHeader = await runExec(answering(() => historyNdjson({ "x-kyora-exec-history": bad }, {})), "sb_test", { cmd: ["true"] }, { json: false, policy })
+    expect(fromHeader.error).toBe(`exec ${"a".repeat(32)}: remote error: boom`)
+  }
+})
+
+test("--json's started line carries the command's id as id and the header's history id as historyId, never one the line itself named", async () => {
+  const lines: string[] = []
+  const stdout = process.stdout.write.bind(process.stdout)
+  process.stdout.write = ((chunk: string | Uint8Array, ...rest: unknown[]) => {
+    lines.push(...String(chunk).split("\n").filter(Boolean))
+    ;(rest.find((arg) => typeof arg === "function") as (() => void) | undefined)?.()
+    return true
+  }) as typeof process.stdout.write
+  try {
+    await runExec(answering(() => historyNdjson({ "x-kyora-exec-history": HISTORY }, {})), "sb_test", { cmd: ["true"] }, { json: true, policy })
+    await runExec(answering(() => historyNdjson({}, { historyId: HISTORY })), "sb_test", { cmd: ["true"] }, { json: true, policy })
+    await runExec(answering(() => historyNdjson({ "x-kyora-exec-history": OTHER_HISTORY }, { historyId: HISTORY })), "sb_test", { cmd: ["true"] }, { json: true, policy })
+    await runExec(answering(() => historyNdjson({}, {})), "sb_test", { cmd: ["true"] }, { json: true, policy })
+  } finally {
+    process.stdout.write = stdout
+  }
+  const started = lines.map((line) => JSON.parse(line) as Record<string, unknown>).filter((event) => event.type === "started")
+  expect(started).toHaveLength(4)
+  expect(started[0]).toEqual({ type: "started", id: "a".repeat(32), resumable: true, historyId: HISTORY })
+  expect(started[1]).toEqual({ type: "started", id: "a".repeat(32), resumable: true })
+  expect(started[2]).toEqual({ type: "started", id: "a".repeat(32), resumable: true, historyId: OTHER_HISTORY })
+  expect(started[3]).toEqual({ type: "started", id: "a".repeat(32), resumable: true })
 })
 
 test("an exec the machine never got (exec_not_started) is sent again with the same key; other refusals are answers", async () => {
@@ -327,7 +398,7 @@ test("a blip longer than the window gives up as before: 125, saying how long it 
     },
   } as unknown as VmsClient
   const { elapsed } = await onFakeTime(() => notes(async () => (outcome = await runExec(api, "sb_test", { cmd: ["true"] }, { json: false, policy: blipPolicy() }))))
-  expect(outcome).toMatchObject({ code: 125, exit: null, error: "lost the command's stream (bad gateway) and could not reattach within 10m00s; it may still be running in sb_test" })
+  expect(outcome).toMatchObject({ code: 125, exit: null, error: `exec ${"a".repeat(32)}: lost the command's stream (bad gateway) and could not reattach within 10m00s; it may still be running in sb_test` })
   expect(elapsed).toBe(600_000)
 })
 

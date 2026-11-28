@@ -512,9 +512,10 @@ const CODE_HINTS: Record<string, string> = {
   region_conflict: "a create pinned to a machine runs in that machine's region; leave out --region",
 }
 
-/** codes both servers answer with, whose hint beats the one for their status */
+/** codes both servers answer with, whose hint beats the one for their status; an empty one leaves the server's message alone */
 const SHARED_CODE_HINTS: Record<string, string> = {
   exec_limit: "the sandbox has reached its concurrent exec limit; wait for a command to finish or cancel it",
+  rate_limited: "",
   share_disabled: "sharing is fixed when a sandbox is created (--no-share), and its snapshots and session sandboxes keep it",
   vmd_update_required: "update the machine software, then retry",
   snapshot_quota: "delete snapshots you no longer need: `kyora vms snapshot ls`, then `kyora vms snapshot rm <snap>`",

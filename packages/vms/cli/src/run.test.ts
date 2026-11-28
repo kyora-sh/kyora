@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { ApiError, type CreateSpec, type VmsClient } from "./api"
+import { ApiError, type CreateSpec, type ExecRequest, type VmsClient } from "./api"
 import { END_OF_ARCHIVE, headerBlocks, padding } from "./tar"
 
 /** run() keeps a sandbox whose outputs did not come down, and destroys it otherwise. */
@@ -53,7 +53,7 @@ interface Fake {
 
 interface FakeOptions {
   download: (attempt: number) => Response | Promise<Response>
-  exec?: () => Response | Promise<Response>
+  exec?: (request: ExecRequest) => Response | Promise<Response>
   attach?: () => Promise<Response>
   update?: (signal?: AbortSignal) => void | Promise<void>
   expiresAt?: (createdAt: number) => string
@@ -63,6 +63,8 @@ interface FakeOptions {
   name?: string
   /** a look at the sandbox; it is there unless this throws */
   get?: (signal?: AbortSignal) => void | Promise<void>
+  /** false: the server's answers name no idle timeout */
+  idle?: false
 }
 
 function fake(options: FakeOptions): Fake {
@@ -76,7 +78,7 @@ function fake(options: FakeOptions): Fake {
       options.create?.(spec)
       state.createdAt = Date.now()
       idleSeconds = spec.idleSeconds ?? 1200
-      const reply: Record<string, unknown> = { id: "sb_0123456789abcdef", name: options.name ?? "quiet-otter", status: "running", createdAt: new Date(state.createdAt).toISOString(), expiresAt: options.createReply?.unlimited ? null : new Date(state.createdAt + EIGHT_HOURS).toISOString(), idleSeconds }
+      const reply: Record<string, unknown> = { id: "sb_0123456789abcdef", name: options.name ?? "quiet-otter", status: "running", createdAt: new Date(state.createdAt).toISOString(), expiresAt: options.createReply?.unlimited ? null : new Date(state.createdAt + EIGHT_HOURS).toISOString(), ...(options.idle === false ? {} : { idleSeconds }) }
       for (const key of options.createReply?.omit ?? []) delete reply[key]
       return reply
     },
@@ -84,7 +86,7 @@ function fake(options: FakeOptions): Fake {
       await new Response(body).arrayBuffer()
       return { bytes: 0, entries: 1, durationMs: 0 }
     },
-    exec: async () => (options.exec ?? (() => exit(0)))(),
+    exec: async (_id: string, request: ExecRequest) => (options.exec ?? (() => exit(0)))(request),
     attach: async () => (options.attach ?? (() => Promise.reject(new ApiError("gone", 404, "exec_not_found"))))(),
     execExited: () => {},
     download: async () => options.download(++state.downloads),
@@ -96,7 +98,7 @@ function fake(options: FakeOptions): Fake {
     update: async (id: string, change: { ttlSeconds?: number }, signal?: AbortSignal) => {
       state.updates.push({ id, change })
       await options.update?.(signal)
-      return { id, createdAt: new Date(state.createdAt).toISOString(), expiresAt: options.expiresAt?.(state.createdAt) ?? new Date(state.createdAt + (change.ttlSeconds ?? 0) * 1000).toISOString(), idleSeconds }
+      return { id, createdAt: new Date(state.createdAt).toISOString(), expiresAt: options.expiresAt?.(state.createdAt) ?? new Date(state.createdAt + (change.ttlSeconds ?? 0) * 1000).toISOString(), ...(options.idle === false ? {} : { idleSeconds }) }
     },
     destroy: async (id: string) => {
       state.destroyed.push(id)
@@ -133,11 +135,11 @@ async function captured(work: () => Promise<number>, onEvent?: (event: Record<st
   }
 }
 
-async function runWith(state: Fake, json = false, outs = ["/work/out"], prepare?: (to: string) => void, spec: CreateSpec = {}, onEvent?: (event: Record<string, unknown>) => void | Promise<void>, keep = false) {
+async function runWith(state: Fake, json = false, outs = ["/work/out"], prepare?: (to: string) => void, spec: CreateSpec = {}, onEvent?: (event: Record<string, unknown>) => void | Promise<void>, keep = false, exec: ExecRequest = { cmd: ["make"] }) {
   const { run } = await import("./run")
   const to = mkdtempSync(join(root, "to-"))
   prepare?.(to)
-  const result = await captured(() => run(state.api, { dir: root, git: false, spec, wait: 0, exec: { cmd: ["make"] }, outs, to, keep, json }), onEvent)
+  const result = await captured(() => run(state.api, { dir: root, git: false, spec, wait: 0, exec, outs, to, keep, json }), onEvent)
   return { ...result, to }
 }
 
@@ -703,6 +705,251 @@ test("an exec the machine never got (exec_not_started on every try) is no lost c
   expect(state.downloads).toBe(0)
   expect(state.destroyed).toEqual(["sb_0123456789abcdef"])
   expect(notes.some((line) => line.startsWith("kept ") || line.includes("may be running"))).toBe(false)
+})
+
+const refusal = (code: string | undefined, after?: number) => new ApiError(`exec in sb_0123456789abcdef: refused (${code ?? "no code"})`, 429, code, after)
+const execLimit = (after?: number) => new ApiError("exec in sb_0123456789abcdef: this sandbox's limit of 32 execs is reached; wait for one to finish or cancel it", 429, "exec_limit", after)
+
+test("an exec a limiter refused (429 exec_limit) is asked again after its Retry-After, and the run goes on and destroys the sandbox", async () => {
+  let tries = 0
+  const state = fake({
+    exec: () => {
+      if (++tries <= 2) throw execLimit(1_000)
+      return exit(0)
+    },
+    download: () => new Response(tar("out/app", "binary")),
+  })
+  const at = Date.now()
+  const { code, notes } = await runWith(state)
+  expect(code).toBe(0)
+  expect(tries).toBe(3)
+  expect(Date.now() - at).toBeGreaterThanOrEqual(2_000)
+  expect(notes).toContain("exec in sb_0123456789abcdef: this sandbox's limit of 32 execs is reached; wait for one to finish or cancel it; asking again in 1.0s (try 2 of 5)")
+  expect(state.destroyed).toEqual(["sb_0123456789abcdef"])
+  expect(state.updates).toEqual([])
+})
+
+test("an exec still refused (429 exec_limit) after 5 tries never ran: the sandbox is kept, with how to remove it and its idle timeout", async () => {
+  let tries = 0
+  const state = fake({
+    exec: () => {
+      tries++
+      throw execLimit(0)
+    },
+    download: () => new Response(tar("out/app", "binary")),
+  })
+  const at = Date.now()
+  const { code, notes, events } = await runWith(state, true, [])
+  expect(code).toBe(125)
+  expect(tries).toBe(5)
+  expect(Date.now() - at).toBeGreaterThanOrEqual(4_000)
+  expect(state.downloads).toBe(0)
+  expect(state.destroyed).toEqual([])
+  expect(state.updates).toHaveLength(1)
+  expect(notes.filter((line) => line.includes("asking again in 1.0s"))).toHaveLength(4)
+  expect(events.find((event) => event.type === "kept")).toMatchObject({ type: "kept", id: "sb_0123456789abcdef", reason: "exec_refused", idleSeconds: 1200, confirmed: true })
+  expect(notes).toContainEqual(expect.stringMatching(/^kept sb_0123456789abcdef \(quiet-otter\) until \S+Z, or sooner after 20m without activity: the command was refused for now and never ran, `kyora vms exec quiet-otter -- …`, `kyora vms rm quiet-otter` when done$/))
+  const summary = events.find((event) => event.type === "summary") as { exitCode: number; kept: boolean; timings: { execMs: number | null } }
+  expect(summary).toMatchObject({ exitCode: 125, kept: true })
+  expect(summary.timings.execMs).toBeGreaterThanOrEqual(4_000)
+})
+
+test("a 429 with any other code (rate_limited included), or none, is an answer: one try, and the sandbox is destroyed", async () => {
+  for (const error of [refusal("rate_limited", 1_000), refusal("limit_reached", 1_000), refusal("platform_frozen", 1_000), refusal("too_many_spares", 1_000), refusal(undefined, 1_000)]) {
+    let tries = 0
+    const state = fake({
+      exec: () => {
+        tries++
+        throw error
+      },
+      download: () => new Response(tar("out/app", "binary")),
+    })
+    const { code, events } = await runWith(state, true)
+    expect(code).toBe(125)
+    expect(tries).toBe(1)
+    expect(state.downloads).toBe(0)
+    expect(state.destroyed).toEqual(["sb_0123456789abcdef"])
+    expect(events.some((event) => event.type === "kept")).toBe(false)
+  }
+})
+
+test("a 503 is never asked again: one try, then as before, --out runs and the sandbox is kept as a lost stream", async () => {
+  for (const error of [new ApiError("exec in sb_0123456789abcdef: the sandbox did not wake in time", 503, "waking", 1_000), new ApiError("exec in sb_0123456789abcdef: the sandbox's machine is not connected", 503, "node_offline")]) {
+    let tries = 0
+    const state = fake({
+      exec: () => {
+        tries++
+        throw error
+      },
+      download: () => new Response(tar("out/app", "binary")),
+    })
+    const { code, notes, events } = await runWith(state, true)
+    expect(code).toBe(125)
+    expect(tries).toBe(1)
+    expect(state.downloads).toBe(1)
+    expect(state.destroyed).toEqual([])
+    expect(notes).toContain(`no answer to the command in sb_0123456789abcdef (${error.message}); it may be running there`)
+    expect(events.find((event) => event.type === "kept")).toMatchObject({ reason: "stream_lost" })
+  }
+})
+
+test("Ctrl-C while a refused exec waits: 130 at once, and the sandbox is destroyed", async () => {
+  const state = fake({
+    exec: () => {
+      setTimeout(() => process.emit("SIGINT"), 20)
+      throw execLimit(60_000)
+    },
+    download: () => new Response(tar("out/app", "binary")),
+  })
+  const at = Date.now()
+  const { code, events } = await runWith(state, true)
+  expect(code).toBe(130)
+  expect(Date.now() - at).toBeLessThan(5_000)
+  expect(state.destroyed).toEqual(["sb_0123456789abcdef"])
+  expect(events.some((event) => event.type === "kept")).toBe(false)
+})
+
+test("the waits count inside --timeout: no wait ends past it, each try asks for only the time left, and the sandbox is kept", async () => {
+  const timeouts: Array<number | undefined> = []
+  const state = fake({
+    exec: (request) => {
+      timeouts.push(request.timeoutSeconds)
+      throw execLimit(1_000)
+    },
+    download: () => new Response(tar("out/app", "binary")),
+  })
+  const at = Date.now()
+  const { code, events } = await runWith(state, true, [], undefined, {}, undefined, false, { cmd: ["make"], timeoutSeconds: 3 })
+  expect(Date.now() - at).toBeLessThan(3_000)
+  expect(code).toBe(125)
+  expect(timeouts).toHaveLength(3)
+  expect(timeouts[0]).toBe(3)
+  expect([2, 3]).toContain(timeouts[1]!)
+  expect([1, 2]).toContain(timeouts[2]!)
+  expect(state.destroyed).toEqual([])
+  expect(events.find((event) => event.type === "kept")).toMatchObject({ reason: "exec_refused" })
+
+  const long: Array<number | undefined> = []
+  const once = fake({
+    exec: (request) => {
+      long.push(request.timeoutSeconds)
+      throw execLimit(30_000)
+    },
+    download: () => new Response(tar("out/app", "binary")),
+  })
+  const started = Date.now()
+  const again = await runWith(once, true, [], undefined, {}, undefined, false, { cmd: ["make"], timeoutSeconds: 10 })
+  expect(Date.now() - started).toBeLessThan(2_000)
+  expect(again.code).toBe(125)
+  expect(long).toEqual([10])
+  expect(once.destroyed).toEqual([])
+  expect(again.events.find((event) => event.type === "kept")).toMatchObject({ reason: "exec_refused" })
+})
+
+/** pause()'s waits (1 s to a minute) end at once, on a clock moved on by each wait and `overshoot` more */
+async function onSkippedWaits<T>(work: (clock: { advance: (ms: number) => void; stop: () => void }) => Promise<T>, overshoot = 0): Promise<T> {
+  const realNow = Date.now
+  const realTimeout = globalThis.setTimeout
+  let offset = 0
+  let skipping = true
+  Date.now = () => realNow() + offset
+  globalThis.setTimeout = ((handler: () => void, ms?: number) => {
+    if (!skipping || ms === undefined || ms < 1_000 || ms > 60_000) return realTimeout(handler, ms)
+    offset += ms + overshoot
+    return realTimeout(handler, 0)
+  }) as unknown as typeof setTimeout
+  try {
+    return await work({ advance: (ms) => (offset += ms), stop: () => (skipping = false) })
+  } finally {
+    Date.now = realNow
+    globalThis.setTimeout = realTimeout
+  }
+}
+
+test("a --timeout over 5 minutes is the waits' only bound: a wait ending past 5 minutes still takes its try", async () => {
+  let tries = 0
+  const { code, state } = await onSkippedWaits(async (clock) => {
+    const state = fake({
+      exec: () => {
+        if (++tries > 1) {
+          clock.stop()
+          return exit(0)
+        }
+        clock.advance(270_000)
+        throw execLimit(60_000)
+      },
+      download: () => new Response(tar("out/app", "binary")),
+    })
+    const { code } = await runWith(state, false, [], undefined, {}, undefined, false, { cmd: ["make"], timeoutSeconds: 600 })
+    return { code, state }
+  })
+  expect(code).toBe(0)
+  expect(tries).toBe(2)
+  expect(state.destroyed).toEqual(["sb_0123456789abcdef"])
+})
+
+test("a wait that overshoots --timeout sends no further try: the run gives up and keeps the sandbox", async () => {
+  let tries = 0
+  const state = fake({
+    exec: () => {
+      tries++
+      throw execLimit(1_000)
+    },
+    download: () => new Response(tar("out/app", "binary")),
+  })
+  const { code, events } = await onSkippedWaits(() => runWith(state, true, [], undefined, {}, undefined, false, { cmd: ["make"], timeoutSeconds: 3 }), 5_000)
+  expect(code).toBe(125)
+  expect(tries).toBe(1)
+  expect(state.destroyed).toEqual([])
+  expect(events.find((event) => event.type === "kept")).toMatchObject({ reason: "exec_refused" })
+})
+
+test("a give-up with --out downloads nothing, and its hint is `kyora vms exec`, not pull", async () => {
+  const state = fake({
+    exec: () => {
+      throw execLimit(1_000)
+    },
+    download: () => new Response(tar("out/app", "binary")),
+  })
+  const { code, notes } = await onSkippedWaits(() => runWith(state, false, ["/work/out"]))
+  expect(code).toBe(125)
+  expect(state.downloads).toBe(0)
+  expect(state.destroyed).toEqual([])
+  const kept = notes.find((line) => line.startsWith("kept "))
+  expect(kept).toContain("the command was refused for now and never ran, `kyora vms exec quiet-otter -- …`, `kyora vms rm quiet-otter` when done")
+  expect(kept).not.toContain("kyora vms pull")
+})
+
+test("a kept refused run names an idle time only when the server gave one", async () => {
+  const state = fake({
+    exec: () => {
+      throw execLimit(1_000)
+    },
+    download: () => new Response(tar("out/app", "binary")),
+    idle: false,
+  })
+  const { code, notes, events } = await onSkippedWaits(() => runWith(state, true, []))
+  expect(code).toBe(125)
+  expect(events.find((event) => event.type === "kept")).toMatchObject({ reason: "exec_refused", idleSeconds: null })
+  expect(notes).toContainEqual(expect.stringMatching(/^kept sb_0123456789abcdef \(quiet-otter\) until \S+Z, or sooner after its idle timeout without activity: the command was refused for now and never ran/))
+})
+
+test("vms run's failure line names kyora cloud's history id for the exec when its header gave one", async () => {
+  const state = fake({
+    exec: () => new Response(`${JSON.stringify({ type: "started", id: "a".repeat(32), resumable: true })}\n${JSON.stringify({ type: "error", message: "boom" })}\n`, { headers: { "x-kyora-exec-history": "r_AbCdEfGh-_123456" } }),
+    download: () => new Response(tar("out/app", "binary")),
+  })
+  const { code, notes } = await runWith(state, false, [])
+  expect(code).toBe(125)
+  expect(notes).toContain("exec r_AbCdEfGh-_123456: remote error: boom")
+})
+
+test("a refused exec's wait is the server's, from 1 s to a minute, and 5 s when it names none", async () => {
+  const { execStartWaitMs } = await import("./run")
+  expect(execStartWaitMs(execLimit(30_000))).toBe(30_000)
+  expect(execStartWaitMs(execLimit(600_000))).toBe(60_000)
+  expect(execStartWaitMs(execLimit())).toBe(5_000)
+  for (const after of [0, -5_000, 200, Number.NaN]) expect(execStartWaitMs(execLimit(after))).toBe(1_000)
 })
 
 test("an unconfirmed TTL with either bound unknown claims no time at all; an unlimited old expiry leaves the TTL asked for", async () => {
