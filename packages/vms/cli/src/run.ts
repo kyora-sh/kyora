@@ -3,6 +3,7 @@ import { ApiError, type CreateSpec, type ExecRequest, type Sandbox, type VmsClie
 import { execDeadline, positiveEnv, reattachPolicy, runExec, timeoutGraceMs, type ExecOutcome } from "./exec"
 import { describeHistory, historyHint, installHistory, prepareHistory, withHistory, type History, type HistoryOptions } from "./history"
 import { Interrupt } from "./interrupt"
+import { pause } from "./multipart"
 import { failureCode, FAILED, json, note, queueNotes, regionNote, summarizeList } from "./output"
 import { listFiles } from "./pack"
 import { pull, push, pushShape, transient, WORK, type PullResult, type PushOptions } from "./transfer"
@@ -66,6 +67,24 @@ export async function sandboxEnded(api: VmsClient, id: string, signal?: AbortSig
   }
 }
 
+/** a command refused for now is asked again this often at most, each wait bounded, all of them within --timeout, or the budget without one */
+const EXEC_START_TRIES = 5
+const EXEC_START_MIN_WAIT_MS = 1_000
+const EXEC_START_MAX_WAIT_MS = 60_000
+const EXEC_START_BUDGET_MS = 5 * 60_000
+const EXEC_START_DEFAULT_WAIT_MS = 5_000
+
+/** the 429s a limiter answers before the command is admitted, so nothing ran and no key is spent: kyora cloud's and kyora-node's per-sandbox exec_limit */
+const REFUSED_FOR_NOW = new Set(["exec_limit"])
+
+const refusedForNow = (error: unknown): error is ApiError => error instanceof ApiError && error.status === 429 && error.code !== undefined && REFUSED_FOR_NOW.has(error.code)
+
+/** how long a command refused for now waits before it is asked again: the server's word, from a second to a minute */
+export function execStartWaitMs(error: ApiError): number {
+  const asked = error.retryAfterMs ?? EXEC_START_DEFAULT_WAIT_MS
+  return Number.isFinite(asked) ? Math.min(EXEC_START_MAX_WAIT_MS, Math.max(EXEC_START_MIN_WAIT_MS, asked)) : EXEC_START_MIN_WAIT_MS
+}
+
 const idleNote = (seconds: number | undefined) => (seconds ? `; a sandbox ends after ${lifetime(seconds)} without activity (--idle)` : "")
 
 /** how long a run keeps a sandbox it could not download from, in seconds (KYORA_VMS_KEEP_ON_FAILURE_TTL) */
@@ -93,7 +112,7 @@ const lifetime = (seconds: number) => (seconds % 3600 === 0 ? `${seconds / 3600}
 const shellWord = (word: string) => (/^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replaceAll("'", "'\\''")}'`)
 
 interface Unfetched {
-  reason: "download_failed" | "stream_lost"
+  reason: "download_failed" | "stream_lost" | "exec_refused"
   paths: string[]
   to: string
   /** when the create was sent */
@@ -136,7 +155,7 @@ async function keepUnfetched(api: VmsClient, sandbox: Sandbox, why: Unfetched): 
   const expiresAt = confirmed ? utc(answered!.expiresAt!) : Number.isFinite(floor) ? utc(floor) : null
   const until = confirmed ? ` until ${expiresAt}${idle}` : `; its expiry could not be confirmed (${failure ?? "the server answered none"}${expiresAt ? `; at the earliest ${expiresAt}${idle}` : ""})`
   const later = why.paths.length > 0 ? `kyora vms pull ${label} ${why.paths.map(shellWord).join(" ")}${why.to === process.cwd() ? "" : ` --to ${shellWord(why.to)}`}` : `kyora vms exec ${label} -- …`
-  const what = why.reason === "download_failed" ? "the outputs were not downloaded" : "lost the command's stream, and it may still be running"
+  const what = why.reason === "download_failed" ? "the outputs were not downloaded" : why.reason === "exec_refused" ? "the command was refused for now and never ran" : "lost the command's stream, and it may still be running"
   note(`kept ${sandbox.id}${sandbox.name ? ` (${sandbox.name})` : ""}${until}: ${what}, \`${later}\`, \`kyora vms rm ${label}\` when done`)
   if (why.json) await json({ type: "kept", id: sandbox.id, reason: why.reason, expiresAt, idleSeconds: idleSeconds ?? null, confirmed })
   return !why.signal.aborted
@@ -169,7 +188,8 @@ export function reportPull(result: PullResult): boolean {
  * create → upload → exec → download → destroy. The exit code is the remote
  * command's; 125 means kyora itself failed, and a failed download turns a
  * remote success into 125 so an agent never mistakes a missing artifact for a build.
- * A download that failed (not a missing path) or a stream that was lost keeps the sandbox for a while instead.
+ * A download that failed (not a missing path), a stream that was lost, or a command a limiter refused (429) on every try
+ * keeps the sandbox for a while instead.
  * A create refused with image_unavailable exits 123.
  */
 export async function run(api: VmsClient, options: RunOptions): Promise<number> {
@@ -185,6 +205,8 @@ export async function run(api: VmsClient, options: RunOptions): Promise<number> 
   let spec = runSpec(options)
   const unfetched: string[] = []
   let lost = false
+  // the command was refused for now on every try: it never ran, and the sandbox stays
+  let refused = false
   // the server's word that the sandbox ended: nothing left to fetch, keep or destroy
   let gone: string | null = null
 
@@ -247,14 +269,36 @@ export async function run(api: VmsClient, options: RunOptions): Promise<number> 
     }
 
     started = Date.now()
+    const deadline = execDeadline(options.exec, started)
+    const timeoutAt = options.exec.timeoutSeconds ? started + options.exec.timeoutSeconds * 1000 : Infinity
+    const waitsEnd = options.exec.timeoutSeconds ? timeoutAt : started + EXEC_START_BUDGET_MS
+    let request = options.exec
     let outcome: ExecOutcome
-    try {
-      outcome = await runExec(api, sandbox.id, options.exec, { json: options.json, signal: interrupt.signal, deadline: execDeadline(options.exec, started) })
-    } catch (error) {
-      // the command may have started and only its answer been lost: --out still runs, and the sandbox stays
-      // exec_not_started on every try proves the command never ran
-      if (interrupt.interrupted || !transient(error) || (error instanceof ApiError && error.code === "exec_not_started")) throw error
-      outcome = { code: FAILED, exit: null, error: `no answer to the command in ${sandbox.id} (${message(error)}); it may be running there`, lost: true }
+    for (let attempt = 1; ; attempt++) {
+      try {
+        outcome = await runExec(api, sandbox.id, request, { json: options.json, signal: interrupt.signal, deadline })
+        break
+      } catch (error) {
+        if (!interrupt.interrupted && refusedForNow(error)) {
+          const wait = execStartWaitMs(error)
+          if (attempt < EXEC_START_TRIES && Date.now() + wait < waitsEnd) {
+            note(`${error.message}; asking again in ${formatMs(wait)} (try ${attempt + 1} of ${EXEC_START_TRIES})`)
+            await pause(wait, interrupt.signal)
+            if (Date.now() < waitsEnd) {
+              if (request.timeoutSeconds) request = { ...options.exec, timeoutSeconds: Math.max(1, Math.ceil((timeoutAt - Date.now()) / 1000)) }
+              continue
+            }
+          }
+          refused = true
+          timings.exec = Date.now() - started
+          throw error
+        }
+        // the command may have started and only its answer been lost: --out still runs, and the sandbox stays
+        // exec_not_started on every try proves the command never ran
+        if (interrupt.interrupted || !transient(error) || (error instanceof ApiError && error.code === "exec_not_started")) throw error
+        outcome = { code: FAILED, exit: null, error: `no answer to the command in ${sandbox.id} (${message(error)}); it may be running there`, lost: true }
+        break
+      }
     }
     timings.exec = Date.now() - started
     code = outcome.code
@@ -318,7 +362,7 @@ export async function run(api: VmsClient, options: RunOptions): Promise<number> 
     if (sandbox) {
       const noted = gone !== null
       // a sandbox already gone is no keep: a TTL update it refused would read as one, unconfirmed
-      if (!interrupt.interrupted && !noted && (unfetched.length > 0 || lost)) gone = await sandboxEnded(api, sandbox.id, interrupt.signal)
+      if (!interrupt.interrupted && !noted && (unfetched.length > 0 || lost || refused)) gone = await sandboxEnded(api, sandbox.id, interrupt.signal)
       // once known gone it is neither kept nor destroyed, Ctrl-C or not; Ctrl-C only decides the exit code
       if (gone !== null) {
         code = FAILED
@@ -328,9 +372,9 @@ export async function run(api: VmsClient, options: RunOptions): Promise<number> 
         kept = true
         const label = sandboxArgument(sandbox.name ?? sandbox.id)
         note(`kept ${sandbox.id}${sandbox.name ? ` (${sandbox.name})` : ""}: \`kyora vms exec ${label} -- …\`, \`kyora vms rm ${label}\` when done`)
-      } else if (!interrupt.interrupted && (unfetched.length > 0 || lost)) {
-        const reason = unfetched.length > 0 ? "download_failed" : "stream_lost"
-        kept = await keepUnfetched(api, sandbox, { reason, paths: reason === "download_failed" ? unfetched : options.outs, to: options.to, since: createdBy, idleSeconds: spec.idleSeconds, json: options.json, signal: interrupt.signal })
+      } else if (!interrupt.interrupted && (unfetched.length > 0 || lost || refused)) {
+        const reason = unfetched.length > 0 ? "download_failed" : lost ? "stream_lost" : "exec_refused"
+        kept = await keepUnfetched(api, sandbox, { reason, paths: reason === "download_failed" ? unfetched : reason === "stream_lost" ? options.outs : [], to: options.to, since: createdBy, idleSeconds: spec.idleSeconds, json: options.json, signal: interrupt.signal })
         // Ctrl-C while the TTL was being set: the interrupt wins, as anywhere else
         if (!kept) {
           code = interrupt.code!

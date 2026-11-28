@@ -475,7 +475,7 @@ describe("a stream that never ends", () => {
       const result = await bounded(spawnRaw(["run", "--", "cargo", "build"], env, repo))
 
       expect(result.code).toBe(125)
-      expect(result.stderr).toMatch(/the exec stream went silent \(nothing heard for 800ms\) and can't be reattached, the server never named the command; it may still be running in sb_\w+/)
+      expect(result.stderr).toMatch(/^\[kyora-vms\] the exec stream went silent \(nothing heard for 800ms\) and can't be reattached, the server never named the command; it may still be running in sb_\w+$/m)
       expect(result.ms).toBeLessThan(10_000)
       expect(reconnects(result.stderr)).toBe(0)
       expect(server.destroyed).toHaveLength(0)
@@ -511,7 +511,8 @@ describe("--timeout is kyora's own deadline too", () => {
   let server: FakeVmd
   /** a grace of half a second, so the tests see the deadline */
   const GRACE = { KYORA_VMS_TIMEOUT_GRACE_MS: "500" }
-  const givenUp = /^\[kyora-vms\] gave up on the command in (sb_\w+): its --timeout of 2\.0s passed 500ms ago and no exit status came; (.*)$/m
+  const givenUp = /^\[kyora-vms\] exec [0-9a-f]{32}: gave up on the command in (sb_\w+): its --timeout of 2\.0s passed 500ms ago and no exit status came; (.*)$/m
+  const givenUpUnnamed = /^\[kyora-vms\] gave up on the command in (sb_\w+): its --timeout of 2\.0s passed 500ms ago and no exit status came; (.*)$/m
 
   afterEach(async () => {
     await server.stop()
@@ -619,7 +620,7 @@ describe("--timeout is kyora's own deadline too", () => {
     const result = await bounded(spawnRaw(["run", "--timeout", "2s", "--", "cargo", "build"], baseEnv(server.url, { ...FAST, ...GRACE }), repo))
 
     expect(result.code).toBe(124)
-    expect(givenUp.exec(result.stderr)?.[2]).toBe("dropped its stream")
+    expect(givenUpUnnamed.exec(result.stderr)?.[2]).toBe("dropped its stream")
     expect(server.cancels).toEqual([])
     expect(server.destroyed).toHaveLength(1)
   })
