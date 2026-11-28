@@ -51,6 +51,8 @@ export interface ExecOutcome {
   error: string | null
   /** kyora gave up on the command at its deadline (--timeout and the grace) */
   expired?: boolean
+  /** the stream broke and was not reattached: the command may still be running */
+  lost?: boolean
 }
 
 type Stream = keyof StreamOffsets
@@ -106,7 +108,7 @@ type Ending = { kind: "exit"; exit: ExitEvent } | { kind: "error"; message: stri
 export interface ReattachPolicy {
   /** how long a break may last before the command is given up on */
   windowMs: number
-  /** the first wait; doubled after each failed try, up to maxDelayMs */
+  /** the first wait; doubled after each failed try, up to maxDelayMs, each wait jittered down by up to half */
   baseDelayMs: number
   maxDelayMs: number
   /**
@@ -115,9 +117,14 @@ export interface ReattachPolicy {
    * machine, this long: the control plane answering for a path to the command that is gone.
    */
   idleMs: number
+  /** how often a long break says it still is one (default STILL_RECONNECTING_MS) */
+  stillMs?: number
 }
 
-function positiveEnv(name: string, fallback: number): number {
+/** a break that lasts says so this often, so its last line never reads as a hang */
+export const STILL_RECONNECTING_MS = 30_000
+
+export function positiveEnv(name: string, fallback: number): number {
   const value = Number(process.env[name])
   return Number.isFinite(value) && value > 0 ? value : fallback
 }
@@ -155,21 +162,27 @@ function expiry(at: number): { signal: AbortSignal; clear: () => void } {
   return { signal: controller.signal, clear: () => clearTimeout(timer) }
 }
 
+/** the most KYORA_VMS_REATTACH_WINDOW_MS can ask for */
+export const MAX_REATTACH_WINDOW_MS = 30 * 60_000
+
 export function reattachPolicy(): ReattachPolicy {
   const baseDelayMs = positiveEnv("KYORA_VMS_REATTACH_BASE_MS", 250)
   return {
-    windowMs: positiveEnv("KYORA_VMS_REATTACH_WINDOW_MS", 2 * 60_000),
+    windowMs: Math.min(MAX_REATTACH_WINDOW_MS, positiveEnv("KYORA_VMS_REATTACH_WINDOW_MS", 10 * 60_000)),
     baseDelayMs,
     maxDelayMs: Math.max(baseDelayMs, Math.min(10_000, baseDelayMs * 40)),
     idleMs: positiveEnv("KYORA_VMS_STREAM_IDLE_MS", 60_000),
   }
 }
 
-/** worth another reattach: the network, a 5xx, a sandbox busy or starting (409), 408, 429 */
+/** worth another reattach: the network (a name that does not resolve too), a 5xx, a sandbox busy or starting (409), 408, 429 */
 export function reattachable(error: unknown): boolean {
   if (error instanceof ApiError) return ["vmd_unavailable", "node_offline", "node_disconnected"].includes(error.code ?? "") || error.status === 0 || (error.status >= 500 && error.status !== 501) || error.status === 408 || error.status === 409 || error.status === 429
   // fetch can fail before the API wraps it (including during a test or another transport).
-  return error instanceof TypeError || (error instanceof Error && /^(ECONN|ENET|EHOST|EPIPE|ETIMEDOUT|Connection|Socket)/.test(String((error as NodeJS.ErrnoException).code ?? "")))
+  if (error instanceof TypeError) return true
+  if (!(error instanceof Error)) return false
+  const code = (error as NodeJS.ErrnoException).code ?? (error.cause as NodeJS.ErrnoException | null | undefined)?.code
+  return /^(ECONN|ENET|EHOST|EPIPE|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|Connection|Socket)/.test(String(code ?? ""))
 }
 
 /** what the watchdog of one response knows */
@@ -239,8 +252,11 @@ class Relay {
     private readonly sink?: OutputSink,
   ) {}
 
-  /** reads one response to its end, or to a break; an abort of `signal` (Ctrl-C, the deadline) is thrown */
-  async read(response: Response, signal?: AbortSignal): Promise<Ending> {
+  /**
+   * Reads one response to its end, or to a break; an abort of `signal` (Ctrl-C, the deadline) is thrown.
+   * `onProgress` is called once, the first time the response gets somewhere (see `progressed` below).
+   */
+  async read(response: Response, signal?: AbortSignal, onProgress?: () => void): Promise<Ending> {
     let exit: ExitEvent | null = null
     let failed: string | null = null
     let detached: string | null = null
@@ -258,17 +274,25 @@ class Relay {
 
     const handle = async (line: string) => {
       if (!line.trim()) return
-      if (this.json) await write(process.stdout, `${line}\n`)
-      let event: Record<string, unknown>
+      let event: Record<string, unknown> | null = null
       try {
         event = JSON.parse(line)
       } catch {
-        return
+        // not an event: written out with --json all the same
       }
-      const machine = fromMachine(event, watch)
-      if (machine) watch.machine = Date.now()
-      if (machine && !RELAY_LINES.has(event.type as string)) moved = true
-      if (KEEPALIVE_LINES.has(event.type as string)) watch.armed = true
+      if (event) {
+        const machine = fromMachine(event, watch)
+        if (machine) watch.machine = Date.now()
+        if (machine && !RELAY_LINES.has(event.type as string)) moved = true
+        if (KEEPALIVE_LINES.has(event.type as string)) watch.armed = true
+        // said before the line is written out: a slow reader of the output doesn't hold the note back
+        if (onProgress && moved) {
+          onProgress()
+          onProgress = undefined
+        }
+      }
+      if (this.json) await write(process.stdout, `${line}\n`)
+      if (!event) return
       if (event.type === "stdout" || event.type === "stderr") {
         const data = payload(event)
         if (this.sink) await this.sink(event.type, data)
@@ -444,6 +468,28 @@ export async function runExec(
   // every request, read and wait below ends at Ctrl-C or at the deadline; which one it was decides what follows
   const signal = expires ? (options.signal ? AbortSignal.any([options.signal, expires.signal]) : expires.signal) : options.signal
   let current = streamSignal(signal)
+  // An agent takes the last note for the command's state: "reconnecting…" stands only while it is true,
+  // "reattached" follows once a reattach gets somewhere, and a break that lasts (a hanging attach, one
+  // that only kyora cloud keeps alive) says it still is one, on a timer of its own.
+  let reconnecting: { since: number; why: string; timer: ReturnType<typeof setInterval> } | null = null
+  const stillMs = policy.stillMs ?? STILL_RECONNECTING_MS
+  const startReconnecting = () => {
+    note("reconnecting…")
+    const since = Date.now()
+    const state = { since, why: "", timer: setInterval(() => note(`still reconnecting to the command in ${id} (${formatMs(Date.now() - since)} so far: ${state.why})`), stillMs) }
+    state.timer.unref?.()
+    reconnecting = state
+    return state
+  }
+  const stopReconnecting = () => {
+    if (reconnecting) clearInterval(reconnecting.timer)
+    reconnecting = null
+  }
+  const reattached = () => {
+    if (!reconnecting) return
+    stopReconnecting()
+    note("reattached")
+  }
   try {
     // its key makes a re-send safe: kyora cloud starts at most one command for it
     const response = await api.exec(id, { ...request, resumable: true, key: request.key ?? `kyora-vms:${crypto.randomUUID()}` }, current.signal)
@@ -461,21 +507,20 @@ export async function runExec(
       const execId = relay.execId
       if (!execId) {
         // without an id there is nothing to reattach to: a plain exec, or one whose first line never came
-        if (!ending.silent) return { code: FAILED, exit: null, error: "the exec stream ended without an exit status (connection lost?)" }
-        return { code: FAILED, exit: null, error: `the exec stream went silent (${ending.reason}) and can't be reattached, the server never named the command; it may still be running in ${id}` }
+        if (!ending.silent) return { code: FAILED, exit: null, error: "the exec stream ended without an exit status (connection lost?)", lost: true }
+        return { code: FAILED, exit: null, error: `the exec stream went silent (${ending.reason}) and can't be reattached, the server never named the command; it may still be running in ${id}`, lost: true }
       }
-      if (!episode || ending.progressed) {
-        note("reconnecting…")
-        episode = { deadline: Date.now() + policy.windowMs, delay: policy.baseDelayMs }
-      }
+      if (!episode || ending.progressed) episode = { deadline: Date.now() + policy.windowMs, delay: policy.baseDelayMs }
+      const state = reconnecting ?? startReconnecting()
       let last = ending.reason
+      state.why = last
       let attached: Response | null = null
       while (!attached) {
         if (Date.now() >= episode.deadline) {
           const error = `lost the command's stream (${last}) and could not reattach within ${formatMs(policy.windowMs)}; it may still be running in ${id}`
-          return { code: FAILED, exit: null, error }
+          return { code: FAILED, exit: null, error, lost: true }
         }
-        await pause(Math.min(episode.delay, episode.deadline - Date.now()), signal ?? new AbortController().signal)
+        await pause(Math.min(episode.delay * (0.5 + Math.random() / 2), episode.deadline - Date.now()), signal ?? new AbortController().signal)
         if (Date.now() >= episode.deadline) continue
         episode.delay = Math.min(policy.maxDelayMs, episode.delay * 2)
         const attempt = expiry(episode.deadline)
@@ -486,17 +531,20 @@ export async function runExec(
         } catch (error) {
           next.close()
           if (signal?.aborted) throw signal.reason ?? error
-          if (!attempt.signal.aborted && !reattachable(error)) return { code: FAILED, exit: null, error: `lost the command's stream (${last}), and it can't be reattached: ${message(error)}` }
+          if (!attempt.signal.aborted && !reattachable(error)) return { code: FAILED, exit: null, error: `lost the command's stream (${last}), and it can't be reattached: ${message(error)}`, lost: true }
           last = message(error)
+          state.why = last
         } finally {
           attempt.clear()
         }
       }
-      ending = await relay.read(attached, signal)
+      ending = await relay.read(attached, signal, reattached)
       current.close()
     }
   } catch (error) {
     current.close()
+    // no retries follow: nothing may say "still reconnecting" while a cancel is on its way
+    stopReconnecting()
     if (options.signal?.aborted) {
       if (relay.execId) await cancelRemote(api, id, relay.execId)
       throw error
@@ -505,6 +553,7 @@ export async function runExec(
     throw error
   } finally {
     expires?.clear()
+    stopReconnecting()
   }
 }
 

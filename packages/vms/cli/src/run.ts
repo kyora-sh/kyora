@@ -1,11 +1,11 @@
 import { sandboxArgument } from "./names"
 import { ApiError, type CreateSpec, type ExecRequest, type Sandbox, type VmsClient } from "./api"
-import { execDeadline, runExec, timeoutGraceMs } from "./exec"
+import { execDeadline, positiveEnv, reattachPolicy, runExec, timeoutGraceMs, type ExecOutcome } from "./exec"
 import { describeHistory, historyHint, installHistory, prepareHistory, withHistory, type History, type HistoryOptions } from "./history"
 import { Interrupt } from "./interrupt"
 import { failureCode, FAILED, json, note, queueNotes, regionNote, summarizeList } from "./output"
 import { listFiles } from "./pack"
-import { pull, push, pushShape, WORK, type PullResult, type PushOptions } from "./transfer"
+import { pull, push, pushShape, transient, WORK, type PullResult, type PushOptions } from "./transfer"
 import { formatBytes, formatMs } from "./units"
 
 export interface RunOptions {
@@ -28,14 +28,118 @@ export interface RunOptions {
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
-export async function destroyQuietly(api: VmsClient, id: string): Promise<boolean> {
+/** how long a failed destroy waits before it is asked once more */
+export const DESTROY_RETRY_MS = 2_000
+
+/** destroys `id`, asking once more after DESTROY_RETRY_MS when the first ask fails; a sandbox still left says so plainly, since it keeps running and billing */
+export async function destroyQuietly(api: VmsClient, id: string, wait: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => setTimeout(resolve, ms))): Promise<boolean> {
   try {
     await api.destroy(id)
     return true
-  } catch (error) {
-    note(`could not destroy ${id} (${message(error)}); \`kyora vms rm ${id}\` stops it now`)
-    return false
+  } catch (first) {
+    await wait(DESTROY_RETRY_MS)
+    try {
+      await api.destroy(id)
+      return true
+    } catch (error) {
+      note(`WARNING: sandbox ${id} is still running (destroy failed twice: ${message(first)}; then ${message(error)}). It keeps running and billing until \`kyora vms rm ${id}\` stops it`)
+      return false
+    }
   }
+}
+
+/**
+ * Why the sandbox ended, in its machine's words (`sandbox <id> is gone (<why>)`), when a look at it is
+ * answered so: the 404's `ended`, or from a server that predates it, its message. Null otherwise. Any
+ * other 404 proves nothing: a scoped token or a region that no longer covers a live sandbox says only
+ * "no such sandbox", and so does a kyora-vmd that forgot one.
+ */
+export async function sandboxEnded(api: VmsClient, id: string, signal?: AbortSignal): Promise<string | null> {
+  try {
+    await api.get(id, signal)
+    return null
+  } catch (error) {
+    if (!(error instanceof ApiError) || error.status !== 404) return null
+    if (error.ended) return `sandbox ${id} is gone (${error.ended})`
+    const at = error.message.indexOf(`sandbox ${id} is gone (`)
+    return at === -1 ? null : error.message.slice(at)
+  }
+}
+
+const idleNote = (seconds: number | undefined) => (seconds ? `; a sandbox ends after ${lifetime(seconds)} without activity (--idle)` : "")
+
+/** how long a run keeps a sandbox it could not download from, in seconds (KYORA_VMS_KEEP_ON_FAILURE_TTL) */
+export function keepOnFailureSeconds(): number {
+  return Math.ceil(positiveEnv("KYORA_VMS_KEEP_ON_FAILURE_TTL", 3600))
+}
+
+/** the server's idle timeout when none is asked for, and the most it takes */
+const DEFAULT_IDLE_SECONDS = 1200
+const MAX_IDLE_SECONDS = 28800
+
+/**
+ * A run with --out asks for an idle timeout that outlasts the keep: the TTL update after a failed
+ * download is no activity, and the last activity may be a retry window back. An explicit --idle,
+ * or a sandbox that never expires, stays as asked.
+ */
+export function runSpec(options: Pick<RunOptions, "spec" | "outs">): CreateSpec {
+  if (options.outs.length === 0 || options.spec.idleSeconds !== undefined || options.spec.ttlSeconds === 0) return options.spec
+  const idleSeconds = keepOnFailureSeconds() + Math.ceil(reattachPolicy().windowMs / 1000)
+  return { ...options.spec, idleSeconds: Math.min(MAX_IDLE_SECONDS, Math.max(DEFAULT_IDLE_SECONDS, idleSeconds)) }
+}
+
+const lifetime = (seconds: number) => (seconds % 3600 === 0 ? `${seconds / 3600}h` : seconds % 60 === 0 ? `${seconds / 60}m` : `${seconds}s`)
+
+const shellWord = (word: string) => (/^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replaceAll("'", "'\\''")}'`)
+
+interface Unfetched {
+  reason: "download_failed" | "stream_lost"
+  paths: string[]
+  to: string
+  /** when the create was sent */
+  since: number
+  /** the idle timeout the create asked for, when the server did not say */
+  idleSeconds?: number
+  json: boolean
+  signal: AbortSignal
+}
+
+const utc = (at: string | number) => new Date(at).toISOString()
+
+/**
+ * Outputs that did not come down, or a command that may still be making them: the sandbox stays for
+ * keepOnFailureSeconds instead of being destroyed. A TTL is the sandbox's whole lifetime from its
+ * creation, so it is set to the time since the create was sent and that much more. The note says only
+ * what the server stated: the expiry it answered, or, with no answer, the earliest the sandbox may go
+ * (the expiry it had, or the one asked for, had that landed), and only when both are known. False when
+ * `signal` fired.
+ */
+async function keepUnfetched(api: VmsClient, sandbox: Sandbox, why: Unfetched): Promise<boolean> {
+  const label = sandbox.name && !sandbox.name.startsWith("-") ? sandbox.name : sandbox.id
+  const ttlSeconds = Math.ceil((Date.now() - why.since) / 1000) + keepOnFailureSeconds()
+  let answered: Sandbox | null = null
+  let failure: string | null = null
+  try {
+    answered = await api.update(sandbox.id, { ttlSeconds }, why.signal)
+  } catch (error) {
+    if (why.signal.aborted) return false
+    failure = message(error)
+  }
+  if (why.signal.aborted) return false
+  const idleSeconds = answered?.idleSeconds ?? sandbox.idleSeconds ?? why.idleSeconds
+  const idle = idleSeconds === 0 ? "" : `, or sooner after ${idleSeconds === undefined ? "its idle timeout" : lifetime(idleSeconds)} without activity`
+  const confirmed = typeof answered?.expiresAt === "string"
+  // an expiry of null is none at all; one left out is unknown, and so is the floor
+  const had = sandbox.expiresAt === null ? Infinity : typeof sandbox.expiresAt === "string" ? Date.parse(sandbox.expiresAt) : NaN
+  const asked = typeof sandbox.createdAt === "string" ? Date.parse(sandbox.createdAt) + ttlSeconds * 1000 : NaN
+  const floor = Math.min(had, asked)
+  const expiresAt = confirmed ? utc(answered!.expiresAt!) : Number.isFinite(floor) ? utc(floor) : null
+  const until = confirmed ? ` until ${expiresAt}${idle}` : `; its expiry could not be confirmed (${failure ?? "the server answered none"}${expiresAt ? `; at the earliest ${expiresAt}${idle}` : ""})`
+  const later = why.paths.length > 0 ? `kyora vms pull ${label} ${why.paths.map(shellWord).join(" ")}${why.to === process.cwd() ? "" : ` --to ${shellWord(why.to)}`}` : `kyora vms exec ${label} -- …`
+  const what = why.reason === "download_failed" ? "the outputs were not downloaded" : "lost the command's stream, and it may still be running"
+  note(`kept ${sandbox.id}${sandbox.name ? ` (${sandbox.name})` : ""}${until}: ${what}, \`${later}\`, \`kyora vms rm ${label}\` when done`)
+  if (why.json) await json({ type: "kept", id: sandbox.id, reason: why.reason, expiresAt, idleSeconds: idleSeconds ?? null, confirmed })
+  return !why.signal.aborted
 }
 
 const count = (n: number, what: string) => `${n} ${what}${n === 1 ? "y" : "ies"}`
@@ -65,6 +169,7 @@ export function reportPull(result: PullResult): boolean {
  * create → upload → exec → download → destroy. The exit code is the remote
  * command's; 125 means kyora itself failed, and a failed download turns a
  * remote success into 125 so an agent never mistakes a missing artifact for a build.
+ * A download that failed (not a missing path) or a stream that was lost keeps the sandbox for a while instead.
  * A create refused with image_unavailable exits 123.
  */
 export async function run(api: VmsClient, options: RunOptions): Promise<number> {
@@ -76,6 +181,12 @@ export async function run(api: VmsClient, options: RunOptions): Promise<number> 
   let history: History | null = null
   let code = FAILED
   let kept = false
+  let createdBy = 0
+  let spec = runSpec(options)
+  const unfetched: string[] = []
+  let lost = false
+  // the server's word that the sandbox ended: nothing left to fetch, keep or destroy
+  let gone: string | null = null
 
   try {
     let listing = await listFiles(options.dir, { git: options.git })
@@ -90,12 +201,13 @@ export async function run(api: VmsClient, options: RunOptions): Promise<number> 
     interrupt.throwIfInterrupted()
 
     started = Date.now()
+    createdBy = started
     let queuedAt: number | null = null
     let ahead: number | null = null
     const notes = queueNotes(options.wait)
     // the create request is not tied to Ctrl-C (cut short, it would leave a sandbox we never learn
     // the id of); a wait in line for room is, and Ctrl-C then takes the create out of line
-    sandbox = await api.create(options.spec, {
+    const create = (asked: CreateSpec) => api.create(asked, {
       wait: options.wait,
       graceMs: timeoutGraceMs(),
       signal: interrupt.signal,
@@ -106,6 +218,14 @@ export async function run(api: VmsClient, options: RunOptions): Promise<number> 
         ahead = ticket.ahead
       },
     })
+    try {
+      sandbox = await create(spec)
+    } catch (error) {
+      // an account capped below the idle timeout --out asks for: the server's own, as without --out
+      if (spec === options.spec || !(error instanceof ApiError) || error.status !== 403 || error.code !== "quota_exceeded") throw error
+      spec = options.spec
+      sandbox = await create(spec)
+    }
     timings.create = Date.now() - started
     if (queuedAt !== null) timings.queued = Date.now() - queuedAt
     if (!options.json) regionNote(sandbox)
@@ -127,18 +247,40 @@ export async function run(api: VmsClient, options: RunOptions): Promise<number> 
     }
 
     started = Date.now()
-    const outcome = await runExec(api, sandbox.id, options.exec, { json: options.json, signal: interrupt.signal, deadline: execDeadline(options.exec, started) })
+    let outcome: ExecOutcome
+    try {
+      outcome = await runExec(api, sandbox.id, options.exec, { json: options.json, signal: interrupt.signal, deadline: execDeadline(options.exec, started) })
+    } catch (error) {
+      // the command may have started and only its answer been lost: --out still runs, and the sandbox stays
+      // exec_not_started on every try proves the command never ran
+      if (interrupt.interrupted || !transient(error) || (error instanceof ApiError && error.code === "exec_not_started")) throw error
+      outcome = { code: FAILED, exit: null, error: `no answer to the command in ${sandbox.id} (${message(error)}); it may be running there`, lost: true }
+    }
     timings.exec = Date.now() - started
     code = outcome.code
     if (outcome.error) note(outcome.error)
+    lost = outcome.lost === true
 
     // once kyora gave up on the command, --out gets what the grace allows, no more: the machine may be out of reach
     const late = outcome.expired ? AbortSignal.timeout(timeoutGraceMs()) : null
     const pulling = late ? AbortSignal.any([interrupt.signal, late]) : interrupt.signal
+    // one --out that ran out of retries on the network: the rest would only wait out the same window each
+    let unreachable = false
     for (const out of options.outs) {
+      if (gone !== null) {
+        note(`--out ${out}: not tried, ${sandbox.id} has ended`)
+        if (options.json) await json({ type: "download", path: out, error: "sandbox_gone" })
+        continue
+      }
+      if (unreachable) {
+        note(`--out ${out}: not tried, ${sandbox.id} is out of reach`)
+        if (options.json) await json({ type: "download", path: out, error: "not tried, the sandbox is out of reach" })
+        unfetched.push(out)
+        continue
+      }
       started = Date.now()
       try {
-        const result = await pull(api, sandbox.id, out, options.to, pulling)
+        const result = await pull(api, sandbox.id, out, options.to, pulling, reattachPolicy())
         downloaded += result.received
         const incomplete = reportPull(result)
         if (options.json) {
@@ -146,13 +288,19 @@ export async function run(api: VmsClient, options: RunOptions): Promise<number> 
           await json({ type: "download", path: out, to: options.to, entries, bytes: result.received, refused, failed, durationMs, ...(result.ranged ? { ranged: true } : {}) })
         }
         if (incomplete && code === 0) code = FAILED
+        // an entry that could not be written here comes down again once that is fixed; a refused one never does
+        if (result.failed.length > 0) unfetched.push(out)
       } catch (error) {
         if (interrupt.interrupted) throw error
         const missing = error instanceof ApiError && error.status === 404
-        const reason = missing ? "not found in the sandbox" : late?.aborted ? `not fetched within ${formatMs(timeoutGraceMs())} of giving up on the command` : message(error)
+        if (missing) gone = await sandboxEnded(api, sandbox.id, interrupt.signal)
+        if (interrupt.interrupted) throw error
+        const reason = gone !== null ? `not downloaded, ${gone}${idleNote(sandbox.idleSeconds ?? spec.idleSeconds)}` : missing ? "not found in the sandbox" : late?.aborted ? `not fetched within ${formatMs(timeoutGraceMs())} of giving up on the command` : message(error)
         note(`--out ${out}: ${reason}`)
-        if (options.json) await json({ type: "download", path: out, error: missing ? "not_found" : reason })
+        if (options.json) await json({ type: "download", path: out, error: gone !== null ? "sandbox_gone" : missing ? "not_found" : reason })
         if (code === 0) code = FAILED
+        if (!missing) unfetched.push(out)
+        if (transient(error)) unreachable = true
       } finally {
         timings.download = (timings.download ?? 0) + Date.now() - started
       }
@@ -168,14 +316,32 @@ export async function run(api: VmsClient, options: RunOptions): Promise<number> 
   } finally {
     await history?.cleanup()
     if (sandbox) {
-      if (options.keep) {
+      const noted = gone !== null
+      // a sandbox already gone is no keep: a TTL update it refused would read as one, unconfirmed
+      if (!interrupt.interrupted && !noted && (unfetched.length > 0 || lost)) gone = await sandboxEnded(api, sandbox.id, interrupt.signal)
+      // once known gone it is neither kept nor destroyed, Ctrl-C or not; Ctrl-C only decides the exit code
+      if (gone !== null) {
+        code = FAILED
+        if (!noted) note(`${sandbox.id} not kept: ${gone}${idleNote(sandbox.idleSeconds ?? spec.idleSeconds)}`)
+        if (options.json) await json({ type: "gone", id: sandbox.id, reason: gone })
+      } else if (options.keep) {
         kept = true
         const label = sandboxArgument(sandbox.name ?? sandbox.id)
         note(`kept ${sandbox.id}${sandbox.name ? ` (${sandbox.name})` : ""}: \`kyora vms exec ${label} -- …\`, \`kyora vms rm ${label}\` when done`)
+      } else if (!interrupt.interrupted && (unfetched.length > 0 || lost)) {
+        const reason = unfetched.length > 0 ? "download_failed" : "stream_lost"
+        kept = await keepUnfetched(api, sandbox, { reason, paths: reason === "download_failed" ? unfetched : options.outs, to: options.to, since: createdBy, idleSeconds: spec.idleSeconds, json: options.json, signal: interrupt.signal })
+        // Ctrl-C while the TTL was being set: the interrupt wins, as anywhere else
+        if (!kept) {
+          code = interrupt.code!
+          await destroyQuietly(api, sandbox.id)
+        }
       } else {
         await destroyQuietly(api, sandbox.id)
       }
     }
+    // a Ctrl-C during any of the awaits above wins, as anywhere else
+    if (interrupt.interrupted) code = interrupt.code!
     interrupt.dispose()
   }
 

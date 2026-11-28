@@ -170,7 +170,7 @@ kyora vms rm $id
 3. **upload** into `/work`. Cloud uploads use 64 MiB parts and up to 8 archives by default. `--shards N` sets the archive count; `KYORA_VMS_PARTS_IN_FLIGHT=N` (1-32) sets concurrent parts. Progress appears on stderr. `--git`, `--git-depth` or `--git-base` includes git history: see [Git history in the VM](#git-history-in-the-vm).
 4. **exec** the command in `/work` or `--cwd`, streaming stdout and stderr.
 5. **download** each `--out` path, regardless of exit code, into `--to` (default `--dir`) at the same relative path.
-6. **destroy** the VM, including after a failure. `--keep` leaves it running and prints its ID.
+6. **destroy** the VM, including after a failure. `--keep` leaves it running and prints its ID. A `--out` that failed to download (other than a missing path), or a command whose stream was lost, keeps the VM for 1 hour instead (`KYORA_VMS_KEEP_ON_FAILURE_TTL`, in seconds) and prints the `kyora vms pull` command; the exit stays 125. The note gives the expiry the server confirmed and the idle timeout, or says the expiry could not be confirmed and the earliest it may be. So that the keep holds, a run with `--out` and no `--idle` creates the VM with an idle timeout of the keep plus the reconnect window: a run whose CLI is killed outright idles out after that instead of 20 minutes, within its TTL.
 
 One timing line goes to stderr at the end:
 
@@ -184,17 +184,17 @@ Ctrl-C cancels the command, destroys the VM and exits 130. SIGTERM exits 143. A 
 
 ### When the connection breaks
 
-`run` and `exec` reconnect automatically for up to 2 minutes after a connection breaks. The CLI prints `[kyora] reconnecting…` on stderr and resumes output without duplicates.
+`run` and `exec` reconnect automatically for up to 10 minutes after a connection breaks. The CLI prints `[kyora] reconnecting…` on stderr and resumes output without duplicates.
 
 - The sandbox retains the latest 8 MiB of stdout and stderr. Missing output is reported.
-- Exit 125 means reconnection failed or the command is unavailable. The command may still be running; the message names its sandbox.
+- Exit 125 means reconnection failed or the command is unavailable. The command may still be running; the message names its sandbox, which `run` keeps for 1 hour.
 - Older servers or guest images may not support reconnection.
 - If the connection breaks before the command ID arrives, the command may be running without an attachable ID.
 - `--json` includes `started`, `attached` and `gap` events.
 
-`--timeout` bounds the command. After its deadline and a 1-minute grace (`KYORA_VMS_TIMEOUT_GRACE_MS`), the CLI cancels it and exits 124. `run` fetches `--out` within that grace and destroys the sandbox; `exec` leaves the sandbox running. A create that exceeds `--wait` and the grace exits 125.
+`--timeout` bounds the command. After its deadline and a 1-minute grace (`KYORA_VMS_TIMEOUT_GRACE_MS`), the CLI cancels it and exits 124. `run` fetches `--out` within that grace, then destroys the sandbox, or keeps it for 1 hour if a download did not finish; `exec` leaves the sandbox running. A create that exceeds `--wait` and the grace exits 125.
 
-Transfers retry network failures and 502/503/504 responses up to 3 times. A 4xx refusal is not retried.
+Uploads retry network failures and 502/503/504 responses up to 3 times. Downloads retry them, host names that do not resolve included, with the reconnect backoff for up to 10 minutes. A 4xx refusal is not retried.
 
 ## Git history in the VM
 
@@ -330,7 +330,7 @@ kyora vms shell $id --list                   # NAME  WINDOWS  CLIENTS  STATE  LA
 kyora vms shell $id --kill build
 ```
 
-`~.` after Enter detaches (`~~` types a `~`, `~?` lists the escapes); tmux's `C-b d` does too, and so does a signal from outside (exit 128 + its number). A dropped connection prints `[kyora] reconnecting…` and attaches again by itself (backing off up to 10 s, for up to 2 minutes: `KYORA_VMS_REATTACH_WINDOW_MS`, as for exec), and tmux redraws the screen; a refusal that attaching again won't change ends it with the server's reason. The terminal is put back as it was however the shell ends. A terminal wider or taller than 1000 is sent as 1000. OSC 52 (a program setting your clipboard) is taken out of the output unless `--clipboard` or `KYORA_VMS_CLIPBOARD=1`. Exit 0 when you detach or the session ends, 125 when it couldn't attach. A session something runs in keeps the sandbox from idling out, but never past its `--ttl`.
+`~.` after Enter detaches (`~~` types a `~`, `~?` lists the escapes); tmux's `C-b d` does too, and so does a signal from outside (exit 128 + its number). A dropped connection prints `[kyora] reconnecting…` and attaches again by itself (backing off up to 10 s, for up to 10 minutes: `KYORA_VMS_REATTACH_WINDOW_MS`, as for exec), and tmux redraws the screen; a refusal that attaching again won't change ends it with the server's reason. The terminal is put back as it was however the shell ends. A terminal wider or taller than 1000 is sent as 1000. OSC 52 (a program setting your clipboard) is taken out of the output unless `--clipboard` or `KYORA_VMS_CLIPBOARD=1`. Exit 0 when you detach or the session ends, 125 when it couldn't attach. A session something runs in keeps the sandbox from idling out, but never past its `--ttl`.
 
 ### Network modes
 
